@@ -1,0 +1,121 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Apartamento {
+  id              String        @id @default(cuid())
+  numero          String        @unique
+  piso            Int?
+  metrosCuadrados Float?
+  habitaciones    Int           @default(1)
+  banos           Int           @default(1)
+  alicuota        Float         @default(0)
+  cuotaMensual    Float         @default(0)
+  estado          EstadoApto    @default(DISPONIBLE)
+  celular         String?
+  email           String?
+  notas           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  inquilinos    Inquilino[]
+  transacciones Transaccion[]
+}
+
+model Inquilino {
+  id            String        @id @default(cuid())
+  nombre        String
+  apellido      String
+  cedula        String?       @unique
+  email         String?
+  telefono      String?
+  tipo          TipoInquilino @default(INQUILINO)
+  activo        Boolean       @default(true)
+  fechaIngreso  DateTime      @default(now())
+  fechaSalida   DateTime?
+  notas         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  apartamentoId String?
+  apartamento   Apartamento?  @relation(fields: [apartamentoId], references: [id], onDelete: SetNull)
+}
+
+model Transaccion {
+  id               String            @id @default(cuid())
+  tipo             TipoTransaccion
+  monto            Float
+  fecha            DateTime          @default(now())
+  categoria        CategoriaGasto?
+  descripcion      String?
+  referencia       String?
+  metodoPago       MetodoPago        @default(EFECTIVO)
+  notas            String?
+  estadoCredito    EstadoCredito?
+  montoPagado      Float?            @default(0)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  apartamentoId    String?
+  apartamento      Apartamento?      @relation(fields: [apartamentoId], references: [id], onDelete: SetNull)
+}
+
+model CuentaBancaria {
+  id          String   @id @default(cuid())
+  banco       String
+  tipoCuenta  String
+  numeroCuenta String
+  titular     String?
+  saldo       Float    @default(0)
+  activa      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum EstadoApto {
+  DISPONIBLE
+  OCUPADO
+  MANTENIMIENTO
+}
+
+enum TipoInquilino {
+  PROPIETARIO
+  INQUILINO
+}
+
+enum TipoTransaccion {
+  INGRESO
+  EGRESO
+  VENTA_CREDITO
+  RECIBO_PAGO
+}
+
+enum CategoriaGasto {
+  GASTOS_COMUNES
+  MANTENIMIENTO
+  SERVICIOS
+  ADMINISTRACION
+  REPARACIONES
+  LIMPIEZA
+  SEGURIDAD
+  OTROS
+}
+
+enum MetodoPago {
+  EFECTIVO
+  TRANSFERENCIA
+  TARJETA
+  CHEQUE
+  OTRO
+}
+
+enum EstadoCredito {
+  PENDIENTE
+  PARCIAL
+  PAGADO
+}
