@@ -126,142 +126,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
 
   y += boxHeight + 15
 
-  // Resumen Bancario
-  doc.setFontSize(10)
-  doc.setTextColor(100, 116, 139)
-  doc.setFont("helvetica", "normal")
-  doc.text("RESUMEN BANCARIO", 20, y)
-  y += 8
-
-  const bankBoxWidth = (pageWidth - 60) / 5
-
-  // Ingreso G. Comunes
-  doc.setFillColor(220, 252, 231)
-  doc.roundedRect(startX, y, bankBoxWidth, boxHeight, 2, 2, "F")
-  doc.setFontSize(7)
-  doc.setTextColor(22, 163, 74)
-  doc.text("Ingreso G. Comunes", startX + bankBoxWidth / 2, y + 8, { align: "center" })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  doc.text(formatCurrency(data.resumenBancario.ingresoGastosComunes), startX + bankBoxWidth / 2, y + 18, {
-    align: "center",
-  })
-
-  // Ingreso F. Reserva
-  doc.setFillColor(220, 252, 231)
-  doc.roundedRect(startX + bankBoxWidth + 5, y, bankBoxWidth, boxHeight, 2, 2, "F")
-  doc.setFontSize(7)
-  doc.setTextColor(22, 163, 74)
-  doc.setFont("helvetica", "normal")
-  doc.text("Ingreso F. Reserva", startX + bankBoxWidth + 5 + bankBoxWidth / 2, y + 8, { align: "center" })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  doc.text(
-    formatCurrency(data.resumenBancario.ingresoFondoReserva),
-    startX + bankBoxWidth + 5 + bankBoxWidth / 2,
-    y + 18,
-    { align: "center" }
-  )
-
-  // Egreso G. Comunes
-  doc.setFillColor(254, 226, 226)
-  doc.roundedRect(startX + (bankBoxWidth + 5) * 2, y, bankBoxWidth, boxHeight, 2, 2, "F")
-  doc.setFontSize(7)
-  doc.setTextColor(220, 38, 38)
-  doc.setFont("helvetica", "normal")
-  doc.text("Egreso G. Comunes", startX + (bankBoxWidth + 5) * 2 + bankBoxWidth / 2, y + 8, {
-    align: "center",
-  })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  doc.text(
-    formatCurrency(data.resumenBancario.egresoGastosComunes),
-    startX + (bankBoxWidth + 5) * 2 + bankBoxWidth / 2,
-    y + 18,
-    { align: "center" }
-  )
-
-  // Egreso F. Reserva
-  doc.setFillColor(254, 226, 226)
-  doc.roundedRect(startX + (bankBoxWidth + 5) * 3, y, bankBoxWidth, boxHeight, 2, 2, "F")
-  doc.setFontSize(7)
-  doc.setTextColor(220, 38, 38)
-  doc.setFont("helvetica", "normal")
-  doc.text("Egreso F. Reserva", startX + (bankBoxWidth + 5) * 3 + bankBoxWidth / 2, y + 8, {
-    align: "center",
-  })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  doc.text(
-    formatCurrency(data.resumenBancario.egresoFondoReserva),
-    startX + (bankBoxWidth + 5) * 3 + bankBoxWidth / 2,
-    y + 18,
-    { align: "center" }
-  )
-
-  // Saldo Bancario
-  doc.setFillColor(30, 64, 175)
-  doc.roundedRect(startX + (bankBoxWidth + 5) * 4, y, bankBoxWidth, boxHeight, 2, 2, "F")
-  doc.setFontSize(7)
-  doc.setTextColor(255, 255, 255)
-  doc.setFont("helvetica", "normal")
-  doc.text("Saldo Bancario", startX + (bankBoxWidth + 5) * 4 + bankBoxWidth / 2, y + 8, {
-    align: "center",
-  })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  doc.text(
-    formatCurrency(data.resumenBancario.saldoBancarioTotal),
-    startX + (bankBoxWidth + 5) * 4 + bankBoxWidth / 2,
-    y + 18,
-    { align: "center" }
-  )
-
-  y += boxHeight + 15
-
-  // Sección de Avisos (si hay avisos activos)
-  if (avisosActivos.length > 0) {
-    doc.setFontSize(10)
-    doc.setTextColor(100, 116, 139)
-    doc.setFont("helvetica", "normal")
-    doc.text("AVISOS", 20, y)
-    y += 6
-
-    // Fondo para avisos
-    const avisoBoxHeight = Math.min(avisosActivos.length * 8 + 10, 50)
-    doc.setFillColor(255, 251, 235) // amber-50
-    doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "F")
-    doc.setDrawColor(251, 191, 36) // amber-400
-    doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "S")
-
-    y += 7
-    doc.setFontSize(9)
-    doc.setTextColor(146, 64, 14) // amber-800
-
-    for (const aviso of avisosActivos) {
-      // Verificar si necesitamos nueva página
-      if (y > pageHeight - 30) {
-        doc.addPage("landscape")
-        y = 20
-      }
-
-      // Bullet point y texto
-      doc.setFont("helvetica", "bold")
-      doc.text("•", 20, y)
-      doc.setFont("helvetica", "normal")
-
-      // Dividir texto largo en múltiples líneas
-      const maxWidth = pageWidth - 55
-      const lines = doc.splitTextToSize(aviso.texto, maxWidth)
-      doc.text(lines, 28, y)
-
-      y += lines.length * 5 + 3
-    }
-
-    y += 10
-  }
-
-  // Tabla de apartamentos
+  // Tabla de apartamentos (DESGLOSE POR APARTAMENTO)
   doc.setFontSize(10)
   doc.setTextColor(100, 116, 139)
   doc.setFont("helvetica", "normal")
@@ -405,6 +270,293 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
     data.totales.totalSaldoActual > 0 ? 38 : 74
   )
   doc.text(formatCurrency(data.totales.totalSaldoActual), x, y, { align: "right" })
+
+  y += 15
+
+  // Sección de Avisos (si hay avisos activos)
+  if (avisosActivos.length > 0) {
+    // Verificar si necesitamos nueva página
+    if (y > pageHeight - 60) {
+      doc.addPage("landscape")
+      y = 20
+    }
+
+    doc.setFontSize(10)
+    doc.setTextColor(100, 116, 139)
+    doc.setFont("helvetica", "normal")
+    doc.text("AVISOS", 20, y)
+    y += 6
+
+    // Fondo para avisos
+    const avisoBoxHeight = Math.min(avisosActivos.length * 8 + 10, 50)
+    doc.setFillColor(255, 251, 235) // amber-50
+    doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "F")
+    doc.setDrawColor(251, 191, 36) // amber-400
+    doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "S")
+
+    y += 7
+    doc.setFontSize(9)
+    doc.setTextColor(146, 64, 14) // amber-800
+
+    for (const aviso of avisosActivos) {
+      // Verificar si necesitamos nueva página
+      if (y > pageHeight - 30) {
+        doc.addPage("landscape")
+        y = 20
+      }
+
+      // Bullet point y texto
+      doc.setFont("helvetica", "bold")
+      doc.text("•", 20, y)
+      doc.setFont("helvetica", "normal")
+
+      // Dividir texto largo en múltiples líneas
+      const maxWidth = pageWidth - 55
+      const lines = doc.splitTextToSize(aviso.texto, maxWidth)
+      doc.text(lines, 28, y)
+
+      y += lines.length * 5 + 3
+    }
+
+    y += 10
+  }
+
+  // Resumen Bancario (Detalle de cuentas bancarias)
+  // Verificar si necesitamos nueva página
+  if (y > pageHeight - 50) {
+    doc.addPage("landscape")
+    y = 20
+  }
+
+  doc.setFontSize(10)
+  doc.setTextColor(100, 116, 139)
+  doc.setFont("helvetica", "normal")
+  doc.text("DETALLE DE CUENTAS BANCARIAS", 20, y)
+  y += 8
+
+  const bankBoxWidth = (pageWidth - 60) / 5
+
+  // Ingreso G. Comunes
+  doc.setFillColor(220, 252, 231)
+  doc.roundedRect(startX, y, bankBoxWidth, boxHeight, 2, 2, "F")
+  doc.setFontSize(7)
+  doc.setTextColor(22, 163, 74)
+  doc.text("Ingreso G. Comunes", startX + bankBoxWidth / 2, y + 8, { align: "center" })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "bold")
+  doc.text(formatCurrency(data.resumenBancario.ingresoGastosComunes), startX + bankBoxWidth / 2, y + 18, {
+    align: "center",
+  })
+
+  // Ingreso F. Reserva
+  doc.setFillColor(220, 252, 231)
+  doc.roundedRect(startX + bankBoxWidth + 5, y, bankBoxWidth, boxHeight, 2, 2, "F")
+  doc.setFontSize(7)
+  doc.setTextColor(22, 163, 74)
+  doc.setFont("helvetica", "normal")
+  doc.text("Ingreso F. Reserva", startX + bankBoxWidth + 5 + bankBoxWidth / 2, y + 8, { align: "center" })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "bold")
+  doc.text(
+    formatCurrency(data.resumenBancario.ingresoFondoReserva),
+    startX + bankBoxWidth + 5 + bankBoxWidth / 2,
+    y + 18,
+    { align: "center" }
+  )
+
+  // Egreso G. Comunes
+  doc.setFillColor(254, 226, 226)
+  doc.roundedRect(startX + (bankBoxWidth + 5) * 2, y, bankBoxWidth, boxHeight, 2, 2, "F")
+  doc.setFontSize(7)
+  doc.setTextColor(220, 38, 38)
+  doc.setFont("helvetica", "normal")
+  doc.text("Egreso G. Comunes", startX + (bankBoxWidth + 5) * 2 + bankBoxWidth / 2, y + 8, {
+    align: "center",
+  })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "bold")
+  doc.text(
+    formatCurrency(data.resumenBancario.egresoGastosComunes),
+    startX + (bankBoxWidth + 5) * 2 + bankBoxWidth / 2,
+    y + 18,
+    { align: "center" }
+  )
+
+  // Egreso F. Reserva
+  doc.setFillColor(254, 226, 226)
+  doc.roundedRect(startX + (bankBoxWidth + 5) * 3, y, bankBoxWidth, boxHeight, 2, 2, "F")
+  doc.setFontSize(7)
+  doc.setTextColor(220, 38, 38)
+  doc.setFont("helvetica", "normal")
+  doc.text("Egreso F. Reserva", startX + (bankBoxWidth + 5) * 3 + bankBoxWidth / 2, y + 8, {
+    align: "center",
+  })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "bold")
+  doc.text(
+    formatCurrency(data.resumenBancario.egresoFondoReserva),
+    startX + (bankBoxWidth + 5) * 3 + bankBoxWidth / 2,
+    y + 18,
+    { align: "center" }
+  )
+
+  // Saldo Bancario
+  doc.setFillColor(30, 64, 175)
+  doc.roundedRect(startX + (bankBoxWidth + 5) * 4, y, bankBoxWidth, boxHeight, 2, 2, "F")
+  doc.setFontSize(7)
+  doc.setTextColor(255, 255, 255)
+  doc.setFont("helvetica", "normal")
+  doc.text("Saldo Bancario", startX + (bankBoxWidth + 5) * 4 + bankBoxWidth / 2, y + 8, {
+    align: "center",
+  })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "bold")
+  doc.text(
+    formatCurrency(data.resumenBancario.saldoBancarioTotal),
+    startX + (bankBoxWidth + 5) * 4 + bankBoxWidth / 2,
+    y + 18,
+    { align: "center" }
+  )
+
+  y += boxHeight + 15
+
+  // Detalle de Egresos Bancarios
+  if (data.detalleEgresos && data.detalleEgresos.length > 0) {
+    // Verificar si necesitamos nueva página
+    if (y > pageHeight - 60) {
+      doc.addPage("landscape")
+      y = 20
+    }
+
+    doc.setFontSize(10)
+    doc.setTextColor(100, 116, 139)
+    doc.setFont("helvetica", "normal")
+    doc.text("DETALLE DE EGRESOS", 20, y)
+    y += 8
+
+    // Header de tabla de egresos
+    doc.setFillColor(254, 226, 226) // red-100
+    doc.rect(15, y, pageWidth - 30, 10, "F")
+
+    doc.setFontSize(8)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(153, 27, 27) // red-800
+    y += 7
+
+    const egresoColWidths = {
+      fecha: 35,
+      descripcion: 120,
+      clasificacion: 50,
+      banco: 50,
+      monto: 45,
+    }
+
+    let ex = 20
+    doc.text("Fecha", ex, y)
+    ex += egresoColWidths.fecha
+    doc.text("Descripción", ex, y)
+    ex += egresoColWidths.descripcion
+    doc.text("Clasificación", ex, y)
+    ex += egresoColWidths.clasificacion
+    doc.text("Banco", ex, y)
+    ex += egresoColWidths.banco
+    doc.text("Monto", ex, y, { align: "right" })
+
+    y += 6
+
+    // Filas de egresos
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8)
+
+    const clasificacionLabels: Record<string, string> = {
+      GASTO_COMUN: "G. Común",
+      FONDO_RESERVA: "F. Reserva",
+      SIN_CLASIFICAR: "Sin clasificar",
+    }
+
+    let totalEgresos = 0
+
+    for (const egreso of data.detalleEgresos) {
+      if (y > pageHeight - 25) {
+        doc.addPage("landscape")
+        y = 20
+
+        // Repetir header de egresos
+        doc.setFillColor(254, 226, 226)
+        doc.rect(15, y, pageWidth - 30, 10, "F")
+        doc.setFontSize(8)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(153, 27, 27)
+        y += 7
+
+        ex = 20
+        doc.text("Fecha", ex, y)
+        ex += egresoColWidths.fecha
+        doc.text("Descripción", ex, y)
+        ex += egresoColWidths.descripcion
+        doc.text("Clasificación", ex, y)
+        ex += egresoColWidths.clasificacion
+        doc.text("Banco", ex, y)
+        ex += egresoColWidths.banco
+        doc.text("Monto", ex, y, { align: "right" })
+        y += 6
+
+        doc.setFont("helvetica", "normal")
+      }
+
+      ex = 20
+      doc.setTextColor(30, 41, 59)
+
+      // Fecha
+      const fechaEgreso = new Date(egreso.fecha).toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "2-digit",
+      })
+      doc.text(fechaEgreso, ex, y)
+
+      // Descripción (truncar si es muy larga)
+      ex += egresoColWidths.fecha
+      const descMaxWidth = egresoColWidths.descripcion - 5
+      let descripcion = egreso.descripcion
+      while (doc.getTextWidth(descripcion) > descMaxWidth && descripcion.length > 3) {
+        descripcion = descripcion.slice(0, -4) + "..."
+      }
+      doc.text(descripcion, ex, y)
+
+      // Clasificación
+      ex += egresoColWidths.descripcion
+      doc.text(clasificacionLabels[egreso.clasificacion] || egreso.clasificacion, ex, y)
+
+      // Banco
+      ex += egresoColWidths.clasificacion
+      doc.text(egreso.banco || "N/A", ex, y)
+
+      // Monto
+      ex += egresoColWidths.banco
+      doc.setTextColor(220, 38, 38) // red-600
+      doc.text(formatCurrency(egreso.monto), ex, y, { align: "right" })
+
+      totalEgresos += egreso.monto
+      y += 6
+    }
+
+    // Fila de total de egresos
+    y += 2
+    doc.setFillColor(254, 202, 202) // red-200
+    doc.rect(15, y - 4, pageWidth - 30, 10, "F")
+
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(153, 27, 27)
+    y += 3
+
+    ex = 20
+    doc.text("TOTAL EGRESOS", ex, y)
+
+    ex = 20 + egresoColWidths.fecha + egresoColWidths.descripcion + egresoColWidths.clasificacion + egresoColWidths.banco
+    doc.setTextColor(220, 38, 38)
+    doc.text(formatCurrency(totalEgresos), ex, y, { align: "right" })
+  }
 
   // Footer
   doc.setFontSize(8)

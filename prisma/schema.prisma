@@ -91,9 +91,9 @@ model MovimientoBancario {
   fecha           DateTime              @default(now())
   descripcion     String
   referencia      String?
-  beneficiario    String?
   numeroDocumento String?
   archivoUrl      String?
+  clasificacion   ClasificacionEgreso?
   conciliado      Boolean               @default(false)
   createdAt       DateTime              @default(now())
   updatedAt       DateTime              @updatedAt
@@ -113,6 +113,11 @@ model MovimientoBancario {
 enum TipoMovimientoBancario {
   INGRESO
   EGRESO
+}
+
+enum ClasificacionEgreso {
+  GASTO_COMUN
+  FONDO_RESERVA
 }
 
 enum TipoOcupacion {

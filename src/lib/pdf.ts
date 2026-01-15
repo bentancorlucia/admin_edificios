@@ -504,7 +504,7 @@ type EstadoCuentaData = {
     fecha: Date
     descripcion: string
     referencia: string | null
-    beneficiario: string | null
+    clasificacion: "GASTO_COMUN" | "FONDO_RESERVA" | null
     saldoAcumulado: number
   }[]
   resumen: {

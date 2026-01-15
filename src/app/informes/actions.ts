@@ -36,10 +36,19 @@ export type ResumenBancario = {
   saldoBancarioTotal: number
 }
 
+export type DetalleEgreso = {
+  fecha: Date
+  descripcion: string
+  clasificacion: string
+  monto: number
+  banco: string
+}
+
 export type InformeData = {
   fecha: Date
   apartamentos: InformeApartamentoData[]
   resumenBancario: ResumenBancario
+  detalleEgresos: DetalleEgreso[]
   totales: {
     totalSaldoAnterior: number
     totalPagosMes: number
@@ -150,6 +159,7 @@ export async function getInformeData(
     },
     include: {
       transaccion: true,
+      cuentaBancaria: true,
     },
   })
 
@@ -204,14 +214,26 @@ export async function getInformeData(
     }
   }
 
-  // Egresos bancarios por categoría
+  // Egresos bancarios por clasificación y detalle
+  const detalleEgresos: DetalleEgreso[] = []
+
   for (const mov of movimientosBancarios) {
-    if (mov.tipo === "EGRESO" && mov.transaccion) {
-      if (mov.transaccion.categoria === "GASTOS_COMUNES") {
+    if (mov.tipo === "EGRESO") {
+      // Sumar a totales por clasificación
+      if (mov.clasificacion === "GASTO_COMUN") {
         egresoGastosComunes += mov.monto
-      } else if (mov.transaccion.categoria === "FONDO_RESERVA") {
+      } else if (mov.clasificacion === "FONDO_RESERVA") {
         egresoFondoReserva += mov.monto
       }
+
+      // Agregar al detalle de egresos
+      detalleEgresos.push({
+        fecha: mov.fecha,
+        descripcion: mov.descripcion || "Sin descripción",
+        clasificacion: mov.clasificacion || "SIN_CLASIFICAR",
+        monto: mov.monto,
+        banco: mov.cuentaBancaria?.banco || "N/A",
+      })
     }
   }
 
@@ -265,6 +287,9 @@ export async function getInformeData(
     orderBy: { orden: "asc" },
   })
 
+  // Ordenar egresos por fecha
+  detalleEgresos.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+
   return {
     fecha: fechaFin,
     apartamentos: informeApartamentos,
@@ -275,6 +300,7 @@ export async function getInformeData(
       egresoFondoReserva,
       saldoBancarioTotal,
     },
+    detalleEgresos,
     totales,
     avisos,
   }

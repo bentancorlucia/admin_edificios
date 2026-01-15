@@ -124,15 +124,17 @@ export async function deleteCuentaBancaria(
 
 type TipoMovimiento = "INGRESO" | "EGRESO"
 
+type ClasificacionEgreso = "GASTO_COMUN" | "FONDO_RESERVA"
+
 type MovimientoInput = {
   tipo: TipoMovimiento
   monto: number
   fecha: Date
   descripcion: string
   referencia: string | null
-  beneficiario: string | null
   numeroDocumento: string | null
   archivoUrl: string | null
+  clasificacion: ClasificacionEgreso | null
   servicioId: string | null
   cuentaBancariaId: string
   transaccionId?: string | null
@@ -145,9 +147,9 @@ type MovimientoResponse = {
   fecha: Date
   descripcion: string
   referencia: string | null
-  beneficiario: string | null
   numeroDocumento: string | null
   archivoUrl: string | null
+  clasificacion: ClasificacionEgreso | null
   servicioId: string | null
   conciliado: boolean
   cuentaBancariaId: string
@@ -234,9 +236,9 @@ export async function createMovimientoBancario(
         fecha: data.fecha,
         descripcion: data.descripcion,
         referencia: data.referencia,
-        beneficiario: data.beneficiario,
         numeroDocumento: data.numeroDocumento,
         archivoUrl: data.archivoUrl,
+        clasificacion: data.clasificacion,
         servicioId: data.servicioId,
         cuentaBancariaId: data.cuentaBancariaId,
         transaccionId: data.transaccionId || null,
@@ -294,9 +296,9 @@ export async function updateMovimientoBancario(
         fecha: data.fecha,
         descripcion: data.descripcion,
         referencia: data.referencia,
-        beneficiario: data.beneficiario,
         numeroDocumento: data.numeroDocumento,
         archivoUrl: data.archivoUrl,
+        clasificacion: data.clasificacion,
         servicioId: data.servicioId,
       },
       include: {
@@ -425,7 +427,7 @@ export type EstadoCuentaData = {
     fecha: Date
     descripcion: string
     referencia: string | null
-    beneficiario: string | null
+    clasificacion: ClasificacionEgreso | null
     saldoAcumulado: number
   }[]
   resumen: {
@@ -477,7 +479,7 @@ export async function getEstadoCuenta(
         fecha: mov.fecha,
         descripcion: mov.descripcion,
         referencia: mov.referencia,
-        beneficiario: mov.beneficiario,
+        clasificacion: mov.clasificacion as ClasificacionEgreso | null,
         saldoAcumulado,
       }
     })

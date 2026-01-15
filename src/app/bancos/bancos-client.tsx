@@ -55,16 +55,17 @@ import {
   updateCuentaBancaria,
   deleteCuentaBancaria,
   createMovimientoBancario,
+  updateMovimientoBancario,
   deleteMovimientoBancario,
   vincularReciboConIngreso,
   getEstadoCuenta,
   type EstadoCuentaData,
 } from "./actions"
-import { supabase } from "@/lib/supabase"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { generateEstadoCuentaPDF } from "@/lib/pdf"
 
 type TipoMovimiento = "INGRESO" | "EGRESO"
+type ClasificacionEgreso = "GASTO_COMUN" | "FONDO_RESERVA"
 
 type Movimiento = {
   id: string
@@ -73,9 +74,9 @@ type Movimiento = {
   fecha: Date
   descripcion: string
   referencia: string | null
-  beneficiario: string | null
   numeroDocumento: string | null
   archivoUrl: string | null
+  clasificacion: ClasificacionEgreso | null
   servicioId: string | null
   conciliado: boolean
   transaccionId: string | null
@@ -143,6 +144,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
   const [isEstadoCuentaDialogOpen, setIsEstadoCuentaDialogOpen] = useState(false)
   const [selectedMovimiento, setSelectedMovimiento] = useState<Movimiento | null>(null)
   const [tipoMovimiento, setTipoMovimiento] = useState<TipoMovimiento>("INGRESO")
+  const [isEditMode, setIsEditMode] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [estadoCuenta, setEstadoCuenta] = useState<EstadoCuentaData | null>(null)
@@ -161,8 +163,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     fecha: new Date().toISOString().split("T")[0],
     descripcion: "",
     referencia: "",
-    beneficiario: "",
     numeroDocumento: "",
+    clasificacion: "" as ClasificacionEgreso | "",
     servicioId: "",
     archivoUrl: "",
   })
@@ -210,34 +212,37 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       fecha: new Date().toISOString().split("T")[0],
       descripcion: "",
       referencia: "",
-      beneficiario: "",
       numeroDocumento: "",
+      clasificacion: "" as ClasificacionEgreso | "",
       servicioId: "",
       archivoUrl: "",
     })
     setArchivoFile(null)
   }
 
-  // Subir archivo a Supabase Storage
+  // Subir archivo via API route
   const uploadFile = async (file: File): Promise<string | null> => {
-    const fileExt = file.name.split(".").pop()
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`
-    const filePath = `egresos/${fileName}`
+    const formData = new FormData()
+    formData.append("file", file)
 
-    const { error } = await supabase.storage
-      .from("archivos")
-      .upload(filePath, file)
+    try {
+      const response = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      })
 
-    if (error) {
+      if (!response.ok) {
+        const error = await response.json()
+        console.error("Error uploading file:", error)
+        return null
+      }
+
+      const data = await response.json()
+      return data.url
+    } catch (error) {
       console.error("Error uploading file:", error)
       return null
     }
-
-    const { data: { publicUrl } } = supabase.storage
-      .from("archivos")
-      .getPublicUrl(filePath)
-
-    return publicUrl
   }
 
   // Account handlers
@@ -334,7 +339,29 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
   const openMovimientoDialog = (cuenta: CuentaBancaria, tipo: TipoMovimiento) => {
     setSelectedCuenta(cuenta)
     setTipoMovimiento(tipo)
+    setIsEditMode(false)
+    setSelectedMovimiento(null)
     resetMovimientoForm()
+    setError(null)
+    setIsMovimientoDialogOpen(true)
+  }
+
+  const openEditMovimientoDialog = (cuenta: CuentaBancaria, mov: Movimiento) => {
+    setSelectedCuenta(cuenta)
+    setSelectedMovimiento(mov)
+    setTipoMovimiento(mov.tipo)
+    setIsEditMode(true)
+    setMovimientoForm({
+      monto: mov.monto,
+      fecha: new Date(mov.fecha).toISOString().split("T")[0],
+      descripcion: mov.descripcion,
+      referencia: mov.referencia || "",
+      numeroDocumento: mov.numeroDocumento || "",
+      clasificacion: mov.clasificacion || "",
+      servicioId: mov.servicioId || "",
+      archivoUrl: mov.archivoUrl || "",
+    })
+    setArchivoFile(null)
     setError(null)
     setIsMovimientoDialogOpen(true)
   }
@@ -364,60 +391,98 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         }
       }
 
-      // Obtener descripción del servicio si está seleccionado
+      // Generar descripción automática si no se proporcionó
       let descripcion = movimientoForm.descripcion
-      if (tipoMovimiento === "EGRESO" && movimientoForm.servicioId) {
-        const servicioSeleccionado = servicios.find(s => s.id === movimientoForm.servicioId)
-        if (servicioSeleccionado && !descripcion) {
-          descripcion = `Pago a ${servicioSeleccionado.nombre}`
+      if (tipoMovimiento === "EGRESO" && !descripcion) {
+        if (movimientoForm.servicioId) {
+          const servicioSeleccionado = servicios.find(s => s.id === movimientoForm.servicioId)
+          if (servicioSeleccionado) {
+            descripcion = `Pago a ${servicioSeleccionado.nombre}`
+          }
+        } else {
+          descripcion = "Egreso bancario"
         }
       }
 
-      const result = await createMovimientoBancario({
+      const movimientoData = {
         tipo: tipoMovimiento,
         monto: movimientoForm.monto,
         fecha: new Date(movimientoForm.fecha),
         descripcion: descripcion,
         referencia: movimientoForm.referencia || null,
-        beneficiario: movimientoForm.beneficiario || null,
         numeroDocumento: movimientoForm.numeroDocumento || null,
         archivoUrl: archivoUrl,
+        clasificacion: tipoMovimiento === "EGRESO" && movimientoForm.clasificacion ? movimientoForm.clasificacion : null,
         servicioId: tipoMovimiento === "EGRESO" && movimientoForm.servicioId ? movimientoForm.servicioId : null,
         cuentaBancariaId: selectedCuenta.id,
-      })
+      }
+
+      let result
+      if (isEditMode && selectedMovimiento) {
+        result = await updateMovimientoBancario(selectedMovimiento.id, movimientoData)
+      } else {
+        result = await createMovimientoBancario(movimientoData)
+      }
 
       if (!result.success) {
         setError(result.error)
         return
       }
 
-      // Actualizar la cuenta con el nuevo movimiento
+      // Actualizar la cuenta con el movimiento
       setCuentas((prev) =>
-        prev.map((c) =>
-          c.id === selectedCuenta.id
-            ? {
-                ...c,
-                movimientos: [
-                  {
-                    id: result.data.id,
-                    tipo: result.data.tipo,
-                    monto: result.data.monto,
-                    fecha: result.data.fecha,
-                    descripcion: result.data.descripcion,
-                    referencia: result.data.referencia,
-                    beneficiario: result.data.beneficiario,
-                    numeroDocumento: result.data.numeroDocumento,
-                    archivoUrl: result.data.archivoUrl,
-                    servicioId: result.data.servicioId,
-                    conciliado: result.data.conciliado,
-                    transaccionId: result.data.transaccionId,
-                    servicio: result.data.servicio,
-                  },
-                  ...c.movimientos,
-                ],
-              }
-            : c
-        )
+        prev.map((c) => {
+          if (c.id !== selectedCuenta.id) return c
+
+          if (isEditMode && selectedMovimiento) {
+            // Actualizar movimiento existente
+            return {
+              ...c,
+              movimientos: c.movimientos.map((m) =>
+                m.id === selectedMovimiento.id
+                  ? {
+                      id: result.data.id,
+                      tipo: result.data.tipo,
+                      monto: result.data.monto,
+                      fecha: result.data.fecha,
+                      descripcion: result.data.descripcion,
+                      referencia: result.data.referencia,
+                      numeroDocumento: result.data.numeroDocumento,
+                      archivoUrl: result.data.archivoUrl,
+                      clasificacion: result.data.clasificacion,
+                      servicioId: result.data.servicioId,
+                      conciliado: result.data.conciliado,
+                      transaccionId: result.data.transaccionId,
+                      servicio: result.data.servicio,
+                    }
+                  : m
+              ),
+            }
+          } else {
+            // Agregar nuevo movimiento
+            return {
+              ...c,
+              movimientos: [
+                {
+                  id: result.data.id,
+                  tipo: result.data.tipo,
+                  monto: result.data.monto,
+                  fecha: result.data.fecha,
+                  descripcion: result.data.descripcion,
+                  referencia: result.data.referencia,
+                  numeroDocumento: result.data.numeroDocumento,
+                  archivoUrl: result.data.archivoUrl,
+                  clasificacion: result.data.clasificacion,
+                  servicioId: result.data.servicioId,
+                  conciliado: result.data.conciliado,
+                  transaccionId: result.data.transaccionId,
+                  servicio: result.data.servicio,
+                },
+                ...c.movimientos,
+              ],
+            }
+          }
+        })
       )
 
       setIsMovimientoDialogOpen(false)
@@ -499,9 +564,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     fecha: result.data.fecha,
                     descripcion: result.data.descripcion,
                     referencia: result.data.referencia,
-                    beneficiario: result.data.beneficiario,
                     numeroDocumento: result.data.numeroDocumento,
                     archivoUrl: result.data.archivoUrl,
+                    clasificacion: result.data.clasificacion,
                     servicioId: result.data.servicioId,
                     conciliado: result.data.conciliado,
                     transaccionId: result.data.transaccionId,
@@ -859,7 +924,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                 </div>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                               <span
                                 className={`font-semibold ${
                                   mov.tipo === "INGRESO"
@@ -873,8 +938,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                onClick={() => openEditMovimientoDialog(cuenta, mov)}
+                                className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600"
+                                title="Editar"
+                              >
+                                <Edit className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
                                 onClick={() => openDeleteMovDialog(cuenta, mov)}
                                 className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
+                                title="Eliminar"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </Button>
@@ -1000,12 +1075,14 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         </DialogContent>
       </Dialog>
 
-      {/* Dialog: Crear Movimiento */}
+      {/* Dialog: Crear/Editar Movimiento */}
       <Dialog open={isMovimientoDialogOpen} onOpenChange={setIsMovimientoDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {tipoMovimiento === "INGRESO"
+              {isEditMode
+                ? `Editar ${tipoMovimiento === "INGRESO" ? "Ingreso" : "Egreso"}`
+                : tipoMovimiento === "INGRESO"
                 ? "Registrar Ingreso Bancario"
                 : "Registrar Egreso Bancario"}
             </DialogTitle>
@@ -1061,13 +1138,15 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="descripcion">Descripción *</Label>
+              <Label htmlFor="descripcion">
+                Descripción {tipoMovimiento === "INGRESO" ? "*" : "(opcional)"}
+              </Label>
               <Input
                 id="descripcion"
                 placeholder={
                   tipoMovimiento === "INGRESO"
                     ? "Ej: Depósito, Transferencia recibida"
-                    : "Ej: Pago servicios, Transferencia enviada"
+                    : "Se generará automáticamente si selecciona un servicio"
                 }
                 value={movimientoForm.descripcion}
                 onChange={(e) =>
@@ -1076,25 +1155,43 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     descripcion: e.target.value,
                   })
                 }
-                required
+                required={tipoMovimiento === "INGRESO"}
               />
             </div>
 
             {tipoMovimiento === "EGRESO" && (
               <>
                 <div className="space-y-2">
+                  <Label htmlFor="clasificacion">Clasificación *</Label>
+                  <Select
+                    value={movimientoForm.clasificacion || ""}
+                    onValueChange={(value) =>
+                      setMovimientoForm({ ...movimientoForm, clasificacion: value as ClasificacionEgreso })
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar clasificación" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
+                      <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="servicioId">Servicio / Proveedor</Label>
                   <Select
-                    value={movimientoForm.servicioId}
+                    value={movimientoForm.servicioId || "none"}
                     onValueChange={(value) =>
-                      setMovimientoForm({ ...movimientoForm, servicioId: value })
+                      setMovimientoForm({ ...movimientoForm, servicioId: value === "none" ? "" : value })
                     }
                   >
                     <SelectTrigger>
                       <SelectValue placeholder="Seleccionar servicio (opcional)" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Sin servicio vinculado</SelectItem>
+                      <SelectItem value="none">Sin servicio vinculado</SelectItem>
                       {servicios.map((servicio) => (
                         <SelectItem key={servicio.id} value={servicio.id}>
                           {servicio.nombre} ({servicio.tipo.replace(/_/g, " ")})
@@ -1105,22 +1202,37 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="beneficiario">Beneficiario</Label>
-                  <Input
-                    id="beneficiario"
-                    placeholder="Nombre del beneficiario"
-                    value={movimientoForm.beneficiario}
-                    onChange={(e) =>
-                      setMovimientoForm({
-                        ...movimientoForm,
-                        beneficiario: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="space-y-2">
                   <Label htmlFor="archivo">Archivo Adjunto</Label>
+                  {/* Mostrar archivo existente en modo edición */}
+                  {isEditMode && movimientoForm.archivoUrl && !archivoFile && (
+                    <div className="flex items-center justify-between p-2 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <Paperclip className="h-4 w-4 text-blue-600" />
+                        <span className="text-sm text-blue-700">Archivo adjunto actual</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <a
+                          href={movimientoForm.archivoUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 hover:text-blue-800 p-1"
+                          title="Ver archivo"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                        </a>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setMovimientoForm({ ...movimientoForm, archivoUrl: "" })}
+                          className="h-6 w-6 p-0 text-red-500 hover:text-red-700"
+                          title="Eliminar archivo"
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center gap-2">
                     <Input
                       id="archivo"
@@ -1147,8 +1259,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   </div>
                   {archivoFile && (
                     <p className="text-xs text-slate-500 flex items-center gap-1">
-                      <Paperclip className="h-3 w-3" />
-                      {archivoFile.name}
+                      <Upload className="h-3 w-3" />
+                      Nuevo archivo: {archivoFile.name}
                     </p>
                   )}
                 </div>
@@ -1207,6 +1319,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   ? "Subiendo archivo..."
                   : isLoading
                   ? "Guardando..."
+                  : isEditMode
+                  ? "Guardar Cambios"
                   : tipoMovimiento === "INGRESO"
                   ? "Registrar Ingreso"
                   : "Registrar Egreso"}
@@ -1448,9 +1562,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                         <td className="px-4 py-2">
                           <div>
                             <p className="text-slate-700">{mov.descripcion}</p>
-                            {mov.beneficiario && (
+                            {mov.clasificacion && (
                               <p className="text-xs text-slate-400">
-                                {mov.beneficiario}
+                                {mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : "Fondo de Reserva"}
                               </p>
                             )}
                           </div>
