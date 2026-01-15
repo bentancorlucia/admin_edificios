@@ -11,8 +11,41 @@ async function getApartamentos() {
   }
 }
 
-export default async function ApartamentosPage() {
-  const apartamentos = await getApartamentos()
+async function getSaldosCuentaCorriente(): Promise<Record<string, number>> {
+  try {
+    const apartamentos = await prisma.apartamento.findMany({
+      include: {
+        transacciones: true,
+      },
+    })
 
-  return <ApartamentosClient initialApartamentos={apartamentos} />
+    const saldos: Record<string, number> = {}
+
+    for (const apt of apartamentos) {
+      let saldo = 0
+      for (const trans of apt.transacciones) {
+        if (trans.tipo === "VENTA_CREDITO") {
+          // Cargo (solo el monto pendiente = monto - montoPagado)
+          // montoPagado se actualiza cuando se crea un RECIBO_PAGO
+          saldo += trans.monto - (trans.montoPagado || 0)
+        }
+        // RECIBO_PAGO ya está reflejado en montoPagado de VENTA_CREDITO
+        // No se resta aquí para evitar doble conteo
+      }
+      saldos[apt.id] = saldo
+    }
+
+    return saldos
+  } catch {
+    return {}
+  }
+}
+
+export default async function ApartamentosPage() {
+  const [apartamentos, saldos] = await Promise.all([
+    getApartamentos(),
+    getSaldosCuentaCorriente(),
+  ])
+
+  return <ApartamentosClient initialApartamentos={apartamentos} initialSaldos={saldos} />
 }

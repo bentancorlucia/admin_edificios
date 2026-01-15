@@ -72,6 +72,7 @@ const tipoLabels = {
 
 const categoriaLabels: Record<string, string> = {
   GASTOS_COMUNES: "Gastos Comunes",
+  FONDO_RESERVA: "Fondo de Reserva",
   MANTENIMIENTO: "Mantenimiento",
   SERVICIOS: "Servicios",
   ADMINISTRACION: "Administración",

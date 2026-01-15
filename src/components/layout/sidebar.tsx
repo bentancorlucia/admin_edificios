@@ -6,16 +6,22 @@ import { cn } from "@/lib/utils"
 import {
   LayoutDashboard,
   Building2,
-  Users,
   ArrowUpDown,
-  Building
+  Building,
+  Wrench,
+  Landmark,
+  FileBarChart,
+  ClipboardList,
 } from "lucide-react"
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Apartamentos", href: "/apartamentos", icon: Building2 },
-  { name: "Inquilinos", href: "/inquilinos", icon: Users },
+  { name: "Servicios", href: "/servicios", icon: Wrench },
   { name: "Transacciones", href: "/transacciones", icon: ArrowUpDown },
+  { name: "Bancos", href: "/bancos", icon: Landmark },
+  { name: "Bitácora", href: "/bitacora", icon: ClipboardList },
+  { name: "Informes", href: "/informes", icon: FileBarChart },
 ]
 
 export function Sidebar() {

@@ -8,23 +8,26 @@ datasource db {
 }
 
 model Apartamento {
-  id              String        @id @default(cuid())
-  numero          String        @unique
-  piso            Int?
-  metrosCuadrados Float?
-  habitaciones    Int           @default(1)
-  banos           Int           @default(1)
-  alicuota        Float         @default(0)
-  cuotaMensual    Float         @default(0)
-  estado          EstadoApto    @default(DISPONIBLE)
-  celular         String?
-  email           String?
-  notas           String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                String          @id @default(cuid())
+  numero            String
+  piso              Int?
+  alicuota          Float           @default(0)
+  gastosComunes     Float           @default(0)
+  fondoReserva      Float           @default(0)
+  tipoOcupacion     TipoOcupacion   @default(PROPIETARIO)
+  contactoNombre    String?
+  contactoApellido  String?
+  contactoCelular   String?
+  contactoEmail     String?
+  notas             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   inquilinos    Inquilino[]
   transacciones Transaccion[]
+
+  // Un apartamento puede tener un registro de Propietario y otro de Inquilino
+  @@unique([numero, tipoOcupacion])
 }
 
 model Inquilino {
@@ -63,18 +66,58 @@ model Transaccion {
 
   apartamentoId    String?
   apartamento      Apartamento?      @relation(fields: [apartamentoId], references: [id], onDelete: SetNull)
+
+  movimientoBancario MovimientoBancario?
 }
 
 model CuentaBancaria {
-  id          String   @id @default(cuid())
-  banco       String
-  tipoCuenta  String
+  id           String              @id @default(cuid())
+  banco        String
+  tipoCuenta   String
   numeroCuenta String
-  titular     String?
-  saldo       Float    @default(0)
-  activa      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  titular      String?
+  saldoInicial Float               @default(0)
+  activa       Boolean             @default(true)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  movimientos  MovimientoBancario[]
+}
+
+model MovimientoBancario {
+  id              String                @id @default(cuid())
+  tipo            TipoMovimientoBancario
+  monto           Float
+  fecha           DateTime              @default(now())
+  descripcion     String
+  referencia      String?
+  beneficiario    String?
+  numeroDocumento String?
+  archivoUrl      String?
+  conciliado      Boolean               @default(false)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  cuentaBancariaId String
+  cuentaBancaria   CuentaBancaria @relation(fields: [cuentaBancariaId], references: [id], onDelete: Cascade)
+
+  // Relación opcional con transacción (para vincular recibos de pago)
+  transaccionId    String?        @unique
+  transaccion      Transaccion?   @relation(fields: [transaccionId], references: [id], onDelete: SetNull)
+
+  // Relación opcional con servicio (para vincular egresos con proveedores)
+  servicioId       String?
+  servicio         Servicio?      @relation(fields: [servicioId], references: [id], onDelete: SetNull)
+}
+
+enum TipoMovimientoBancario {
+  INGRESO
+  EGRESO
+}
+
+enum TipoOcupacion {
+  PROPIETARIO
+  INQUILINO
 }
 
 enum EstadoApto {
@@ -97,6 +140,7 @@ enum TipoTransaccion {
 
 enum CategoriaGasto {
   GASTOS_COMUNES
+  FONDO_RESERVA
   MANTENIMIENTO
   SERVICIOS
   ADMINISTRACION
@@ -118,4 +162,80 @@ enum EstadoCredito {
   PENDIENTE
   PARCIAL
   PAGADO
+}
+
+model Servicio {
+  id          String       @id @default(cuid())
+  tipo        TipoServicio
+  nombre      String
+  celular     String?
+  email       String?
+  observaciones String?
+  activo      Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  movimientos MovimientoBancario[]
+}
+
+enum TipoServicio {
+  ELECTRICISTA
+  PLOMERO
+  SANITARIO
+  CERRAJERO
+  PINTOR
+  CARPINTERO
+  ALBANIL
+  JARDINERO
+  LIMPIEZA
+  SEGURIDAD
+  FUMIGACION
+  ASCENSOR
+  VIDRIERIA
+  HERRERIA
+  AIRE_ACONDICIONADO
+  GAS
+  OTRO
+}
+
+model Registro {
+  id            String          @id @default(cuid())
+  fecha         DateTime        @default(now())
+  tipo          TipoRegistro
+  detalle       String
+  observaciones String?
+  situacion     SituacionRegistro @default(PENDIENTE)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+}
+
+enum TipoRegistro {
+  NOVEDAD
+  VENCIMIENTO
+  MANTENIMIENTO
+  REUNION
+  INCIDENTE
+  RECORDATORIO
+  OTRO
+}
+
+enum SituacionRegistro {
+  PENDIENTE
+  EN_PROCESO
+  REALIZADO
+  CANCELADO
+  VENCIDO
+}
+
+model AvisoInforme {
+  id        String   @id @default(cuid())
+  texto     String
+  orden     Int      @default(0)
+  mes       Int
+  anio      Int
+  activo    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([mes, anio])
 }
