@@ -60,9 +60,10 @@ import {
   vincularReciboConIngreso,
   getEstadoCuenta,
   type EstadoCuentaData,
-} from "./actions"
+} from "@/lib/database"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { generateEstadoCuentaPDF } from "@/lib/pdf"
+import { toast } from "@/hooks/use-toast"
 
 type TipoMovimiento = "INGRESO" | "EGRESO"
 type ClasificacionEgreso = "GASTO_COMUN" | "FONDO_RESERVA"
@@ -291,16 +292,12 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
       if (selectedCuenta) {
         const result = await updateCuentaBancaria(selectedCuenta.id, data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
         // Si se marcó como por defecto, desmarcar las demás en el estado local
         if (data.porDefecto) {
           setCuentas((prev) =>
             prev.map((c) =>
               c.id === selectedCuenta.id
-                ? { ...c, ...result.data }
+                ? { ...c, ...result, movimientos: c.movimientos }
                 : { ...c, porDefecto: false }
             )
           )
@@ -308,25 +305,21 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
           setCuentas((prev) =>
             prev.map((c) =>
               c.id === selectedCuenta.id
-                ? { ...c, ...result.data }
+                ? { ...c, ...result, movimientos: c.movimientos }
                 : c
             )
           )
         }
       } else {
         const result = await createCuentaBancaria(data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
         // Si se marcó como por defecto, desmarcar las demás en el estado local
         if (data.porDefecto) {
           setCuentas((prev) => [
             ...prev.map((c) => ({ ...c, porDefecto: false })),
-            { ...result.data, movimientos: [] }
+            { ...result, movimientos: [] }
           ])
         } else {
-          setCuentas((prev) => [...prev, { ...result.data, movimientos: [] }])
+          setCuentas((prev) => [...prev, { ...result, movimientos: [] }])
         }
       }
 
@@ -344,11 +337,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setIsLoading(true)
 
     try {
-      const result = await deleteCuentaBancaria(selectedCuenta.id)
-      if (!result.success) {
-        alert(result.error)
-        return
-      }
+      await deleteCuentaBancaria(selectedCuenta.id)
       setCuentas((prev) => prev.filter((c) => c.id !== selectedCuenta.id))
       setIsDeleteDialogOpen(false)
       setSelectedCuenta(null)
@@ -448,11 +437,6 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         result = await createMovimientoBancario(movimientoData)
       }
 
-      if (!result.success) {
-        setError(result.error)
-        return
-      }
-
       // Actualizar la cuenta con el movimiento
       setCuentas((prev) =>
         prev.map((c) => {
@@ -465,19 +449,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               movimientos: c.movimientos.map((m) =>
                 m.id === selectedMovimiento.id
                   ? {
-                      id: result.data.id,
-                      tipo: result.data.tipo,
-                      monto: result.data.monto,
-                      fecha: result.data.fecha,
-                      descripcion: result.data.descripcion,
-                      referencia: result.data.referencia,
-                      numeroDocumento: result.data.numeroDocumento,
-                      archivoUrl: result.data.archivoUrl,
-                      clasificacion: result.data.clasificacion,
-                      servicioId: result.data.servicioId,
-                      conciliado: result.data.conciliado,
-                      transaccionId: result.data.transaccionId,
-                      servicio: result.data.servicio,
+                      id: result.id,
+                      tipo: result.tipo,
+                      monto: result.monto,
+                      fecha: result.fecha,
+                      descripcion: result.descripcion,
+                      referencia: result.referencia,
+                      numeroDocumento: result.numeroDocumento,
+                      archivoUrl: result.archivoUrl,
+                      clasificacion: result.clasificacion,
+                      servicioId: result.servicioId,
+                      conciliado: result.conciliado,
+                      transaccionId: result.transaccionId,
                     }
                   : m
               ),
@@ -488,19 +471,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               ...c,
               movimientos: [
                 {
-                  id: result.data.id,
-                  tipo: result.data.tipo,
-                  monto: result.data.monto,
-                  fecha: result.data.fecha,
-                  descripcion: result.data.descripcion,
-                  referencia: result.data.referencia,
-                  numeroDocumento: result.data.numeroDocumento,
-                  archivoUrl: result.data.archivoUrl,
-                  clasificacion: result.data.clasificacion,
-                  servicioId: result.data.servicioId,
-                  conciliado: result.data.conciliado,
-                  transaccionId: result.data.transaccionId,
-                  servicio: result.data.servicio,
+                  id: result.id,
+                  tipo: result.tipo,
+                  monto: result.monto,
+                  fecha: result.fecha,
+                  descripcion: result.descripcion,
+                  referencia: result.referencia,
+                  numeroDocumento: result.numeroDocumento,
+                  archivoUrl: result.archivoUrl,
+                  clasificacion: result.clasificacion,
+                  servicioId: result.servicioId,
+                  conciliado: result.conciliado,
+                  transaccionId: result.transaccionId,
                 },
                 ...c.movimientos,
               ],
@@ -524,17 +506,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setIsLoading(true)
 
     try {
-      const result = await deleteMovimientoBancario(selectedMovimiento.id)
-      if (!result.success) {
-        alert(result.error)
-        return
-      }
-
-      // Si el movimiento tenía una transacción vinculada, agregar de vuelta a recibos
-      if (selectedMovimiento.transaccionId) {
-        // Actualizar recibos no vinculados
-        setRecibos((prev) => [...prev])
-      }
+      await deleteMovimientoBancario(selectedMovimiento.id)
 
       setCuentas((prev) =>
         prev.map((c) =>
@@ -569,10 +541,6 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
     try {
       const result = await vincularReciboConIngreso(reciboId, selectedCuenta.id)
-      if (!result.success) {
-        alert(result.error)
-        return
-      }
 
       // Actualizar la cuenta con el nuevo movimiento
       setCuentas((prev) =>
@@ -582,19 +550,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 ...c,
                 movimientos: [
                   {
-                    id: result.data.id,
-                    tipo: result.data.tipo,
-                    monto: result.data.monto,
-                    fecha: result.data.fecha,
-                    descripcion: result.data.descripcion,
-                    referencia: result.data.referencia,
-                    numeroDocumento: result.data.numeroDocumento,
-                    archivoUrl: result.data.archivoUrl,
-                    clasificacion: result.data.clasificacion,
-                    servicioId: result.data.servicioId,
-                    conciliado: result.data.conciliado,
-                    transaccionId: result.data.transaccionId,
-                    servicio: result.data.servicio,
+                    id: result.id,
+                    tipo: result.tipo,
+                    monto: result.monto,
+                    fecha: result.fecha,
+                    descripcion: result.descripcion,
+                    referencia: result.referencia,
+                    numeroDocumento: result.numeroDocumento,
+                    archivoUrl: result.archivoUrl,
+                    clasificacion: result.clasificacion,
+                    servicioId: result.servicioId,
+                    conciliado: result.conciliado,
+                    transaccionId: result.transaccionId,
                   },
                   ...c.movimientos,
                 ],
@@ -605,8 +572,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
       // Eliminar de recibos no vinculados
       setRecibos((prev) => prev.filter((r) => r.id !== reciboId))
-    } catch {
-      alert("Error al vincular el recibo")
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Error al vincular el recibo")
     } finally {
       setIsLoading(false)
     }
@@ -653,16 +620,45 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
   const handleExportEstadoCuenta = () => {
     if (!estadoCuenta) return
     generateEstadoCuentaPDF(estadoCuenta)
+    toast({
+      title: "PDF descargado",
+      description: `Estado de cuenta de ${estadoCuenta.cuenta.banco} descargado correctamente`,
+      variant: "success",
+    })
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">
-        Gestión Bancaria
-      </h1>
+    <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
+      {/* Header con gradiente */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 p-6 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+                <Landmark className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Gestión Bancaria</h1>
+                <p className="text-emerald-100 text-sm">
+                  Administra tus cuentas bancarias y movimientos
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <Button
+            onClick={openCreateAccountDialog}
+            className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Nueva Cuenta
+          </Button>
+        </div>
+      </div>
 
       {/* Actions Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
@@ -672,10 +668,6 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
             className="pl-10"
           />
         </div>
-        <Button onClick={openCreateAccountDialog}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nueva Cuenta
-        </Button>
       </div>
 
       {/* Resumen General */}

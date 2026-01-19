@@ -1,98 +1,19 @@
-import { prisma } from "@/lib/prisma"
+"use client"
+
+import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Building2, TrendingUp, TrendingDown, Wallet, User, UserCheck } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { BuildingView } from "@/components/building-view"
+import {
+  getDashboardData,
+  type DashboardData,
+  type TransaccionConApartamento,
+} from "@/lib/database"
 
-async function getDashboardData() {
-  try {
-    const [apartamentos, todasTransacciones, transaccionesRecientes] = await Promise.all([
-      prisma.apartamento.findMany({
-        orderBy: [{ piso: 'asc' }, { numero: 'asc' }],
-      }),
-      // Todas las transacciones para calcular el balance real
-      prisma.transaccion.findMany(),
-      // Solo las 10 más recientes para mostrar en la lista
-      prisma.transaccion.findMany({
-        include: { apartamento: true },
-        orderBy: { fecha: 'desc' },
-        take: 10,
-      }),
-    ])
-
-    // Contar unidades únicas y tipos
-    const unidadesUnicas = new Set(apartamentos.map((a: typeof apartamentos[0]) => a.numero))
-    const totalUnidades = unidadesUnicas.size
-    const propietariosData = apartamentos.filter((a: typeof apartamentos[0]) => a.tipoOcupacion === 'PROPIETARIO')
-    const inquilinosData = apartamentos.filter((a: typeof apartamentos[0]) => a.tipoOcupacion === 'INQUILINO')
-
-    // Contar unidades que tienen ambos registros (P/I)
-    const unidadesConAmbos = Array.from(unidadesUnicas).filter(numero => {
-      const registros = apartamentos.filter((a: typeof apartamentos[0]) => a.numero === numero)
-      return registros.some((r: typeof apartamentos[0]) => r.tipoOcupacion === 'PROPIETARIO') &&
-             registros.some((r: typeof apartamentos[0]) => r.tipoOcupacion === 'INQUILINO')
-    }).length
-
-    // Calcular gastos totales por tipo
-    const gastosPropietarios = propietariosData.reduce((acc: number, a: typeof apartamentos[0]) =>
-      acc + a.gastosComunes + a.fondoReserva, 0)
-    const gastosInquilinos = inquilinosData.reduce((acc: number, a: typeof apartamentos[0]) =>
-      acc + a.gastosComunes + a.fondoReserva, 0)
-
-    // Calcular ingresos usando TODAS las transacciones
-    // RECIBO_PAGO = pagos de los propietarios/inquilinos = INGRESO para el edificio
-    const ingresos = todasTransacciones
-      .filter(t => t.tipo === 'INGRESO' || t.tipo === 'RECIBO_PAGO')
-      .reduce((acc, t) => acc + t.monto, 0)
-
-    const egresos = todasTransacciones
-      .filter(t => t.tipo === 'EGRESO')
-      .reduce((acc, t) => acc + t.monto, 0)
-
-    const creditosPendientes = todasTransacciones
-      .filter(t => t.tipo === 'VENTA_CREDITO' && t.estadoCredito !== 'PAGADO')
-      .reduce((acc, t) => acc + (t.monto - (t.montoPagado || 0)), 0)
-
-    const balance = ingresos - egresos
-
-    return {
-      totalUnidades,
-      totalRegistros: apartamentos.length,
-      propietarios: propietariosData.length,
-      inquilinosRegistrados: inquilinosData.length,
-      unidadesConAmbos,
-      inquilinosActivos: inquilinosData.length,
-      gastosPropietarios,
-      gastosInquilinos,
-      ingresos,
-      egresos,
-      balance,
-      creditosPendientes,
-      transaccionesRecientes: transaccionesRecientes,
-      apartamentos,
-    }
-  } catch {
-    return {
-      totalUnidades: 0,
-      totalRegistros: 0,
-      propietarios: 0,
-      inquilinosRegistrados: 0,
-      unidadesConAmbos: 0,
-      inquilinosActivos: 0,
-      gastosPropietarios: 0,
-      gastosInquilinos: 0,
-      ingresos: 0,
-      egresos: 0,
-      balance: 0,
-      creditosPendientes: 0,
-      transaccionesRecientes: [],
-      apartamentos: [],
-    }
-  }
-}
-
-function getTransactionTypeLabel(tipo: string) {
+// Memoizar funciones de utilidad fuera del componente
+const getTransactionTypeLabel = (tipo: string) => {
   switch (tipo) {
     case 'INGRESO': return 'Ingreso'
     case 'EGRESO': return 'Egreso'
@@ -102,7 +23,7 @@ function getTransactionTypeLabel(tipo: string) {
   }
 }
 
-function getEstadoCreditoBadge(estado: string | null) {
+const getEstadoCreditoBadge = (estado: string | null) => {
   switch (estado) {
     case 'PAGADO':
       return <Badge variant="success">Pagado</Badge>
@@ -115,8 +36,56 @@ function getEstadoCreditoBadge(estado: string | null) {
   }
 }
 
-export default async function DashboardPage() {
-  const data = await getDashboardData()
+// Componente de skeleton para carga
+function DashboardSkeleton() {
+  return (
+    <div className="p-6 animate-pulse">
+      <div className="h-8 w-32 bg-slate-200 rounded mb-6"></div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-24 bg-slate-200 rounded-lg"></div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i} className="h-20 bg-slate-200 rounded-lg"></div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export default function DashboardPage() {
+  const [data, setData] = useState<DashboardData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    let isMounted = true
+
+    async function loadData() {
+      try {
+        const dashboardData = await getDashboardData()
+        if (isMounted) {
+          setData(dashboardData)
+        }
+      } catch (error) {
+        console.error("Error loading dashboard data:", error)
+      } finally {
+        if (isMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+    loadData()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  if (isLoading || !data) {
+    return <DashboardSkeleton />
+  }
 
   return (
     <div className="p-6">
@@ -269,7 +238,7 @@ export default async function DashboardPage() {
             {data.transaccionesRecientes.length === 0 ? (
               <p className="text-slate-500 text-center py-8">No hay transacciones registradas</p>
             ) : (
-              data.transaccionesRecientes.map((transaccion) => (
+              data.transaccionesRecientes.map((transaccion: TransaccionConApartamento) => (
                 <div
                   key={transaccion.id}
                   className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0"

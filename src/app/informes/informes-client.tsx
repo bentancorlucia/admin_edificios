@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useTransition } from "react"
+import { useState, useTransition, useMemo, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -46,21 +46,21 @@ import {
   BarChart3,
 } from "lucide-react"
 import {
-  InformeData,
-  AvisoInforme,
-  InformeAcumuladoData,
+  type InformeData,
+  type AvisoInforme,
+  type InformeAcumuladoData,
   getInformeData,
   getInformeAcumulado,
   createAvisoInforme,
   updateAvisoInforme,
   deleteAvisoInforme,
   reorderAvisosInforme,
-  getAvisosInforme,
   updatePiePaginaInforme,
-} from "./actions"
+} from "@/lib/database"
 import { Input } from "@/components/ui/input"
 import { generateInformePDF } from "@/lib/informe-pdf"
 import { generateInformeExcel } from "@/lib/informe-excel"
+import { toast } from "@/hooks/use-toast"
 
 const meses = [
   { value: 1, label: "Enero" },
@@ -227,22 +227,36 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
     }
   }
 
-  const formatCurrency = (value: number) => {
+  // Memoizar función de formateo
+  const formatCurrency = useCallback((value: number) => {
     return `$ ${value.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
+  }, [])
 
-  const getMesLabel = () => {
+  // Memoizar label del mes
+  const mesLabel = useMemo(() => {
     const mesObj = meses.find((m) => m.value === mes)
     return mesObj ? `${mesObj.label} ${anio}` : ""
-  }
+  }, [mes, anio])
 
-  const handleExportPDF = () => {
-    generateInformePDF(data, getMesLabel(), piePagina)
-  }
+  const getMesLabel = useCallback(() => mesLabel, [mesLabel])
 
-  const handleExportExcel = () => {
-    generateInformeExcel(data, getMesLabel())
-  }
+  const handleExportPDF = useCallback(() => {
+    generateInformePDF(data, mesLabel, piePagina)
+    toast({
+      title: "PDF descargado",
+      description: `Informe de ${mesLabel} descargado correctamente`,
+      variant: "success",
+    })
+  }, [data, mesLabel, piePagina])
+
+  const handleExportExcel = useCallback(() => {
+    generateInformeExcel(data, mesLabel)
+    toast({
+      title: "Excel descargado",
+      description: `Informe de ${mesLabel} descargado correctamente`,
+      variant: "success",
+    })
+  }, [data, mesLabel])
 
   return (
     <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">

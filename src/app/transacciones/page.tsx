@@ -1,29 +1,49 @@
-import { prisma } from "@/lib/prisma"
+"use client"
+
+import { useEffect, useState } from "react"
 import { TransaccionesClient } from "./transacciones-client"
+import {
+  getTransaccionesConApartamento,
+  getApartamentos,
+  getCuentasBancarias,
+  type TransaccionConApartamento,
+  type Apartamento,
+  type CuentaBancaria,
+} from "@/lib/database"
 
-async function getData() {
-  try {
-    const [transacciones, apartamentos, cuentasBancarias] = await Promise.all([
-      prisma.transaccion.findMany({
-        include: { apartamento: true },
-        orderBy: { fecha: 'desc' },
-      }),
-      prisma.apartamento.findMany({
-        orderBy: { numero: 'asc' },
-      }),
-      prisma.cuentaBancaria.findMany({
-        where: { activa: true },
-        orderBy: { banco: 'asc' },
-      }),
-    ])
-    return { transacciones, apartamentos, cuentasBancarias }
-  } catch {
-    return { transacciones: [], apartamentos: [], cuentasBancarias: [] }
+export default function TransaccionesPage() {
+  const [transacciones, setTransacciones] = useState<TransaccionConApartamento[]>([])
+  const [apartamentos, setApartamentos] = useState<Apartamento[]>([])
+  const [cuentasBancarias, setCuentasBancarias] = useState<CuentaBancaria[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [transaccionesData, apartamentosData, cuentasData] = await Promise.all([
+          getTransaccionesConApartamento(),
+          getApartamentos(),
+          getCuentasBancarias(),
+        ])
+        setTransacciones(transaccionesData)
+        setApartamentos(apartamentosData)
+        setCuentasBancarias(cuentasData.filter(c => c.activa))
+      } catch (error) {
+        console.error("Error loading data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadData()
+  }, [])
+
+  if (isLoading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[400px]">
+        <div className="text-slate-500">Cargando transacciones...</div>
+      </div>
+    )
   }
-}
-
-export default async function TransaccionesPage() {
-  const { transacciones, apartamentos, cuentasBancarias } = await getData()
 
   return (
     <TransaccionesClient

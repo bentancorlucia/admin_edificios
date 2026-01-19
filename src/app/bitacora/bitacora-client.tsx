@@ -30,13 +30,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { ClipboardList, Plus, Search, Download, Edit, Trash2, AlertCircle, Calendar } from "lucide-react"
+import { ClipboardList, Plus, Search, Download, Edit, Trash2, AlertCircle, Calendar, FileText } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   createRegistro,
   updateRegistro,
   deleteRegistro,
-} from "./actions"
+  type Registro as RegistroType,
+} from "@/lib/database"
+import { generateBitacoraPDF } from "@/lib/bitacora-pdf"
+import { toast } from "@/hooks/use-toast"
 
 type TipoRegistro =
   | "NOVEDAD"
@@ -56,7 +59,7 @@ type SituacionRegistro =
 
 type Registro = {
   id: string
-  fecha: Date
+  fecha: string
   tipo: TipoRegistro
   detalle: string
   observaciones: string | null
@@ -185,7 +188,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
 
     try {
       const data = {
-        fecha: new Date(formData.fecha),
+        fecha: new Date(formData.fecha).toISOString(),
         tipo: formData.tipo,
         detalle: formData.detalle,
         observaciones: formData.observaciones || null,
@@ -194,20 +197,12 @@ export function BitacoraClient({ initialRegistros }: Props) {
 
       if (selectedRegistro) {
         const result = await updateRegistro(selectedRegistro.id, data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
         setRegistros((prev) =>
-          prev.map((reg) => (reg.id === result.data.id ? result.data : reg))
+          prev.map((reg) => (reg.id === result.id ? result as Registro : reg))
         )
       } else {
         const result = await createRegistro(data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
-        setRegistros((prev) => [result.data, ...prev])
+        setRegistros((prev) => [result as Registro, ...prev])
       }
 
       setIsDialogOpen(false)
@@ -225,11 +220,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
     setIsLoading(true)
 
     try {
-      const result = await deleteRegistro(selectedRegistro.id)
-      if (!result.success) {
-        alert(result.error)
-        return
-      }
+      await deleteRegistro(selectedRegistro.id)
       setRegistros((prev) => prev.filter((reg) => reg.id !== selectedRegistro.id))
       setIsDeleteDialogOpen(false)
       setSelectedRegistro(null)
@@ -241,7 +232,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
     }
   }
 
-  const handleExport = () => {
+  const handleExportCSV = () => {
     const headers = ["Fecha", "Tipo", "Detalle", "Observaciones", "Situación"]
     const rows = registros.map((reg) => [
       formatDate(reg.fecha),
@@ -258,6 +249,20 @@ export function BitacoraClient({ initialRegistros }: Props) {
     a.href = url
     a.download = "bitacora.csv"
     a.click()
+    toast({
+      title: "CSV descargado",
+      description: "Bitácora exportada correctamente",
+      variant: "success",
+    })
+  }
+
+  const handleExportPDF = () => {
+    generateBitacoraPDF(registros)
+    toast({
+      title: "PDF descargado",
+      description: "Bitácora exportada correctamente",
+      variant: "success",
+    })
   }
 
   // Contadores para el resumen
@@ -267,30 +272,74 @@ export function BitacoraClient({ initialRegistros }: Props) {
   const vencidos = registros.filter(r => r.situacion === "VENCIDO").length
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Bitácora de Gestión</h1>
+    <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
+      {/* Header con gradiente */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-600 via-slate-700 to-slate-800 p-6 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+                <ClipboardList className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Bitácora de Gestión</h1>
+                <p className="text-slate-300 text-sm">
+                  Seguimiento de tareas, novedades y mantenimiento
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={handleExportPDF}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <FileText className="h-4 w-4 mr-2" />
+              PDF
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={handleExportCSV}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              CSV
+            </Button>
+            <Button
+              onClick={openCreateDialog}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Registro
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Resumen */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <Card>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-yellow-50 to-amber-50">
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-yellow-600">{pendientes}</div>
             <div className="text-sm text-slate-500">Pendientes</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-0 shadow-md bg-gradient-to-br from-blue-50 to-indigo-50">
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-blue-600">{enProceso}</div>
             <div className="text-sm text-slate-500">En Proceso</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-0 shadow-md bg-gradient-to-br from-green-50 to-emerald-50">
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-green-600">{realizados}</div>
             <div className="text-sm text-slate-500">Realizados</div>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="border-0 shadow-md bg-gradient-to-br from-red-50 to-rose-50">
           <CardContent className="p-4">
             <div className="text-2xl font-bold text-red-600">{vencidos}</div>
             <div className="text-sm text-slate-500">Vencidos</div>
@@ -299,7 +348,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
       </div>
 
       {/* Actions Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
@@ -331,16 +380,6 @@ export function BitacoraClient({ initialRegistros }: Props) {
             ))}
           </SelectContent>
         </Select>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />
-            Exportar
-          </Button>
-          <Button onClick={openCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nuevo Registro
-          </Button>
-        </div>
       </div>
 
       {/* Registros List */}

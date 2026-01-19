@@ -1,4 +1,4 @@
-import { InformeData } from "@/app/informes/actions"
+import { type InformeData } from "@/lib/database"
 
 const tipoOcupacionLabels: Record<string, string> = {
   PROPIETARIO: "Propietario",

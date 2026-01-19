@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,13 +23,14 @@ import {
 import {
   TrendingUp,
   TrendingDown,
-  Plus,
   Download,
   CreditCard,
   Receipt,
   Filter,
   Pencil,
   Trash2,
+  Calendar,
+  X,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import {
@@ -38,8 +39,10 @@ import {
   createReciboPago,
   updateTransaccion,
   deleteTransaccion,
-} from "./actions"
+  type Transaccion as DBTransaccion,
+} from "@/lib/database"
 import { generateTransaccionesPDF } from "@/lib/pdf"
+import { toast } from "@/hooks/use-toast"
 
 type Apartamento = {
   id: string
@@ -63,7 +66,7 @@ type Transaccion = {
   categoria: string | null
   descripcion: string | null
   referencia: string | null
-  metodoPago: string
+  metodoPago: string | null
   notas: string | null
   estadoCredito: "PENDIENTE" | "PARCIAL" | "PAGADO" | null
   montoPagado: number | null
@@ -108,6 +111,8 @@ const estadoCreditoColors = {
 export function TransaccionesClient({ initialTransacciones, apartamentos, cuentasBancarias }: Props) {
   const [transacciones, setTransacciones] = useState(initialTransacciones)
   const [filter, setFilter] = useState("todos")
+  const [fechaDesde, setFechaDesde] = useState("")
+  const [fechaHasta, setFechaHasta] = useState("")
   const [isTransaccionDialogOpen, setIsTransaccionDialogOpen] = useState(false)
   const [isVentaCreditoDialogOpen, setIsVentaCreditoDialogOpen] = useState(false)
   const [isReciboPagoDialogOpen, setIsReciboPagoDialogOpen] = useState(false)
@@ -171,32 +176,63 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     notas: "",
   })
 
-  const filteredTransacciones = transacciones.filter((t) => {
-    if (filter === "todos") return true
-    if (filter === "ingresos") return t.tipo === "INGRESO" || t.tipo === "RECIBO_PAGO"
-    if (filter === "egresos") return t.tipo === "EGRESO"
-    if (filter === "creditos") return t.tipo === "VENTA_CREDITO"
-    return true
-  })
+  // Memoizar filtrado para evitar re-cálculos en cada render
+  const filteredTransacciones = useMemo(() => {
+    return transacciones.filter((t) => {
+      // Filtro por tipo
+      if (filter === "ingresos" && t.tipo !== "INGRESO" && t.tipo !== "RECIBO_PAGO") return false
+      if (filter === "egresos" && t.tipo !== "EGRESO") return false
+      if (filter === "creditos" && t.tipo !== "VENTA_CREDITO") return false
 
-  // Calcular ingresos por Gastos Comunes (recibos con clasificación GASTO_COMUN)
-  const ingresosGastosComunes = transacciones
-    .filter((t) => t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "GASTO_COMUN")
-    .reduce((acc, t) => acc + t.monto, 0)
+      // Filtro por fecha
+      if (fechaDesde || fechaHasta) {
+        const fechaTransaccion = typeof t.fecha === 'string'
+          ? new Date(t.fecha)
+          : t.fecha
+        const fechaStr = fechaTransaccion.toISOString().split("T")[0]
 
-  // Calcular ingresos por Fondo de Reserva (recibos con clasificación FONDO_RESERVA)
-  const ingresosFondoReserva = transacciones
-    .filter((t) => t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "FONDO_RESERVA")
-    .reduce((acc, t) => acc + t.monto, 0)
+        if (fechaDesde && fechaStr < fechaDesde) return false
+        if (fechaHasta && fechaStr > fechaHasta) return false
+      }
 
-  // Total de ingresos (todos los recibos de pago)
-  const totalIngresos = transacciones
-    .filter((t) => t.tipo === "RECIBO_PAGO")
-    .reduce((acc, t) => acc + t.monto, 0)
+      return true
+    })
+  }, [transacciones, filter, fechaDesde, fechaHasta])
 
-  const creditosPendientes = transacciones
-    .filter((t) => t.tipo === "VENTA_CREDITO" && t.estadoCredito !== "PAGADO")
-    .reduce((acc, t) => acc + (t.monto - (t.montoPagado || 0)), 0)
+  const limpiarFiltroFechas = () => {
+    setFechaDesde("")
+    setFechaHasta("")
+  }
+
+  const hayFiltroFechas = fechaDesde || fechaHasta
+
+  // Memoizar cálculos de estadísticas
+  const { ingresosGastosComunes, ingresosFondoReserva, totalIngresos, creditosPendientes } = useMemo(() => {
+    let gastosComunes = 0
+    let fondoReserva = 0
+    let total = 0
+    let pendientes = 0
+
+    for (const t of transacciones) {
+      if (t.tipo === "RECIBO_PAGO") {
+        total += t.monto
+        if (t.clasificacionPago === "GASTO_COMUN") {
+          gastosComunes += t.monto
+        } else if (t.clasificacionPago === "FONDO_RESERVA") {
+          fondoReserva += t.monto
+        }
+      } else if (t.tipo === "VENTA_CREDITO" && t.estadoCredito !== "PAGADO") {
+        pendientes += t.monto - (t.montoPagado || 0)
+      }
+    }
+
+    return {
+      ingresosGastosComunes: gastosComunes,
+      ingresosFondoReserva: fondoReserva,
+      totalIngresos: total,
+      creditosPendientes: pendientes
+    }
+  }, [transacciones])
 
   const resetTransaccionForm = () => {
     setTransaccionForm({
@@ -229,15 +265,23 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         monto: parseFloat(transaccionForm.monto),
         categoria: transaccionForm.categoria || null,
         apartamentoId: transaccionForm.apartamentoId || null,
-        fecha: new Date(transaccionForm.fecha),
+        fecha: new Date(transaccionForm.fecha).toISOString(),
         metodoPago: transaccionForm.metodoPago,
         descripcion: transaccionForm.descripcion || null,
         referencia: transaccionForm.referencia || null,
         notas: transaccionForm.notas || null,
+        estadoCredito: null,
+        montoPagado: null,
+        clasificacionPago: null,
+        montoGastoComun: null,
+        montoFondoReserva: null,
       }
 
       const created = await createTransaccion(data)
-      setTransacciones((prev) => [created, ...prev])
+      const aptData = transaccionForm.apartamentoId
+        ? apartamentos.find(a => a.id === transaccionForm.apartamentoId) || null
+        : null
+      setTransacciones((prev) => [{ ...created, apartamento: aptData } as Transaccion, ...prev])
       setIsTransaccionDialogOpen(false)
       resetTransaccionForm()
     } catch (error) {
@@ -267,13 +311,14 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       const data = {
         monto: parseFloat(ventaCreditoForm.monto),
         apartamentoId: ventaCreditoForm.apartamentoId,
-        fecha: new Date(ventaCreditoForm.fecha),
+        fecha: new Date(ventaCreditoForm.fecha).toISOString(),
+        categoria: "GASTOS_COMUNES",
         descripcion: ventaCreditoForm.descripcion || "Gastos Comunes",
-        notas: ventaCreditoForm.notas || null,
       }
 
       const created = await createVentaCredito(data)
-      setTransacciones((prev) => [created, ...prev])
+      const aptData = apartamentos.find(a => a.id === ventaCreditoForm.apartamentoId) || null
+      setTransacciones((prev) => [{ ...created, apartamento: aptData } as Transaccion, ...prev])
       setIsVentaCreditoDialogOpen(false)
       setVentaCreditoForm({
         monto: "",
@@ -309,16 +354,17 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       const data = {
         monto: parseFloat(reciboPagoForm.monto),
         apartamentoId: reciboPagoForm.apartamentoId,
-        fecha: new Date(reciboPagoForm.fecha),
+        fecha: new Date(reciboPagoForm.fecha).toISOString(),
         metodoPago: reciboPagoForm.metodoPago,
         cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
         referencia: reciboPagoForm.referencia || null,
         notas: reciboPagoForm.notas || null,
-        clasificacionPago: reciboPagoForm.clasificacionPago,
+        clasificacionPago: reciboPagoForm.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA",
       }
 
       const created = await createReciboPago(data)
-      setTransacciones((prev) => [created as unknown as Transaccion, ...prev])
+      const aptData = apartamentos.find(a => a.id === reciboPagoForm.apartamentoId) || null
+      setTransacciones((prev) => [{ ...created, apartamento: aptData } as Transaccion, ...prev])
       setIsReciboPagoDialogOpen(false)
       setReciboPagoForm({
         monto: "",
@@ -338,11 +384,16 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     }
   }
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     generateTransaccionesPDF(filteredTransacciones)
-  }
+    toast({
+      title: "PDF descargado",
+      description: "Reporte de transacciones descargado correctamente",
+      variant: "success",
+    })
+  }, [filteredTransacciones])
 
-  const handleOpenEdit = (transaccion: Transaccion) => {
+  const handleOpenEdit = useCallback((transaccion: Transaccion) => {
     setEditingTransaccion(transaccion)
     const fechaStr = typeof transaccion.fecha === 'string'
       ? transaccion.fecha.split("T")[0]
@@ -354,13 +405,13 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       categoria: transaccion.categoria || "",
       apartamentoId: transaccion.apartamentoId || "",
       fecha: fechaStr,
-      metodoPago: transaccion.metodoPago,
+      metodoPago: transaccion.metodoPago || "",
       descripcion: transaccion.descripcion || "",
       referencia: transaccion.referencia || "",
       notas: transaccion.notas || "",
     })
     setIsEditDialogOpen(true)
-  }
+  }, [])
 
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -369,21 +420,23 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
 
     try {
       const data = {
-        id: editingTransaccion.id,
         tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
         monto: parseFloat(editForm.monto),
         categoria: editForm.categoria || null,
         apartamentoId: editForm.apartamentoId || null,
-        fecha: new Date(editForm.fecha),
-        metodoPago: editForm.metodoPago,
+        fecha: new Date(editForm.fecha).toISOString(),
+        metodoPago: editForm.metodoPago || null,
         descripcion: editForm.descripcion || null,
         referencia: editForm.referencia || null,
         notas: editForm.notas || null,
       }
 
-      const updated = await updateTransaccion(data)
+      const updated = await updateTransaccion(editingTransaccion.id, data)
+      const aptData = editForm.apartamentoId
+        ? apartamentos.find(a => a.id === editForm.apartamentoId) || null
+        : null
       setTransacciones((prev) =>
-        prev.map((t) => (t.id === updated.id ? updated : t))
+        prev.map((t) => (t.id === updated.id ? { ...updated, apartamento: aptData } as Transaccion : t))
       )
       setIsEditDialogOpen(false)
       setEditingTransaccion(null)
@@ -409,30 +462,75 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Transacciones</h1>
+    <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
+      {/* Header con gradiente */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-green-600 via-green-700 to-emerald-800 p-6 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+                <TrendingUp className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Transacciones</h1>
+                <p className="text-green-100 text-sm">
+                  Control de ingresos, egresos y créditos
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={handleExport}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Exportar
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setIsVentaCreditoDialogOpen(true)}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <CreditCard className="h-4 w-4 mr-2" />
+              Venta Crédito
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setIsReciboPagoDialogOpen(true)}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Receipt className="h-4 w-4 mr-2" />
+              Recibo de Pago
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Stats - Desglose de Ingresos */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card className="bg-gradient-to-br from-green-50 to-emerald-50 border-green-200">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-green-50 to-emerald-50">
           <CardContent className="p-4">
             <p className="text-sm text-green-600 font-medium">Total Recibos</p>
             <p className="text-2xl font-bold text-green-700">{formatCurrency(totalIngresos)}</p>
           </CardContent>
         </Card>
-        <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-blue-50 to-indigo-50">
           <CardContent className="p-4">
             <p className="text-sm text-blue-600 font-medium">Gastos Comunes</p>
             <p className="text-2xl font-bold text-blue-700">{formatCurrency(ingresosGastosComunes)}</p>
           </CardContent>
         </Card>
-        <Card className="bg-gradient-to-br from-purple-50 to-violet-50 border-purple-200">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-purple-50 to-violet-50">
           <CardContent className="p-4">
             <p className="text-sm text-purple-600 font-medium">Fondo de Reserva</p>
             <p className="text-2xl font-bold text-purple-700">{formatCurrency(ingresosFondoReserva)}</p>
           </CardContent>
         </Card>
-        <Card className="bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-200">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-amber-50 to-yellow-50">
           <CardContent className="p-4">
             <p className="text-sm text-amber-600 font-medium">Créditos Pendientes</p>
             <p className="text-2xl font-bold text-amber-700">{formatCurrency(creditosPendientes)}</p>
@@ -440,42 +538,76 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         </Card>
       </div>
 
-      {/* Actions */}
-      <div className="flex flex-wrap gap-4 mb-6">
-        <div className="flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          <Select value={filter} onValueChange={setFilter}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="todos">Todos</SelectItem>
-              <SelectItem value="ingresos">Ingresos</SelectItem>
-              <SelectItem value="egresos">Egresos</SelectItem>
-              <SelectItem value="creditos">Créditos</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+      {/* Filtros */}
+      <Card className="border-0 shadow-sm bg-slate-50/50">
+        <CardContent className="p-4">
+          <div className="flex flex-wrap items-center gap-6">
+            {/* Filtro por tipo */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <Filter className="h-4 w-4" />
+                <span>Tipo</span>
+              </div>
+              <Select value={filter} onValueChange={setFilter}>
+                <SelectTrigger className="w-36 bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="ingresos">Ingresos</SelectItem>
+                  <SelectItem value="egresos">Egresos</SelectItem>
+                  <SelectItem value="creditos">Créditos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
 
-        <div className="flex-1" />
+            <div className="h-8 w-px bg-slate-200 hidden sm:block" />
 
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="h-4 w-4 mr-2" />
-          Exportar
-        </Button>
-        <Button variant="outline" onClick={() => setIsVentaCreditoDialogOpen(true)}>
-          <CreditCard className="h-4 w-4 mr-2" />
-          Venta Crédito
-        </Button>
-        <Button variant="outline" onClick={() => setIsReciboPagoDialogOpen(true)}>
-          <Receipt className="h-4 w-4 mr-2" />
-          Recibo de Pago
-        </Button>
-        <Button onClick={() => setIsTransaccionDialogOpen(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Nueva Transacción
-        </Button>
-      </div>
+            {/* Filtro por fecha */}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <Calendar className="h-4 w-4" />
+                <span>Período</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={fechaDesde}
+                  onChange={(e) => setFechaDesde(e.target.value)}
+                  className="w-[140px] bg-white"
+                />
+                <span className="text-slate-400 text-sm">hasta</span>
+                <Input
+                  type="date"
+                  value={fechaHasta}
+                  onChange={(e) => setFechaHasta(e.target.value)}
+                  className="w-[140px] bg-white"
+                />
+                {hayFiltroFechas && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={limpiarFiltroFechas}
+                    className="h-8 px-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* Contador de resultados */}
+            {(filter !== "todos" || hayFiltroFechas) && (
+              <>
+                <div className="h-8 w-px bg-slate-200 hidden sm:block" />
+                <Badge variant="secondary" className="bg-white text-slate-600">
+                  {filteredTransacciones.length} resultado{filteredTransacciones.length !== 1 ? "s" : ""}
+                </Badge>
+              </>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Transactions List */}
       <Card>

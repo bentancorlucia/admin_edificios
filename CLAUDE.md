@@ -1,10 +1,8 @@
-Act as a Full-Stack Developer. Create a Building Management Web Application (SaaS) with the following technical and functional requirements:
+Act as a Full-Stack Developer. Create a Building Management Desktop Application with the following technical and functional requirements:
 
 ### 1. Technical Stack
-- **Framework:** Next.js (App Router).
-- **Database:** PostgreSQL (via Supabase).
-- **ORM:** Prisma (essential for future portability).
-- **Authentication:** Supabase Auth (Email/Password).
+- **Framework:** Next.js (App Router) + Tauri (Desktop App).
+- **Database:** SQLite (local, via @tauri-apps/plugin-sql).
 - **Language:** UI and system messages must be in **Spanish**.
 - **Styling:** Tailwind CSS + Shadcn UI (for a professional dashboard).
 
@@ -15,7 +13,7 @@ Act as a Full-Stack Developer. Create a Building Management Web Application (Saa
     - Automatic distribution of costs based on apartment "alícuota".
 - **Banking & Accounts:** Registry for building bank accounts and tracking individual unit balances (Estado de Cuenta).
 - **PDF Reports:**
-    - Use `jspdf` or `react-pdf` to generate monthly clearance reports.
+    - Use `jspdf` to generate monthly clearance reports.
     - Summary for the administrator and individual reports for units.
 - **Communication:** Buttons to share report summaries/links via **WhatsApp** and **Email**.
 
@@ -23,10 +21,7 @@ Act as a Full-Stack Developer. Create a Building Management Web Application (Saa
 - Main view showing: Total monthly collection, delinquency rate (mora), and pending maintenance tasks.
 - Responsive design for mobile access.
 
-### 4. Implementation Steps
-1. Create the `schema.prisma` file reflecting the relationship between Units, People (Owners/Tenants), Expenses, and Payments.
-2. Setup Supabase client configuration.
-3. Build the Spanish UI components using Tailwind.
-4. Implement the logic for generating and sharing PDFs.
-
-Please provide the folder structure, the Prisma schema, and the main page component to start.
+### 4. Implementation Notes
+- Data is stored locally in SQLite database (database.db)
+- All database operations are in src/lib/database.ts
+- No cloud services or external authentication required

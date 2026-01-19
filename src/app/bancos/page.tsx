@@ -1,72 +1,49 @@
-import { prisma } from "@/lib/prisma"
+"use client"
+
+import { useEffect, useState } from "react"
 import { BancosClient } from "./bancos-client"
+import {
+  getCuentasBancariasConMovimientos,
+  getRecibosNoVinculados,
+  getServiciosActivos,
+  type CuentaBancariaConMovimientos,
+  type ReciboNoVinculado,
+  type Servicio,
+} from "@/lib/database"
 
-async function getCuentasBancarias() {
-  try {
-    const cuentas = await prisma.cuentaBancaria.findMany({
-      orderBy: { banco: "asc" },
-      include: {
-        movimientos: {
-          orderBy: { fecha: "desc" },
-          include: {
-            servicio: {
-              select: {
-                id: true,
-                nombre: true,
-                tipo: true,
-              },
-            },
-          },
-        },
-      },
-    })
-    return cuentas
-  } catch {
-    return []
+export default function BancosPage() {
+  const [cuentas, setCuentas] = useState<CuentaBancariaConMovimientos[]>([])
+  const [recibosNoVinculados, setRecibosNoVinculados] = useState<ReciboNoVinculado[]>([])
+  const [servicios, setServicios] = useState<Servicio[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [cuentasData, recibosData, serviciosData] = await Promise.all([
+          getCuentasBancariasConMovimientos(),
+          getRecibosNoVinculados(),
+          getServiciosActivos(),
+        ])
+        setCuentas(cuentasData)
+        setRecibosNoVinculados(recibosData)
+        setServicios(serviciosData)
+      } catch (error) {
+        console.error("Error loading data:", error)
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadData()
+  }, [])
+
+  if (isLoading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[400px]">
+        <div className="text-slate-500">Cargando cuentas bancarias...</div>
+      </div>
+    )
   }
-}
-
-async function getRecibosNoVinculados() {
-  try {
-    const recibos = await prisma.transaccion.findMany({
-      where: {
-        tipo: "RECIBO_PAGO",
-        movimientoBancario: null,
-      },
-      include: {
-        apartamento: {
-          select: {
-            numero: true,
-            tipoOcupacion: true,
-          },
-        },
-      },
-      orderBy: { fecha: "desc" },
-    })
-    return recibos
-  } catch {
-    return []
-  }
-}
-
-async function getServicios() {
-  try {
-    const servicios = await prisma.servicio.findMany({
-      where: { activo: true },
-      orderBy: { nombre: "asc" },
-    })
-    return servicios
-  } catch {
-    return []
-  }
-}
-
-export default async function BancosPage() {
-  const [cuentas, recibosNoVinculados, servicios] = await Promise.all([
-    getCuentasBancarias(),
-    getRecibosNoVinculados(),
-    getServicios(),
-  ])
 
   return (
     <BancosClient

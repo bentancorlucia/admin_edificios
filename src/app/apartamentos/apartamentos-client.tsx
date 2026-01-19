@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -40,13 +40,15 @@ import {
   updateApartamento,
   deleteApartamento,
   generarTransaccionesMensuales,
-} from "./actions"
+  obtenerSaldosCuentaCorriente,
+} from "@/lib/database"
 import {
   generateApartamentoPDF,
   generatePropietarioPDF,
   generateInquilinoPDF,
   generateApartamentoCompletoPDF
 } from "@/lib/pdf"
+import { toast } from "@/hooks/use-toast"
 
 type Apartamento = {
   id: string
@@ -143,9 +145,17 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     notas: "",
   })
 
-  const apartamentosAgrupados = agruparApartamentos(apartamentos)
-  const filteredApartamentos = apartamentosAgrupados.filter((grupo) =>
-    grupo.numero.toLowerCase().includes(search.toLowerCase())
+  // Memoizar agrupación y filtrado para evitar re-cálculos innecesarios
+  const apartamentosAgrupados = useMemo(
+    () => agruparApartamentos(apartamentos),
+    [apartamentos]
+  )
+
+  const filteredApartamentos = useMemo(
+    () => apartamentosAgrupados.filter((grupo) =>
+      grupo.numero.toLowerCase().includes(search.toLowerCase())
+    ),
+    [apartamentosAgrupados, search]
   )
 
   const resetForm = () => {
@@ -214,20 +224,12 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
 
       if (selectedApartamento) {
         const result = await updateApartamento(selectedApartamento.id, data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
         setApartamentos((prev) =>
-          prev.map((apt) => (apt.id === result.data.id ? result.data : apt))
+          prev.map((apt) => (apt.id === result.id ? result : apt))
         )
       } else {
         const result = await createApartamento(data)
-        if (!result.success) {
-          setError(result.error)
-          return
-        }
-        setApartamentos((prev) => [...prev, result.data])
+        setApartamentos((prev) => [...prev, result])
       }
 
       setIsDialogOpen(false)
@@ -245,11 +247,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     setIsLoading(true)
 
     try {
-      const result = await deleteApartamento(selectedApartamento.id)
-      if (!result.success) {
-        alert(result.error)
-        return
-      }
+      await deleteApartamento(selectedApartamento.id)
       setApartamentos((prev) => prev.filter((apt) => apt.id !== selectedApartamento.id))
       setIsDeleteDialogOpen(false)
       setSelectedApartamento(null)
@@ -261,31 +259,52 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     }
   }
 
-  const handleGeneratePDF = (apt: Apartamento) => {
+  // Memoizar handlers para evitar re-creación en cada render
+  const handleGeneratePDF = useCallback((apt: Apartamento) => {
     generateApartamentoPDF(apt)
-  }
+    toast({
+      title: "PDF descargado",
+      description: `Reporte del apartamento ${apt.numero} descargado correctamente`,
+      variant: "success",
+    })
+  }, [])
 
-  const handleGeneratePropietarioPDF = (grupo: ApartamentoAgrupado) => {
+  const handleGeneratePropietarioPDF = useCallback((grupo: ApartamentoAgrupado) => {
     generatePropietarioPDF(grupo, saldos)
-  }
+    toast({
+      title: "PDF descargado",
+      description: `Reporte de propietario del Apto ${grupo.numero} descargado correctamente`,
+      variant: "success",
+    })
+  }, [saldos])
 
-  const handleGenerateInquilinoPDF = (grupo: ApartamentoAgrupado) => {
+  const handleGenerateInquilinoPDF = useCallback((grupo: ApartamentoAgrupado) => {
     generateInquilinoPDF(grupo, saldos)
-  }
+    toast({
+      title: "PDF descargado",
+      description: `Reporte de inquilino del Apto ${grupo.numero} descargado correctamente`,
+      variant: "success",
+    })
+  }, [saldos])
 
-  const handleGenerateCompletoPDF = (grupo: ApartamentoAgrupado) => {
+  const handleGenerateCompletoPDF = useCallback((grupo: ApartamentoAgrupado) => {
     generateApartamentoCompletoPDF(grupo, saldos)
-  }
+    toast({
+      title: "PDF descargado",
+      description: `Reporte completo del Apto ${grupo.numero} descargado correctamente`,
+      variant: "success",
+    })
+  }, [saldos])
 
-  const handleShareWhatsApp = (apt: Apartamento) => {
+  const handleShareWhatsApp = useCallback((apt: Apartamento) => {
     const totalMensual = apt.gastosComunes + apt.fondoReserva
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
     const message = `Apartamento ${apt.numero}\nPiso: ${apt.piso || 'N/A'}\nTipo: ${tipoOcupacionLabels[apt.tipoOcupacion]}\nContacto: ${contacto}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
     const url = `https://wa.me/?text=${encodeURIComponent(message)}`
     window.open(url, '_blank')
-  }
+  }, [])
 
-  const handleShareWhatsAppGrupo = (grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
+  const handleShareWhatsAppGrupo = useCallback((grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
     const totalMensual = apt.gastosComunes + apt.fondoReserva
@@ -294,9 +313,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     const message = `Apartamento ${grupo.numero} - ${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nContacto: ${contacto}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
     const url = `https://wa.me/?text=${encodeURIComponent(message)}`
     window.open(url, '_blank')
-  }
+  }, [])
 
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
     const headers = ["Número", "Piso", "Tipo", "Contacto", "Gastos Comunes", "Fondo Reserva", "Total Mensual"]
     const rows = apartamentos.map((apt) => [
       apt.numero,
@@ -315,7 +334,12 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     a.href = url
     a.download = "apartamentos.csv"
     a.click()
-  }
+    toast({
+      title: "CSV descargado",
+      description: "Lista de apartamentos exportada correctamente",
+      variant: "success",
+    })
+  }, [apartamentos])
 
   const handleGenerarTransacciones = async () => {
     setIsGenerating(true)
@@ -324,37 +348,95 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
 
     try {
       const result = await generarTransaccionesMensuales()
-      if (result.success) {
-        // Guardar datos y mostrar modal de éxito
-        setSuccessData(result.data)
-        setIsSuccessDialogOpen(true)
+      // Guardar datos y mostrar modal de éxito
+      setSuccessData(result)
+      setIsSuccessDialogOpen(true)
 
-        // Actualizar saldos después de generar transacciones
-        const { obtenerSaldosCuentaCorriente } = await import("./actions")
-        const saldosResult = await obtenerSaldosCuentaCorriente()
-        if (saldosResult.success) {
-          setSaldos(saldosResult.data)
-        }
-
-        // Refrescar la página para que transacciones se actualice
-        router.refresh()
-      } else {
-        setError(result.error || "Error desconocido")
-      }
+      // Actualizar saldos después de generar transacciones
+      const saldosData = await obtenerSaldosCuentaCorriente()
+      setSaldos(saldosData)
     } catch (err) {
       console.error("Error generando transacciones:", err)
-      setError(`Error inesperado: ${err instanceof Error ? err.message : "desconocido"}`)
+      setError(`${err instanceof Error ? err.message : "Error desconocido"}`)
     } finally {
       setIsGenerating(false)
     }
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Apartamentos</h1>
+    <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
+      {/* Header con gradiente */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-blue-700 to-indigo-800 p-6 text-white shadow-xl">
+        <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
+        <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+                <Building2 className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Apartamentos</h1>
+                <p className="text-blue-100 text-sm">
+                  Gestión de unidades, propietarios e inquilinos
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={handleExport}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              Exportar
+            </Button>
+            <AlertDialog open={isGenerateDialogOpen} onOpenChange={setIsGenerateDialogOpen}>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="secondary"
+                  disabled={isGenerating}
+                  className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+                >
+                  <Receipt className="h-4 w-4 mr-2" />
+                  {isGenerating ? "Generando..." : "Generar Transacciones"}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Generar Transacciones del Mes</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se generarán cargos de Gastos Comunes y Fondo de Reserva para todos los apartamentos que tengan montos configurados.
+                    <br /><br />
+                    <strong>Apartamentos con montos:</strong> {apartamentos.filter(a => a.gastosComunes > 0 || a.fondoReserva > 0).length} de {apartamentos.length}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <Button
+                    onClick={handleGenerarTransacciones}
+                    disabled={isGenerating}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    {isGenerating ? "Generando..." : "Generar Transacciones"}
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button
+              onClick={openCreateDialog}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Apartamento
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Actions Bar */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
@@ -363,48 +445,6 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
             onChange={(e) => setSearch(e.target.value)}
             className="pl-10"
           />
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleExport}>
-            <Download className="h-4 w-4 mr-2" />
-            Exportar
-          </Button>
-          <AlertDialog open={isGenerateDialogOpen} onOpenChange={setIsGenerateDialogOpen}>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="outline"
-                disabled={isGenerating}
-                className="bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:text-green-800"
-              >
-                <Receipt className="h-4 w-4 mr-2" />
-                {isGenerating ? "Generando..." : "Generar Transacciones"}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Generar Transacciones del Mes</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Se generarán cargos de Gastos Comunes y Fondo de Reserva para todos los apartamentos que tengan montos configurados.
-                  <br /><br />
-                  <strong>Apartamentos con montos:</strong> {apartamentos.filter(a => a.gastosComunes > 0 || a.fondoReserva > 0).length} de {apartamentos.length}
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                <Button
-                  onClick={handleGenerarTransacciones}
-                  disabled={isGenerating}
-                  className="bg-green-600 hover:bg-green-700"
-                >
-                  {isGenerating ? "Generando..." : "Generar Transacciones"}
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-          <Button onClick={openCreateDialog}>
-            <Plus className="h-4 w-4 mr-2" />
-            Nuevo Apartamento
-          </Button>
         </div>
       </div>
 

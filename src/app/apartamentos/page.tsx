@@ -1,51 +1,39 @@
-import { prisma } from "@/lib/prisma"
+"use client"
+
+import { useEffect, useState } from "react"
 import { ApartamentosClient } from "./apartamentos-client"
+import { getApartamentos, obtenerSaldosCuentaCorriente, type Apartamento } from "@/lib/database"
 
-async function getApartamentos() {
-  try {
-    return await prisma.apartamento.findMany({
-      orderBy: { numero: 'asc' },
-    })
-  } catch {
-    return []
-  }
-}
+export default function ApartamentosPage() {
+  const [apartamentos, setApartamentos] = useState<Apartamento[]>([])
+  const [saldos, setSaldos] = useState<Record<string, number>>({})
+  const [isLoading, setIsLoading] = useState(true)
 
-async function getSaldosCuentaCorriente(): Promise<Record<string, number>> {
-  try {
-    const apartamentos = await prisma.apartamento.findMany({
-      include: {
-        transacciones: true,
-      },
-    })
-
-    const saldos: Record<string, number> = {}
-
-    for (const apt of apartamentos) {
-      let saldo = 0
-      for (const trans of apt.transacciones) {
-        if (trans.tipo === "VENTA_CREDITO") {
-          // Cargo (solo el monto pendiente = monto - montoPagado)
-          // montoPagado se actualiza cuando se crea un RECIBO_PAGO
-          saldo += trans.monto - (trans.montoPagado || 0)
-        }
-        // RECIBO_PAGO ya está reflejado en montoPagado de VENTA_CREDITO
-        // No se resta aquí para evitar doble conteo
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [apartamentosData, saldosData] = await Promise.all([
+          getApartamentos(),
+          obtenerSaldosCuentaCorriente(),
+        ])
+        setApartamentos(apartamentosData)
+        setSaldos(saldosData)
+      } catch (error) {
+        console.error("Error loading data:", error)
+      } finally {
+        setIsLoading(false)
       }
-      saldos[apt.id] = saldo
     }
+    loadData()
+  }, [])
 
-    return saldos
-  } catch {
-    return {}
+  if (isLoading) {
+    return (
+      <div className="p-6 flex items-center justify-center min-h-[400px]">
+        <div className="text-slate-500">Cargando apartamentos...</div>
+      </div>
+    )
   }
-}
-
-export default async function ApartamentosPage() {
-  const [apartamentos, saldos] = await Promise.all([
-    getApartamentos(),
-    getSaldosCuentaCorriente(),
-  ])
 
   return <ApartamentosClient initialApartamentos={apartamentos} initialSaldos={saldos} />
 }
