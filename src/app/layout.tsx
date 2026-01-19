@@ -3,7 +3,6 @@ import { Inter } from "next/font/google"
 import "./globals.css"
 import { Sidebar } from "@/components/layout/sidebar"
 import { Toaster } from "@/components/ui/toaster"
-import { UpdaterWrapper } from "@/components/updater-wrapper"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -27,7 +26,6 @@ export default function RootLayout({
           </main>
         </div>
         <Toaster />
-        <UpdaterWrapper />
       </body>
     </html>
   )
