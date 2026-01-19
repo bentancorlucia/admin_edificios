@@ -72,12 +72,12 @@ type Movimiento = {
   id: string
   tipo: TipoMovimiento
   monto: number
-  fecha: Date
+  fecha: string
   descripcion: string
   referencia: string | null
   numeroDocumento: string | null
   archivoUrl: string | null
-  clasificacion: ClasificacionEgreso | null
+  clasificacion: string | null
   servicioId: string | null
   conciliado: boolean
   transaccionId: string | null
@@ -103,10 +103,10 @@ type CuentaBancaria = {
 type Recibo = {
   id: string
   monto: number
-  fecha: Date
+  fecha: string
   descripcion: string | null
   referencia: string | null
-  apartamento: {
+  apartamento?: {
     numero: string
     tipoOcupacion: string
   } | null
@@ -370,7 +370,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       descripcion: mov.descripcion,
       referencia: mov.referencia || "",
       numeroDocumento: mov.numeroDocumento || "",
-      clasificacion: mov.clasificacion || "",
+      clasificacion: (mov.clasificacion || "") as ClasificacionEgreso | "",
       servicioId: mov.servicioId || "",
       archivoUrl: mov.archivoUrl || "",
     })
@@ -420,7 +420,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       const movimientoData = {
         tipo: tipoMovimiento,
         monto: movimientoForm.monto,
-        fecha: new Date(movimientoForm.fecha),
+        fecha: movimientoForm.fecha,
         descripcion: descripcion,
         referencia: movimientoForm.referencia || null,
         numeroDocumento: movimientoForm.numeroDocumento || null,
@@ -428,6 +428,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         clasificacion: tipoMovimiento === "EGRESO" && movimientoForm.clasificacion ? movimientoForm.clasificacion : null,
         servicioId: tipoMovimiento === "EGRESO" && movimientoForm.servicioId ? movimientoForm.servicioId : null,
         cuentaBancariaId: selectedCuenta.id,
+        conciliado: false,
+        transaccionId: null,
       }
 
       let result
@@ -457,7 +459,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                       referencia: result.referencia,
                       numeroDocumento: result.numeroDocumento,
                       archivoUrl: result.archivoUrl,
-                      clasificacion: result.clasificacion,
+                      clasificacion: result.clasificacion as ClasificacionEgreso | null,
                       servicioId: result.servicioId,
                       conciliado: result.conciliado,
                       transaccionId: result.transaccionId,
@@ -479,7 +481,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   referencia: result.referencia,
                   numeroDocumento: result.numeroDocumento,
                   archivoUrl: result.archivoUrl,
-                  clasificacion: result.clasificacion,
+                  clasificacion: result.clasificacion as ClasificacionEgreso | null,
                   servicioId: result.servicioId,
                   conciliado: result.conciliado,
                   transaccionId: result.transaccionId,
@@ -558,7 +560,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     referencia: result.referencia,
                     numeroDocumento: result.numeroDocumento,
                     archivoUrl: result.archivoUrl,
-                    clasificacion: result.clasificacion,
+                    clasificacion: result.clasificacion as ClasificacionEgreso | null,
                     servicioId: result.servicioId,
                     conciliado: result.conciliado,
                     transaccionId: result.transaccionId,
@@ -601,11 +603,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setIsLoading(true)
 
     try {
-      const fechaInicio = estadoCuentaFiltro.fechaInicio
-        ? new Date(estadoCuentaFiltro.fechaInicio)
-        : undefined
+      const fechaInicio = estadoCuentaFiltro.fechaInicio || undefined
       const fechaFin = estadoCuentaFiltro.fechaFin
-        ? new Date(estadoCuentaFiltro.fechaFin + "T23:59:59")
+        ? estadoCuentaFiltro.fechaFin + "T23:59:59"
         : undefined
 
       const data = await getEstadoCuenta(selectedCuenta.id, fechaInicio, fechaFin)

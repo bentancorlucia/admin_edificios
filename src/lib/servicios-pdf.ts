@@ -34,7 +34,7 @@ type TipoServicio =
 
 type Servicio = {
   id: string
-  tipo: TipoServicio
+  tipo: string
   nombre: string
   celular: string | null
   email: string | null
@@ -42,7 +42,7 @@ type Servicio = {
   activo: boolean
 }
 
-const tipoServicioLabels: Record<TipoServicio, string> = {
+const tipoServicioLabels: Record<string, string> = {
   ELECTRICISTA: "Electricista",
   PLOMERO: "Plomero",
   SANITARIO: "Sanitario",
@@ -116,7 +116,7 @@ export function generateServiciosPDF(servicios: Servicio[]) {
       acc[srv.tipo].push(srv)
       return acc
     },
-    {} as Record<TipoServicio, Servicio[]>
+    {} as Record<string, Servicio[]>
   )
 
   // Tabla principal

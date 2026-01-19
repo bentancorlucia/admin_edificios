@@ -501,10 +501,10 @@ type EstadoCuentaData = {
     id: string
     tipo: "INGRESO" | "EGRESO"
     monto: number
-    fecha: Date
+    fecha: string
     descripcion: string
     referencia: string | null
-    clasificacion: "GASTO_COMUN" | "FONDO_RESERVA" | null
+    clasificacion: string | null
     saldoAcumulado: number
   }[]
   resumen: {

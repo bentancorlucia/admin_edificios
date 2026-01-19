@@ -65,7 +65,7 @@ type TipoServicio =
 
 type Servicio = {
   id: string
-  tipo: TipoServicio
+  tipo: string
   nombre: string
   celular: string | null
   email: string | null
@@ -77,7 +77,7 @@ type Props = {
   initialServicios: Servicio[]
 }
 
-const tipoServicioLabels: Record<TipoServicio, string> = {
+const tipoServicioLabels: Record<string, string> = {
   ELECTRICISTA: "Electricista",
   PLOMERO: "Plomero",
   SANITARIO: "Sanitario",
@@ -100,7 +100,7 @@ const tipoServicioLabels: Record<TipoServicio, string> = {
   OTRO: "Otro",
 }
 
-const tipoServicioColors: Record<TipoServicio, "default" | "secondary" | "destructive" | "outline"> = {
+const tipoServicioColors: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
   ELECTRICISTA: "default",
   PLOMERO: "secondary",
   SANITARIO: "secondary",
@@ -134,7 +134,7 @@ export function ServiciosClient({ initialServicios }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState({
-    tipo: "ELECTRICISTA" as TipoServicio,
+    tipo: "ELECTRICISTA" as string,
     nombre: "",
     celular: "",
     email: "",

@@ -60,7 +60,7 @@ type CuentaBancaria = {
 
 type Transaccion = {
   id: string
-  tipo: "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO"
+  tipo: string
   monto: number
   fecha: Date | string
   categoria: string | null
@@ -68,11 +68,11 @@ type Transaccion = {
   referencia: string | null
   metodoPago: string | null
   notas: string | null
-  estadoCredito: "PENDIENTE" | "PARCIAL" | "PAGADO" | null
+  estadoCredito: string | null
   montoPagado: number | null
   apartamentoId: string | null
-  apartamento: Apartamento | null
-  clasificacionPago?: "GASTO_COMUN" | "FONDO_RESERVA" | null
+  apartamento?: Apartamento | null
+  clasificacionPago?: string | null
   montoGastoComun?: number | null
   montoFondoReserva?: number | null
 }
@@ -83,7 +83,7 @@ type Props = {
   cuentasBancarias: CuentaBancaria[]
 }
 
-const tipoLabels = {
+const tipoLabels: Record<string, string> = {
   INGRESO: "Ingreso",
   EGRESO: "Egreso",
   VENTA_CREDITO: "Venta Crédito",
@@ -102,10 +102,10 @@ const categoriaLabels: Record<string, string> = {
   OTROS: "Otros",
 }
 
-const estadoCreditoColors = {
-  PENDIENTE: "destructive" as const,
-  PARCIAL: "warning" as const,
-  PAGADO: "success" as const,
+const estadoCreditoColors: Record<string, "destructive" | "warning" | "success"> = {
+  PENDIENTE: "destructive",
+  PARCIAL: "warning",
+  PAGADO: "success",
 }
 
 export function TransaccionesClient({ initialTransacciones, apartamentos, cuentasBancarias }: Props) {

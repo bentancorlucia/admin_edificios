@@ -60,10 +60,10 @@ type SituacionRegistro =
 type Registro = {
   id: string
   fecha: string
-  tipo: TipoRegistro
+  tipo: string
   detalle: string
   observaciones: string | null
-  situacion: SituacionRegistro
+  situacion: string
 }
 
 type Props = {
@@ -106,7 +106,7 @@ const situacionColors: Record<SituacionRegistro, string> = {
   VENCIDO: "bg-red-100 text-red-800",
 }
 
-function formatDate(date: Date): string {
+function formatDate(date: Date | string): string {
   return new Date(date).toLocaleDateString('es-ES', {
     year: 'numeric',
     month: 'short',
@@ -114,7 +114,7 @@ function formatDate(date: Date): string {
   })
 }
 
-function formatDateForInput(date: Date): string {
+function formatDateForInput(date: Date | string): string {
   const d = new Date(date)
   return d.toISOString().split('T')[0]
 }
@@ -168,10 +168,10 @@ export function BitacoraClient({ initialRegistros }: Props) {
     setError(null)
     setFormData({
       fecha: formatDateForInput(reg.fecha),
-      tipo: reg.tipo,
+      tipo: reg.tipo as TipoRegistro,
       detalle: reg.detalle,
       observaciones: reg.observaciones || "",
-      situacion: reg.situacion,
+      situacion: reg.situacion as SituacionRegistro,
     })
     setIsDialogOpen(true)
   }
@@ -236,10 +236,10 @@ export function BitacoraClient({ initialRegistros }: Props) {
     const headers = ["Fecha", "Tipo", "Detalle", "Observaciones", "Situación"]
     const rows = registros.map((reg) => [
       formatDate(reg.fecha),
-      tipoRegistroLabels[reg.tipo],
+      tipoRegistroLabels[reg.tipo as TipoRegistro],
       reg.detalle,
       reg.observaciones || "",
-      situacionLabels[reg.situacion],
+      situacionLabels[reg.situacion as SituacionRegistro],
     ])
 
     const csvContent = [headers, ...rows].map((row) => row.map(cell => `"${cell}"`).join(",")).join("\n")
@@ -401,8 +401,8 @@ export function BitacoraClient({ initialRegistros }: Props) {
                     </div>
                     <div>
                       <div className="font-medium text-slate-900">{formatDate(reg.fecha)}</div>
-                      <Badge variant={tipoRegistroColors[reg.tipo]}>
-                        {tipoRegistroLabels[reg.tipo]}
+                      <Badge variant={tipoRegistroColors[reg.tipo as TipoRegistro]}>
+                        {tipoRegistroLabels[reg.tipo as TipoRegistro]}
                       </Badge>
                     </div>
                   </div>
@@ -417,8 +417,8 @@ export function BitacoraClient({ initialRegistros }: Props) {
 
                   {/* Situación y acciones */}
                   <div className="flex items-center gap-3 md:shrink-0">
-                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${situacionColors[reg.situacion]}`}>
-                      {situacionLabels[reg.situacion]}
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${situacionColors[reg.situacion as SituacionRegistro]}`}>
+                      {situacionLabels[reg.situacion as SituacionRegistro]}
                     </span>
                     <div className="flex gap-1">
                       <Button

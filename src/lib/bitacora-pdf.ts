@@ -32,13 +32,13 @@ type SituacionRegistro =
 type Registro = {
   id: string
   fecha: string
-  tipo: TipoRegistro
+  tipo: string
   detalle: string
   observaciones: string | null
-  situacion: SituacionRegistro
+  situacion: string
 }
 
-const tipoRegistroLabels: Record<TipoRegistro, string> = {
+const tipoRegistroLabels: Record<string, string> = {
   NOVEDAD: "Novedad",
   VENCIMIENTO: "Vencimiento",
   MANTENIMIENTO: "Mantenimiento",
@@ -48,7 +48,7 @@ const tipoRegistroLabels: Record<TipoRegistro, string> = {
   OTRO: "Otro",
 }
 
-const situacionLabels: Record<SituacionRegistro, string> = {
+const situacionLabels: Record<string, string> = {
   PENDIENTE: "Pendiente",
   EN_PROCESO: "En Proceso",
   REALIZADO: "Realizado",
