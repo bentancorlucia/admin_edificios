@@ -3,7 +3,7 @@ import { TransaccionesClient } from "./transacciones-client"
 
 async function getData() {
   try {
-    const [transacciones, apartamentos] = await Promise.all([
+    const [transacciones, apartamentos, cuentasBancarias] = await Promise.all([
       prisma.transaccion.findMany({
         include: { apartamento: true },
         orderBy: { fecha: 'desc' },
@@ -11,15 +11,25 @@ async function getData() {
       prisma.apartamento.findMany({
         orderBy: { numero: 'asc' },
       }),
+      prisma.cuentaBancaria.findMany({
+        where: { activa: true },
+        orderBy: { banco: 'asc' },
+      }),
     ])
-    return { transacciones, apartamentos }
+    return { transacciones, apartamentos, cuentasBancarias }
   } catch {
-    return { transacciones: [], apartamentos: [] }
+    return { transacciones: [], apartamentos: [], cuentasBancarias: [] }
   }
 }
 
 export default async function TransaccionesPage() {
-  const { transacciones, apartamentos } = await getData()
+  const { transacciones, apartamentos, cuentasBancarias } = await getData()
 
-  return <TransaccionesClient initialTransacciones={transacciones} apartamentos={apartamentos} />
+  return (
+    <TransaccionesClient
+      initialTransacciones={transacciones}
+      apartamentos={apartamentos}
+      cuentasBancarias={cuentasBancarias}
+    />
+  )
 }

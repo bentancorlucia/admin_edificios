@@ -16,6 +16,7 @@ type CuentaBancariaInput = {
   numeroCuenta: string
   titular: string | null
   saldoInicial: number
+  porDefecto?: boolean
 }
 
 type CuentaBancariaResponse = {
@@ -26,6 +27,7 @@ type CuentaBancariaResponse = {
   titular: string | null
   saldoInicial: number
   activa: boolean
+  porDefecto: boolean
   createdAt: Date
 }
 
@@ -49,6 +51,14 @@ export async function createCuentaBancaria(
   data: CuentaBancariaInput
 ): Promise<ActionResult<CuentaBancariaResponse>> {
   try {
+    // Si se marca como por defecto, desmarcar las demás
+    if (data.porDefecto) {
+      await prisma.cuentaBancaria.updateMany({
+        where: { porDefecto: true },
+        data: { porDefecto: false },
+      })
+    }
+
     const cuenta = await prisma.cuentaBancaria.create({
       data: {
         banco: data.banco,
@@ -56,10 +66,12 @@ export async function createCuentaBancaria(
         numeroCuenta: data.numeroCuenta,
         titular: data.titular,
         saldoInicial: data.saldoInicial,
+        porDefecto: data.porDefecto || false,
       },
     })
 
     revalidatePath("/bancos")
+    revalidatePath("/transacciones")
     return { success: true, data: cuenta }
   } catch (error) {
     console.error("Error creating cuenta bancaria:", error)
@@ -75,6 +87,17 @@ export async function updateCuentaBancaria(
   data: CuentaBancariaInput
 ): Promise<ActionResult<CuentaBancariaResponse>> {
   try {
+    // Si se marca como por defecto, desmarcar las demás
+    if (data.porDefecto) {
+      await prisma.cuentaBancaria.updateMany({
+        where: {
+          porDefecto: true,
+          id: { not: id }
+        },
+        data: { porDefecto: false },
+      })
+    }
+
     const cuenta = await prisma.cuentaBancaria.update({
       where: { id },
       data: {
@@ -83,10 +106,12 @@ export async function updateCuentaBancaria(
         numeroCuenta: data.numeroCuenta,
         titular: data.titular,
         saldoInicial: data.saldoInicial,
+        porDefecto: data.porDefecto || false,
       },
     })
 
     revalidatePath("/bancos")
+    revalidatePath("/transacciones")
     return { success: true, data: cuenta }
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError) {

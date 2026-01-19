@@ -170,7 +170,7 @@ export async function getInformeData(
   let egresoFondoReserva = 0
 
   // Para ingresos bancarios vinculados a recibos de pago
-  // Necesitamos obtener las transacciones VENTA_CREDITO que se pagaron
+  // Usar la clasificación directa del recibo de pago
   const recibosPagoDelMes = await prisma.transaccion.findMany({
     where: {
       tipo: "RECIBO_PAGO",
@@ -187,30 +187,24 @@ export async function getInformeData(
     },
   })
 
-  // Para cada recibo de pago vinculado, distribuir según las VENTA_CREDITO
+  // Distribuir ingresos según la clasificación del recibo de pago
   for (const recibo of recibosPagoDelMes) {
-    // Obtener los VENTA_CREDITO del mismo apartamento que fueron pagados
-    const ventasCredito = await prisma.transaccion.findMany({
-      where: {
-        apartamentoId: recibo.apartamentoId,
-        tipo: "VENTA_CREDITO",
-        estadoCredito: { in: ["PARCIAL", "PAGADO"] },
-      },
-    })
-
-    const totalGC = ventasCredito
-      .filter((v) => v.categoria === "GASTOS_COMUNES")
-      .reduce((s, v) => s + (v.montoPagado || 0), 0)
-    const totalFR = ventasCredito
-      .filter((v) => v.categoria === "FONDO_RESERVA")
-      .reduce((s, v) => s + (v.montoPagado || 0), 0)
-    const total = totalGC + totalFR
-
-    if (total > 0) {
-      const propGC = totalGC / total
-      const propFR = totalFR / total
-      ingresoGastosComunes += recibo.monto * propGC
-      ingresoFondoReserva += recibo.monto * propFR
+    if (recibo.clasificacionPago === "GASTO_COMUN") {
+      ingresoGastosComunes += recibo.monto
+    } else if (recibo.clasificacionPago === "FONDO_RESERVA") {
+      ingresoFondoReserva += recibo.monto
+    } else {
+      // Si no tiene clasificación, distribuir proporcionalmente según montos específicos
+      if (recibo.montoGastoComun) {
+        ingresoGastosComunes += recibo.montoGastoComun
+      }
+      if (recibo.montoFondoReserva) {
+        ingresoFondoReserva += recibo.montoFondoReserva
+      }
+      // Si no tiene ninguna clasificación, asignar a gastos comunes por defecto
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+        ingresoGastosComunes += recibo.monto
+      }
     }
   }
 
@@ -306,6 +300,122 @@ export async function getInformeData(
   }
 }
 
+// ========== Informe Acumulado por Rango de Fechas ==========
+
+export type InformeAcumuladoData = {
+  fechaInicio: Date
+  fechaFin: Date
+  recibos: {
+    gastosComunes: number
+    fondoReserva: number
+    total: number
+  }
+  egresos: {
+    gastosComunes: number
+    fondoReserva: number
+    total: number
+  }
+  balance: {
+    gastosComunes: number
+    fondoReserva: number
+    total: number
+  }
+}
+
+export async function getInformeAcumulado(
+  fechaInicioStr: string,
+  fechaFinStr: string
+): Promise<InformeAcumuladoData> {
+  // Convertir strings a Date
+  const fechaInicio = new Date(fechaInicioStr)
+  fechaInicio.setHours(0, 0, 0, 0)
+
+  // Ajustar fechaFin para incluir todo el día
+  const fechaFin = new Date(fechaFinStr)
+  fechaFin.setHours(23, 59, 59, 999)
+
+  // Obtener todos los recibos de pago en el rango
+  const recibos = await prisma.transaccion.findMany({
+    where: {
+      tipo: "RECIBO_PAGO",
+      fecha: {
+        gte: fechaInicio,
+        lte: fechaFin,
+      },
+    },
+  })
+
+  // Calcular recibos por clasificación
+  let recibosGastosComunes = 0
+  let recibosFondoReserva = 0
+
+  for (const recibo of recibos) {
+    if (recibo.clasificacionPago === "GASTO_COMUN") {
+      recibosGastosComunes += recibo.monto
+    } else if (recibo.clasificacionPago === "FONDO_RESERVA") {
+      recibosFondoReserva += recibo.monto
+    } else {
+      // Si tiene montos específicos, usarlos
+      if (recibo.montoGastoComun) {
+        recibosGastosComunes += recibo.montoGastoComun
+      }
+      if (recibo.montoFondoReserva) {
+        recibosFondoReserva += recibo.montoFondoReserva
+      }
+      // Si no tiene clasificación, asignar a gastos comunes por defecto
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+        recibosGastosComunes += recibo.monto
+      }
+    }
+  }
+
+  // Obtener egresos bancarios en el rango
+  const egresos = await prisma.movimientoBancario.findMany({
+    where: {
+      tipo: "EGRESO",
+      fecha: {
+        gte: fechaInicio,
+        lte: fechaFin,
+      },
+    },
+  })
+
+  // Calcular egresos por clasificación
+  let egresosGastosComunes = 0
+  let egresosFondoReserva = 0
+
+  for (const egreso of egresos) {
+    if (egreso.clasificacion === "GASTO_COMUN") {
+      egresosGastosComunes += egreso.monto
+    } else if (egreso.clasificacion === "FONDO_RESERVA") {
+      egresosFondoReserva += egreso.monto
+    }
+  }
+
+  const totalRecibos = recibosGastosComunes + recibosFondoReserva
+  const totalEgresos = egresosGastosComunes + egresosFondoReserva
+
+  return {
+    fechaInicio,
+    fechaFin,
+    recibos: {
+      gastosComunes: recibosGastosComunes,
+      fondoReserva: recibosFondoReserva,
+      total: totalRecibos,
+    },
+    egresos: {
+      gastosComunes: egresosGastosComunes,
+      fondoReserva: egresosFondoReserva,
+      total: totalEgresos,
+    },
+    balance: {
+      gastosComunes: recibosGastosComunes - egresosGastosComunes,
+      fondoReserva: recibosFondoReserva - egresosFondoReserva,
+      total: totalRecibos - totalEgresos,
+    },
+  }
+}
+
 // ========== CRUD de Avisos de Informe ==========
 
 export async function getAvisosInforme(mes: number, anio: number): Promise<AvisoInforme[]> {
@@ -375,4 +485,27 @@ export async function reorderAvisosInforme(
   )
 
   revalidatePath("/informes")
+}
+
+// ========== Configuración del Informe ==========
+
+const PIE_PAGINA_KEY = "pie_pagina_informe"
+const PIE_PAGINA_DEFAULT = "Sistema de Administración de Edificios"
+
+export async function getPiePaginaInforme(): Promise<string> {
+  const config = await prisma.configuracionInforme.findUnique({
+    where: { clave: PIE_PAGINA_KEY },
+  })
+  return config?.valor ?? PIE_PAGINA_DEFAULT
+}
+
+export async function updatePiePaginaInforme(valor: string): Promise<string> {
+  const config = await prisma.configuracionInforme.upsert({
+    where: { clave: PIE_PAGINA_KEY },
+    update: { valor },
+    create: { clave: PIE_PAGINA_KEY, valor },
+  })
+
+  revalidatePath("/informes")
+  return config.valor
 }

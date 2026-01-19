@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model Apartamento {
@@ -61,6 +62,10 @@ model Transaccion {
   notas            String?
   estadoCredito    EstadoCredito?
   montoPagado      Float?            @default(0)
+  // Campos para clasificación de recibos de pago
+  clasificacionPago    ClasificacionPago?
+  montoGastoComun      Float?
+  montoFondoReserva    Float?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
@@ -78,6 +83,7 @@ model CuentaBancaria {
   titular      String?
   saldoInicial Float               @default(0)
   activa       Boolean             @default(true)
+  porDefecto   Boolean             @default(false)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
 
@@ -116,6 +122,11 @@ enum TipoMovimientoBancario {
 }
 
 enum ClasificacionEgreso {
+  GASTO_COMUN
+  FONDO_RESERVA
+}
+
+enum ClasificacionPago {
   GASTO_COMUN
   FONDO_RESERVA
 }
@@ -200,6 +211,9 @@ enum TipoServicio {
   HERRERIA
   AIRE_ACONDICIONADO
   GAS
+  UTE
+  OSE
+  TARIFA_SANEAMIENTO
   OTRO
 }
 
@@ -243,4 +257,12 @@ model AvisoInforme {
   updatedAt DateTime @updatedAt
 
   @@index([mes, anio])
+}
+
+model ConfiguracionInforme {
+  id          String   @id @default(cuid())
+  clave       String   @unique
+  valor       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

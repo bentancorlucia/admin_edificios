@@ -6,7 +6,7 @@ const tipoOcupacionLabels: Record<string, string> = {
   INQUILINO: "Inquilino",
 }
 
-export function generateInformePDF(data: InformeData, periodoLabel: string) {
+export function generateInformePDF(data: InformeData, periodoLabel: string, piePagina?: string) {
   // Filtrar solo avisos activos
   const avisosActivos = (data.avisos || []).filter((a) => a.activo)
   const doc = new jsPDF("landscape")
@@ -287,15 +287,23 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
     doc.text("AVISOS", 20, y)
     y += 6
 
-    // Fondo para avisos
-    const avisoBoxHeight = Math.min(avisosActivos.length * 8 + 10, 50)
+    // Calcular altura total necesaria para todos los avisos
+    doc.setFontSize(9)
+    const maxWidth = pageWidth - 55
+    let totalAvisosHeight = 10 // padding inicial
+    for (const aviso of avisosActivos) {
+      const lines = doc.splitTextToSize(aviso.texto, maxWidth)
+      totalAvisosHeight += lines.length * 5 + 3
+    }
+
+    // Dibujar fondo para avisos (sin límite de altura)
+    const avisoBoxHeight = totalAvisosHeight
     doc.setFillColor(255, 251, 235) // amber-50
     doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "F")
     doc.setDrawColor(251, 191, 36) // amber-400
     doc.roundedRect(15, y, pageWidth - 30, avisoBoxHeight, 2, 2, "S")
 
     y += 7
-    doc.setFontSize(9)
     doc.setTextColor(146, 64, 14) // amber-800
 
     for (const aviso of avisosActivos) {
@@ -303,6 +311,12 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
       if (y > pageHeight - 30) {
         doc.addPage("landscape")
         y = 20
+
+        // Continuar con fondo de avisos en nueva página
+        doc.setFillColor(255, 251, 235)
+        doc.roundedRect(15, y - 5, pageWidth - 30, pageHeight - 35, 2, 2, "F")
+        doc.setDrawColor(251, 191, 36)
+        doc.roundedRect(15, y - 5, pageWidth - 30, pageHeight - 35, 2, 2, "S")
       }
 
       // Bullet point y texto
@@ -311,7 +325,6 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
       doc.setFont("helvetica", "normal")
 
       // Dividir texto largo en múltiples líneas
-      const maxWidth = pageWidth - 55
       const lines = doc.splitTextToSize(aviso.texto, maxWidth)
       doc.text(lines, 28, y)
 
@@ -562,7 +575,8 @@ export function generateInformePDF(data: InformeData, periodoLabel: string) {
   doc.setFontSize(8)
   doc.setTextColor(148, 163, 184)
   doc.setFont("helvetica", "normal")
-  doc.text("EdificioApp - Informe Mensual de Cuenta Corriente", pageWidth / 2, pageHeight - 10, {
+  const footerText = piePagina || "EdificioApp - Informe Mensual de Cuenta Corriente"
+  doc.text(footerText, pageWidth / 2, pageHeight - 10, {
     align: "center",
   })
 

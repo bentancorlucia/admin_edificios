@@ -21,6 +21,9 @@ type TipoServicio =
   | "HERRERIA"
   | "AIRE_ACONDICIONADO"
   | "GAS"
+  | "UTE"
+  | "OSE"
+  | "TARIFA_SANEAMIENTO"
   | "OTRO"
 
 type ServicioInput = {

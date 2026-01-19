@@ -55,6 +55,9 @@ type TipoServicio =
   | "HERRERIA"
   | "AIRE_ACONDICIONADO"
   | "GAS"
+  | "UTE"
+  | "OSE"
+  | "TARIFA_SANEAMIENTO"
   | "OTRO"
 
 type Servicio = {
@@ -88,6 +91,9 @@ const tipoServicioLabels: Record<TipoServicio, string> = {
   HERRERIA: "Herrería",
   AIRE_ACONDICIONADO: "Aire Acondicionado",
   GAS: "Gas",
+  UTE: "UTE (Electricidad)",
+  OSE: "OSE (Agua)",
+  TARIFA_SANEAMIENTO: "Tarifa de Saneamiento",
   OTRO: "Otro",
 }
 
@@ -108,6 +114,9 @@ const tipoServicioColors: Record<TipoServicio, "default" | "secondary" | "destru
   HERRERIA: "outline",
   AIRE_ACONDICIONADO: "default",
   GAS: "destructive",
+  UTE: "destructive",
+  OSE: "secondary",
+  TARIFA_SANEAMIENTO: "secondary",
   OTRO: "outline",
 }
 

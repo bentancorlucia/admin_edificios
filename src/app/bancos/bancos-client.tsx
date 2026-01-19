@@ -95,6 +95,7 @@ type CuentaBancaria = {
   titular: string | null
   saldoInicial: number
   activa: boolean
+  porDefecto: boolean
   movimientos: Movimiento[]
 }
 
@@ -156,6 +157,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     numeroCuenta: "",
     titular: "",
     saldoInicial: 0,
+    porDefecto: false,
   })
 
   const [movimientoForm, setMovimientoForm] = useState({
@@ -202,6 +204,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       numeroCuenta: "",
       titular: "",
       saldoInicial: 0,
+      porDefecto: false,
     })
     setSelectedCuenta(null)
   }
@@ -261,6 +264,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       numeroCuenta: cuenta.numeroCuenta,
       titular: cuenta.titular || "",
       saldoInicial: cuenta.saldoInicial,
+      porDefecto: cuenta.porDefecto,
     })
     setIsAccountDialogOpen(true)
   }
@@ -282,6 +286,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         numeroCuenta: accountForm.numeroCuenta,
         titular: accountForm.titular || null,
         saldoInicial: accountForm.saldoInicial,
+        porDefecto: accountForm.porDefecto,
       }
 
       if (selectedCuenta) {
@@ -290,20 +295,39 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
           setError(result.error)
           return
         }
-        setCuentas((prev) =>
-          prev.map((c) =>
-            c.id === selectedCuenta.id
-              ? { ...c, ...result.data }
-              : c
+        // Si se marcó como por defecto, desmarcar las demás en el estado local
+        if (data.porDefecto) {
+          setCuentas((prev) =>
+            prev.map((c) =>
+              c.id === selectedCuenta.id
+                ? { ...c, ...result.data }
+                : { ...c, porDefecto: false }
+            )
           )
-        )
+        } else {
+          setCuentas((prev) =>
+            prev.map((c) =>
+              c.id === selectedCuenta.id
+                ? { ...c, ...result.data }
+                : c
+            )
+          )
+        }
       } else {
         const result = await createCuentaBancaria(data)
         if (!result.success) {
           setError(result.error)
           return
         }
-        setCuentas((prev) => [...prev, { ...result.data, movimientos: [] }])
+        // Si se marcó como por defecto, desmarcar las demás en el estado local
+        if (data.porDefecto) {
+          setCuentas((prev) => [
+            ...prev.map((c) => ({ ...c, porDefecto: false })),
+            { ...result.data, movimientos: [] }
+          ])
+        } else {
+          setCuentas((prev) => [...prev, { ...result.data, movimientos: [] }])
+        }
       }
 
       setIsAccountDialogOpen(false)
@@ -749,7 +773,14 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                         <Landmark className="h-6 w-6 text-blue-600" />
                       </div>
                       <div>
-                        <CardTitle className="text-lg">{cuenta.banco}</CardTitle>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-lg">{cuenta.banco}</CardTitle>
+                          {cuenta.porDefecto && (
+                            <Badge className="bg-blue-500 text-white text-xs">
+                              Por defecto
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-sm text-slate-500">
                           {cuenta.tipoCuenta} - {cuenta.numeroCuenta}
                         </p>
@@ -1057,6 +1088,29 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   })
                 }
               />
+            </div>
+
+            <div className="flex items-center gap-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <input
+                type="checkbox"
+                id="porDefecto"
+                checked={accountForm.porDefecto}
+                onChange={(e) =>
+                  setAccountForm({
+                    ...accountForm,
+                    porDefecto: e.target.checked,
+                  })
+                }
+                className="h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+              />
+              <div>
+                <Label htmlFor="porDefecto" className="text-blue-800 cursor-pointer">
+                  Cuenta por defecto para recibos
+                </Label>
+                <p className="text-xs text-blue-600">
+                  Esta cuenta se seleccionará automáticamente al crear recibos de pago
+                </p>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-4">

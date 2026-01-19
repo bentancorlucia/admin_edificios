@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -28,18 +28,31 @@ import {
   CreditCard,
   Receipt,
   Filter,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import {
   createTransaccion,
   createVentaCredito,
   createReciboPago,
+  updateTransaccion,
+  deleteTransaccion,
 } from "./actions"
 import { generateTransaccionesPDF } from "@/lib/pdf"
 
 type Apartamento = {
   id: string
   numero: string
+  tipoOcupacion: "PROPIETARIO" | "INQUILINO"
+}
+
+type CuentaBancaria = {
+  id: string
+  banco: string
+  tipoCuenta: string
+  numeroCuenta: string
+  porDefecto?: boolean
 }
 
 type Transaccion = {
@@ -56,11 +69,15 @@ type Transaccion = {
   montoPagado: number | null
   apartamentoId: string | null
   apartamento: Apartamento | null
+  clasificacionPago?: "GASTO_COMUN" | "FONDO_RESERVA" | null
+  montoGastoComun?: number | null
+  montoFondoReserva?: number | null
 }
 
 type Props = {
   initialTransacciones: Transaccion[]
   apartamentos: Apartamento[]
+  cuentasBancarias: CuentaBancaria[]
 }
 
 const tipoLabels = {
@@ -88,12 +105,14 @@ const estadoCreditoColors = {
   PAGADO: "success" as const,
 }
 
-export function TransaccionesClient({ initialTransacciones, apartamentos }: Props) {
+export function TransaccionesClient({ initialTransacciones, apartamentos, cuentasBancarias }: Props) {
   const [transacciones, setTransacciones] = useState(initialTransacciones)
   const [filter, setFilter] = useState("todos")
   const [isTransaccionDialogOpen, setIsTransaccionDialogOpen] = useState(false)
   const [isVentaCreditoDialogOpen, setIsVentaCreditoDialogOpen] = useState(false)
   const [isReciboPagoDialogOpen, setIsReciboPagoDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [editingTransaccion, setEditingTransaccion] = useState<Transaccion | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   const [transaccionForm, setTransaccionForm] = useState({
@@ -116,11 +135,38 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
     notas: "",
   })
 
+  // Obtener la cuenta bancaria por defecto
+  const cuentaPorDefecto = cuentasBancarias.find((c) => c.porDefecto)
+
   const [reciboPagoForm, setReciboPagoForm] = useState({
     monto: "",
     apartamentoId: "",
     fecha: new Date().toISOString().split("T")[0],
+    metodoPago: "TRANSFERENCIA",
+    cuentaBancariaId: "",
+    referencia: "",
+    notas: "",
+    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
+  })
+
+  // Efecto para establecer la cuenta por defecto cuando se carga
+  useEffect(() => {
+    if (cuentaPorDefecto && !reciboPagoForm.cuentaBancariaId) {
+      setReciboPagoForm(prev => ({
+        ...prev,
+        cuentaBancariaId: cuentaPorDefecto.id
+      }))
+    }
+  }, [cuentaPorDefecto, reciboPagoForm.cuentaBancariaId])
+
+  const [editForm, setEditForm] = useState({
+    tipo: "INGRESO",
+    monto: "",
+    categoria: "",
+    apartamentoId: "",
+    fecha: new Date().toISOString().split("T")[0],
     metodoPago: "EFECTIVO",
+    descripcion: "",
     referencia: "",
     notas: "",
   })
@@ -133,19 +179,24 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
     return true
   })
 
-  const ingresos = transacciones
-    .filter((t) => t.tipo === "INGRESO" || t.tipo === "RECIBO_PAGO")
+  // Calcular ingresos por Gastos Comunes (recibos con clasificación GASTO_COMUN)
+  const ingresosGastosComunes = transacciones
+    .filter((t) => t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "GASTO_COMUN")
     .reduce((acc, t) => acc + t.monto, 0)
 
-  const egresos = transacciones
-    .filter((t) => t.tipo === "EGRESO")
+  // Calcular ingresos por Fondo de Reserva (recibos con clasificación FONDO_RESERVA)
+  const ingresosFondoReserva = transacciones
+    .filter((t) => t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "FONDO_RESERVA")
+    .reduce((acc, t) => acc + t.monto, 0)
+
+  // Total de ingresos (todos los recibos de pago)
+  const totalIngresos = transacciones
+    .filter((t) => t.tipo === "RECIBO_PAGO")
     .reduce((acc, t) => acc + t.monto, 0)
 
   const creditosPendientes = transacciones
     .filter((t) => t.tipo === "VENTA_CREDITO" && t.estadoCredito !== "PAGADO")
     .reduce((acc, t) => acc + (t.monto - (t.montoPagado || 0)), 0)
-
-  const balance = ingresos - egresos
 
   const resetTransaccionForm = () => {
     setTransaccionForm({
@@ -163,6 +214,13 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
 
   const handleTransaccionSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Validaciones
+    if (!transaccionForm.monto || parseFloat(transaccionForm.monto) <= 0) {
+      alert("El monto debe ser mayor a 0")
+      return
+    }
+
     setIsLoading(true)
 
     try {
@@ -184,6 +242,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
       resetTransaccionForm()
     } catch (error) {
       console.error("Error creating transaccion:", error)
+      alert("Error al registrar la transacción. Intente nuevamente.")
     } finally {
       setIsLoading(false)
     }
@@ -191,6 +250,17 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
 
   const handleVentaCreditoSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Validaciones
+    if (!ventaCreditoForm.apartamentoId) {
+      alert("Debe seleccionar un apartamento")
+      return
+    }
+    if (!ventaCreditoForm.monto || parseFloat(ventaCreditoForm.monto) <= 0) {
+      alert("El monto debe ser mayor a 0")
+      return
+    }
+
     setIsLoading(true)
 
     try {
@@ -214,6 +284,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
       })
     } catch (error) {
       console.error("Error creating venta credito:", error)
+      alert("Error al registrar la venta a crédito. Intente nuevamente.")
     } finally {
       setIsLoading(false)
     }
@@ -221,6 +292,17 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
 
   const handleReciboPagoSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Validaciones
+    if (!reciboPagoForm.apartamentoId) {
+      alert("Debe seleccionar un apartamento")
+      return
+    }
+    if (!reciboPagoForm.monto || parseFloat(reciboPagoForm.monto) <= 0) {
+      alert("El monto debe ser mayor a 0")
+      return
+    }
+
     setIsLoading(true)
 
     try {
@@ -229,23 +311,28 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
         apartamentoId: reciboPagoForm.apartamentoId,
         fecha: new Date(reciboPagoForm.fecha),
         metodoPago: reciboPagoForm.metodoPago,
+        cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
         referencia: reciboPagoForm.referencia || null,
         notas: reciboPagoForm.notas || null,
+        clasificacionPago: reciboPagoForm.clasificacionPago,
       }
 
       const created = await createReciboPago(data)
-      setTransacciones((prev) => [created, ...prev])
+      setTransacciones((prev) => [created as unknown as Transaccion, ...prev])
       setIsReciboPagoDialogOpen(false)
       setReciboPagoForm({
         monto: "",
         apartamentoId: "",
         fecha: new Date().toISOString().split("T")[0],
-        metodoPago: "EFECTIVO",
+        metodoPago: "TRANSFERENCIA",
+        cuentaBancariaId: cuentaPorDefecto?.id || "",
         referencia: "",
         notas: "",
+        clasificacionPago: "GASTO_COMUN",
       })
     } catch (error) {
       console.error("Error creating recibo pago:", error)
+      alert("Error al registrar el pago. Intente nuevamente.")
     } finally {
       setIsLoading(false)
     }
@@ -255,36 +342,100 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
     generateTransaccionesPDF(filteredTransacciones)
   }
 
+  const handleOpenEdit = (transaccion: Transaccion) => {
+    setEditingTransaccion(transaccion)
+    const fechaStr = typeof transaccion.fecha === 'string'
+      ? transaccion.fecha.split("T")[0]
+      : new Date(transaccion.fecha).toISOString().split("T")[0]
+
+    setEditForm({
+      tipo: transaccion.tipo,
+      monto: transaccion.monto.toString(),
+      categoria: transaccion.categoria || "",
+      apartamentoId: transaccion.apartamentoId || "",
+      fecha: fechaStr,
+      metodoPago: transaccion.metodoPago,
+      descripcion: transaccion.descripcion || "",
+      referencia: transaccion.referencia || "",
+      notas: transaccion.notas || "",
+    })
+    setIsEditDialogOpen(true)
+  }
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingTransaccion) return
+    setIsLoading(true)
+
+    try {
+      const data = {
+        id: editingTransaccion.id,
+        tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
+        monto: parseFloat(editForm.monto),
+        categoria: editForm.categoria || null,
+        apartamentoId: editForm.apartamentoId || null,
+        fecha: new Date(editForm.fecha),
+        metodoPago: editForm.metodoPago,
+        descripcion: editForm.descripcion || null,
+        referencia: editForm.referencia || null,
+        notas: editForm.notas || null,
+      }
+
+      const updated = await updateTransaccion(data)
+      setTransacciones((prev) =>
+        prev.map((t) => (t.id === updated.id ? updated : t))
+      )
+      setIsEditDialogOpen(false)
+      setEditingTransaccion(null)
+    } catch (error) {
+      console.error("Error updating transaccion:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("¿Estás seguro de eliminar esta transacción?")) return
+    setIsLoading(true)
+
+    try {
+      await deleteTransaccion(id)
+      setTransacciones((prev) => prev.filter((t) => t.id !== id))
+    } catch (error) {
+      console.error("Error deleting transaccion:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold text-slate-900 mb-6">Transacciones</h1>
 
-      {/* Stats */}
+      {/* Stats - Desglose de Ingresos */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card>
+        <Card className="bg-gradient-to-br from-green-50 to-emerald-50 border-green-200">
           <CardContent className="p-4">
-            <p className="text-sm text-slate-500">Ingresos</p>
-            <p className="text-2xl font-bold text-green-600">{formatCurrency(ingresos)}</p>
+            <p className="text-sm text-green-600 font-medium">Total Recibos</p>
+            <p className="text-2xl font-bold text-green-700">{formatCurrency(totalIngresos)}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200">
           <CardContent className="p-4">
-            <p className="text-sm text-slate-500">Egresos</p>
-            <p className="text-2xl font-bold text-red-600">{formatCurrency(egresos)}</p>
+            <p className="text-sm text-blue-600 font-medium">Gastos Comunes</p>
+            <p className="text-2xl font-bold text-blue-700">{formatCurrency(ingresosGastosComunes)}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gradient-to-br from-purple-50 to-violet-50 border-purple-200">
           <CardContent className="p-4">
-            <p className="text-sm text-slate-500">Créditos Pendientes</p>
-            <p className="text-2xl font-bold text-yellow-600">{formatCurrency(creditosPendientes)}</p>
+            <p className="text-sm text-purple-600 font-medium">Fondo de Reserva</p>
+            <p className="text-2xl font-bold text-purple-700">{formatCurrency(ingresosFondoReserva)}</p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-200">
           <CardContent className="p-4">
-            <p className="text-sm text-slate-500">Balance</p>
-            <p className={`text-2xl font-bold ${balance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {formatCurrency(balance)}
-            </p>
+            <p className="text-sm text-amber-600 font-medium">Créditos Pendientes</p>
+            <p className="text-2xl font-bold text-amber-700">{formatCurrency(creditosPendientes)}</p>
           </CardContent>
         </Card>
       </div>
@@ -367,11 +518,29 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
                       </p>
                     </div>
                   </div>
-                  <p className={`font-semibold ${
-                    t.tipo === "EGRESO" ? "text-red-600" : "text-green-600"
-                  }`}>
-                    {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
-                  </p>
+                  <div className="flex items-center gap-3">
+                    <p className={`font-semibold ${
+                      t.tipo === "EGRESO" ? "text-red-600" : "text-green-600"
+                    }`}>
+                      {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
+                    </p>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleOpenEdit(t)}
+                      className="h-8 w-8 text-slate-400 hover:text-slate-600"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(t.id)}
+                      className="h-8 w-8 text-slate-400 hover:text-red-600"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -564,7 +733,16 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
                   <SelectContent>
                     {apartamentos.map((apt) => (
                       <SelectItem key={apt.id} value={apt.id}>
-                        Apto {apt.numero}
+                        <span className="flex items-center gap-2">
+                          Apto {apt.numero}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            apt.tipoOcupacion === "PROPIETARIO"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-purple-100 text-purple-700"
+                          }`}>
+                            {apt.tipoOcupacion === "PROPIETARIO" ? "Propietario" : "Inquilino"}
+                          </span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -648,7 +826,16 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
                   <SelectContent>
                     {apartamentos.map((apt) => (
                       <SelectItem key={apt.id} value={apt.id}>
-                        Apto {apt.numero}
+                        <span className="flex items-center gap-2">
+                          Apto {apt.numero}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            apt.tipoOcupacion === "PROPIETARIO"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-purple-100 text-purple-700"
+                          }`}>
+                            {apt.tipoOcupacion === "PROPIETARIO" ? "Propietario" : "Inquilino"}
+                          </span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -687,6 +874,46 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
             </div>
 
             <div className="space-y-2">
+              <Label>Clasificación del Pago *</Label>
+              <Select
+                value={reciboPagoForm.clasificacionPago}
+                onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, clasificacionPago: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
+                  <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Cuenta Bancaria</Label>
+              <Select
+                value={reciboPagoForm.cuentaBancariaId || "none"}
+                onValueChange={(value) => setReciboPagoForm({ ...reciboPagoForm, cuentaBancariaId: value === "none" ? "" : value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar cuenta (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sin asignar</SelectItem>
+                  {cuentasBancarias.map((cuenta) => (
+                    <SelectItem key={cuenta.id} value={cuenta.id}>
+                      {cuenta.banco} - {cuenta.tipoCuenta} ({cuenta.numeroCuenta.slice(-4)})
+                      {cuenta.porDefecto && " ⭐"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">
+                Si seleccionas una cuenta, se registrará automáticamente el ingreso bancario
+              </p>
+            </div>
+
+            <div className="space-y-2">
               <Label>Número de referencia</Label>
               <Input
                 placeholder="Ej: Transferencia #456"
@@ -714,6 +941,162 @@ export function TransaccionesClient({ initialTransacciones, apartamentos }: Prop
               </Button>
               <Button type="submit" disabled={isLoading}>
                 {isLoading ? "Guardando..." : "Registrar Pago"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Editar Transacción Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Transacción</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleEditSubmit} className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Tipo *</Label>
+                <Select
+                  value={editForm.tipo}
+                  onValueChange={(value) => setEditForm({ ...editForm, tipo: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="INGRESO">Ingreso</SelectItem>
+                    <SelectItem value="EGRESO">Egreso</SelectItem>
+                    <SelectItem value="VENTA_CREDITO">Venta Crédito</SelectItem>
+                    <SelectItem value="RECIBO_PAGO">Recibo de Pago</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Monto *</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={editForm.monto}
+                  onChange={(e) => setEditForm({ ...editForm, monto: e.target.value })}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Categoría</Label>
+                <Select
+                  value={editForm.categoria || "none"}
+                  onValueChange={(value) => setEditForm({ ...editForm, categoria: value === "none" ? "" : value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin categoría</SelectItem>
+                    <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
+                    <SelectItem value="MANTENIMIENTO">Mantenimiento</SelectItem>
+                    <SelectItem value="SERVICIOS">Servicios</SelectItem>
+                    <SelectItem value="ADMINISTRACION">Administración</SelectItem>
+                    <SelectItem value="REPARACIONES">Reparaciones</SelectItem>
+                    <SelectItem value="LIMPIEZA">Limpieza</SelectItem>
+                    <SelectItem value="SEGURIDAD">Seguridad</SelectItem>
+                    <SelectItem value="OTROS">Otros</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Apartamento</Label>
+                <Select
+                  value={editForm.apartamentoId || "none"}
+                  onValueChange={(value) => setEditForm({ ...editForm, apartamentoId: value === "none" ? "" : value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="General" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">General</SelectItem>
+                    {apartamentos.map((apt) => (
+                      <SelectItem key={apt.id} value={apt.id}>
+                        Apto {apt.numero}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Fecha *</Label>
+                <Input
+                  type="date"
+                  value={editForm.fecha}
+                  onChange={(e) => setEditForm({ ...editForm, fecha: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Método de pago</Label>
+                <Select
+                  value={editForm.metodoPago}
+                  onValueChange={(value) => setEditForm({ ...editForm, metodoPago: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="EFECTIVO">Efectivo</SelectItem>
+                    <SelectItem value="TRANSFERENCIA">Transferencia</SelectItem>
+                    <SelectItem value="TARJETA">Tarjeta</SelectItem>
+                    <SelectItem value="CHEQUE">Cheque</SelectItem>
+                    <SelectItem value="OTRO">Otro</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Descripción</Label>
+              <Input
+                placeholder="Descripción breve"
+                value={editForm.descripcion}
+                onChange={(e) => setEditForm({ ...editForm, descripcion: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Número de referencia</Label>
+              <Input
+                placeholder="Ej: Factura #123"
+                value={editForm.referencia}
+                onChange={(e) => setEditForm({ ...editForm, referencia: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Notas</Label>
+              <Textarea
+                placeholder="Notas adicionales..."
+                value={editForm.notas}
+                onChange={(e) => setEditForm({ ...editForm, notas: e.target.value })}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsEditDialogOpen(false)}
+              >
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                {isLoading ? "Guardando..." : "Guardar Cambios"}
               </Button>
             </div>
           </form>
