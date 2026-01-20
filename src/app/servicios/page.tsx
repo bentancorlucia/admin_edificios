@@ -2,17 +2,22 @@
 
 import { useEffect, useState } from "react"
 import { ServiciosClient } from "./servicios-client"
-import { getServicios, type Servicio } from "@/lib/database"
+import { getServicios, getTiposServicioActivos, type Servicio, type TipoServicio } from "@/lib/database"
 
 export default function ServiciosPage() {
   const [servicios, setServicios] = useState<Servicio[]>([])
+  const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await getServicios()
-        setServicios(data)
+        const [serviciosData, tiposData] = await Promise.all([
+          getServicios(),
+          getTiposServicioActivos()
+        ])
+        setServicios(serviciosData)
+        setTiposServicio(tiposData)
       } catch (error) {
         console.error("Error loading data:", error)
       } finally {
@@ -30,5 +35,5 @@ export default function ServiciosPage() {
     )
   }
 
-  return <ServiciosClient initialServicios={servicios} />
+  return <ServiciosClient initialServicios={servicios} initialTiposServicio={tiposServicio} />
 }

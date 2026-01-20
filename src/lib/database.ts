@@ -57,10 +57,22 @@ CREATE TABLE IF NOT EXISTS CuentaBancaria (
     updatedAt TEXT DEFAULT (datetime('now'))
 );
 
+-- Tabla TipoServicio (debe ir antes de Servicio)
+CREATE TABLE IF NOT EXISTS TipoServicio (
+    id TEXT PRIMARY KEY,
+    codigo TEXT UNIQUE NOT NULL,
+    nombre TEXT NOT NULL,
+    color TEXT DEFAULT 'default',
+    orden INTEGER DEFAULT 0,
+    activo INTEGER DEFAULT 1,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
 -- Tabla Servicio (debe ir antes de MovimientoBancario)
 CREATE TABLE IF NOT EXISTS Servicio (
     id TEXT PRIMARY KEY,
-    tipo TEXT NOT NULL CHECK (tipo IN ('ELECTRICISTA', 'PLOMERO', 'SANITARIO', 'CERRAJERO', 'PINTOR', 'CARPINTERO', 'ALBANIL', 'JARDINERO', 'LIMPIEZA', 'SEGURIDAD', 'FUMIGACION', 'ASCENSOR', 'VIDRIERIA', 'HERRERIA', 'AIRE_ACONDICIONADO', 'GAS', 'UTE', 'OSE', 'TARIFA_SANEAMIENTO', 'OTRO')),
+    tipo TEXT NOT NULL,
     nombre TEXT NOT NULL,
     celular TEXT,
     email TEXT,
@@ -179,6 +191,10 @@ export async function initDatabase(): Promise<void> {
   }
 
   isInitialized = true;
+
+  // Inicializar tipos de servicio predeterminados
+  await initTiposServicioDefault();
+
   console.log('Base de datos inicializada correctamente');
 }
 
@@ -751,6 +767,254 @@ export async function deleteMovimientoBancario(id: string): Promise<void> {
 
 export async function conciliarMovimiento(id: string, conciliado: boolean): Promise<MovimientoBancario> {
   return updateMovimientoBancario(id, { conciliado });
+}
+
+// ============ TIPOS DE SERVICIO ============
+
+export interface TipoServicio {
+  id: string;
+  codigo: string;
+  nombre: string;
+  color: string;
+  orden: number;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface TipoServicioDB {
+  id: string;
+  codigo: string;
+  nombre: string;
+  color: string;
+  orden: number;
+  activo: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Tipos de servicio predeterminados
+const TIPOS_SERVICIO_DEFAULT: Array<{ codigo: string; nombre: string; color: string }> = [
+  { codigo: 'ELECTRICISTA', nombre: 'Electricista', color: 'default' },
+  { codigo: 'PLOMERO', nombre: 'Plomero', color: 'secondary' },
+  { codigo: 'SANITARIO', nombre: 'Sanitario', color: 'secondary' },
+  { codigo: 'CERRAJERO', nombre: 'Cerrajero', color: 'default' },
+  { codigo: 'PINTOR', nombre: 'Pintor', color: 'outline' },
+  { codigo: 'CARPINTERO', nombre: 'Carpintero', color: 'outline' },
+  { codigo: 'ALBANIL', nombre: 'Albañil', color: 'outline' },
+  { codigo: 'JARDINERO', nombre: 'Jardinero', color: 'secondary' },
+  { codigo: 'LIMPIEZA', nombre: 'Limpieza', color: 'secondary' },
+  { codigo: 'SEGURIDAD', nombre: 'Seguridad', color: 'destructive' },
+  { codigo: 'FUMIGACION', nombre: 'Fumigación', color: 'default' },
+  { codigo: 'ASCENSOR', nombre: 'Ascensor', color: 'default' },
+  { codigo: 'VIDRIERIA', nombre: 'Vidriería', color: 'outline' },
+  { codigo: 'HERRERIA', nombre: 'Herrería', color: 'outline' },
+  { codigo: 'AIRE_ACONDICIONADO', nombre: 'Aire Acondicionado', color: 'default' },
+  { codigo: 'GAS', nombre: 'Gas', color: 'destructive' },
+  { codigo: 'UTE', nombre: 'UTE (Electricidad)', color: 'destructive' },
+  { codigo: 'OSE', nombre: 'OSE (Agua)', color: 'secondary' },
+  { codigo: 'TARIFA_SANEAMIENTO', nombre: 'Tarifa de Saneamiento', color: 'secondary' },
+  { codigo: 'OTRO', nombre: 'Otro', color: 'outline' },
+];
+
+// Variable para evitar múltiples inicializaciones de la tabla TipoServicio
+let tipoServicioTableInitialized = false;
+
+// Función para asegurar que la tabla TipoServicio existe
+async function ensureTipoServicioTable(): Promise<void> {
+  if (tipoServicioTableInitialized) return;
+
+  const database = await getDatabase();
+  await database.execute(`
+    CREATE TABLE IF NOT EXISTS TipoServicio (
+      id TEXT PRIMARY KEY,
+      codigo TEXT UNIQUE NOT NULL,
+      nombre TEXT NOT NULL,
+      color TEXT DEFAULT 'default',
+      orden INTEGER DEFAULT 0,
+      activo INTEGER DEFAULT 1,
+      createdAt TEXT DEFAULT (datetime('now')),
+      updatedAt TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // Inicializar tipos predeterminados si la tabla está vacía
+  const existentes = await database.select<{ count: number }[]>(
+    'SELECT COUNT(*) as count FROM TipoServicio'
+  );
+
+  if (existentes[0]?.count === 0) {
+    const now = getCurrentTimestamp();
+    for (let i = 0; i < TIPOS_SERVICIO_DEFAULT.length; i++) {
+      const tipo = TIPOS_SERVICIO_DEFAULT[i];
+      const id = generateId();
+      await database.execute(
+        `INSERT INTO TipoServicio (id, codigo, nombre, color, orden, activo, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, tipo.codigo, tipo.nombre, tipo.color, i, 1, now, now]
+      );
+    }
+  }
+
+  tipoServicioTableInitialized = true;
+}
+
+export async function getTiposServicio(): Promise<TipoServicio[]> {
+  await ensureTipoServicioTable();
+  const database = await getDatabase();
+  const result = await database.select<TipoServicioDB[]>(
+    'SELECT * FROM TipoServicio ORDER BY orden, nombre'
+  );
+  return result.map(t => ({ ...t, activo: Boolean(t.activo) }));
+}
+
+export async function getTiposServicioActivos(): Promise<TipoServicio[]> {
+  await ensureTipoServicioTable();
+  const database = await getDatabase();
+  const result = await database.select<TipoServicioDB[]>(
+    'SELECT * FROM TipoServicio WHERE activo = 1 ORDER BY orden, nombre'
+  );
+  return result.map(t => ({ ...t, activo: Boolean(t.activo) }));
+}
+
+export async function getTipoServicioById(id: string): Promise<TipoServicio | null> {
+  const database = await getDatabase();
+  const result = await database.select<TipoServicioDB[]>(
+    'SELECT * FROM TipoServicio WHERE id = ?',
+    [id]
+  );
+  if (!result[0]) return null;
+  return { ...result[0], activo: Boolean(result[0].activo) };
+}
+
+export async function getTipoServicioByCodigo(codigo: string): Promise<TipoServicio | null> {
+  const database = await getDatabase();
+  const result = await database.select<TipoServicioDB[]>(
+    'SELECT * FROM TipoServicio WHERE codigo = ?',
+    [codigo]
+  );
+  if (!result[0]) return null;
+  return { ...result[0], activo: Boolean(result[0].activo) };
+}
+
+export async function createTipoServicio(data: {
+  codigo: string;
+  nombre: string;
+  color?: string;
+}): Promise<TipoServicio> {
+  await ensureTipoServicioTable();
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+  const codigoNormalizado = data.codigo.toUpperCase().trim();
+
+  if (!codigoNormalizado) {
+    throw new Error('El código no puede estar vacío');
+  }
+
+  if (!data.nombre.trim()) {
+    throw new Error('El nombre no puede estar vacío');
+  }
+
+  // Verificar si ya existe un tipo con ese código
+  const existente = await getTipoServicioByCodigo(codigoNormalizado);
+  if (existente) {
+    throw new Error(`Ya existe un tipo de servicio con el código "${codigoNormalizado}"`);
+  }
+
+  // Obtener el máximo orden actual
+  const maxOrdenResult = await database.select<{ maxOrden: number | null }[]>(
+    'SELECT MAX(orden) as maxOrden FROM TipoServicio'
+  );
+  const nuevoOrden = (maxOrdenResult[0]?.maxOrden ?? -1) + 1;
+
+  try {
+    await database.execute(
+      `INSERT INTO TipoServicio (id, codigo, nombre, color, orden, activo, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, codigoNormalizado, data.nombre.trim(), data.color || 'default', nuevoOrden, 1, now, now]
+    );
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes('UNIQUE constraint failed') || errorMsg.includes('codigo')) {
+      throw new Error(`Ya existe un tipo de servicio con el código "${codigoNormalizado}"`);
+    }
+    throw new Error(`Error al insertar en la base de datos: ${errorMsg}`);
+  }
+
+  const created = await getTipoServicioById(id);
+  if (!created) {
+    throw new Error('Error al recuperar el tipo de servicio recién creado');
+  }
+  return created;
+}
+
+export async function updateTipoServicio(
+  id: string,
+  data: Partial<{ codigo: string; nombre: string; color: string; activo: boolean; orden: number }>
+): Promise<TipoServicio> {
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value !== undefined) {
+      fields.push(`${key} = ?`);
+      if (key === 'activo') {
+        values.push(value ? 1 : 0);
+      } else if (key === 'codigo') {
+        values.push((value as string).toUpperCase());
+      } else {
+        values.push(value);
+      }
+    }
+  });
+
+  fields.push('updatedAt = ?');
+  values.push(now);
+  values.push(id);
+
+  await database.execute(
+    `UPDATE TipoServicio SET ${fields.join(', ')} WHERE id = ?`,
+    values
+  );
+
+  return (await getTipoServicioById(id))!;
+}
+
+export async function deleteTipoServicio(id: string): Promise<void> {
+  const database = await getDatabase();
+  // Verificar si hay servicios usando este tipo
+  const serviciosConTipo = await database.select<{ count: number }[]>(
+    'SELECT COUNT(*) as count FROM Servicio WHERE tipo = (SELECT codigo FROM TipoServicio WHERE id = ?)',
+    [id]
+  );
+  if (serviciosConTipo[0]?.count > 0) {
+    throw new Error('No se puede eliminar este tipo porque hay servicios que lo utilizan');
+  }
+  await database.execute('DELETE FROM TipoServicio WHERE id = ?', [id]);
+}
+
+export async function initTiposServicioDefault(): Promise<void> {
+  const database = await getDatabase();
+  const existentes = await database.select<{ count: number }[]>(
+    'SELECT COUNT(*) as count FROM TipoServicio'
+  );
+
+  if (existentes[0]?.count === 0) {
+    const now = getCurrentTimestamp();
+    for (let i = 0; i < TIPOS_SERVICIO_DEFAULT.length; i++) {
+      const tipo = TIPOS_SERVICIO_DEFAULT[i];
+      const id = generateId();
+      await database.execute(
+        `INSERT INTO TipoServicio (id, codigo, nombre, color, orden, activo, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, tipo.codigo, tipo.nombre, tipo.color, i, 1, now, now]
+      );
+    }
+  }
 }
 
 // ============ SERVICIOS ============

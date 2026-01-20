@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -30,38 +30,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Wrench, Plus, Search, Download, Edit, Trash2, AlertCircle, Phone, Mail, FileText } from "lucide-react"
+import { Wrench, Plus, Search, Download, Edit, Trash2, AlertCircle, Phone, Mail, FileText, Settings, X } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   createServicio,
   updateServicio,
   deleteServicio,
+  getTiposServicioActivos,
+  createTipoServicio,
+  deleteTipoServicio,
   type Servicio as ServicioType,
+  type TipoServicio as TipoServicioType,
 } from "@/lib/database"
 import { generateServiciosPDF } from "@/lib/servicios-pdf"
 import { toast } from "@/hooks/use-toast"
-
-type TipoServicio =
-  | "ELECTRICISTA"
-  | "PLOMERO"
-  | "SANITARIO"
-  | "CERRAJERO"
-  | "PINTOR"
-  | "CARPINTERO"
-  | "ALBANIL"
-  | "JARDINERO"
-  | "LIMPIEZA"
-  | "SEGURIDAD"
-  | "FUMIGACION"
-  | "ASCENSOR"
-  | "VIDRIERIA"
-  | "HERRERIA"
-  | "AIRE_ACONDICIONADO"
-  | "GAS"
-  | "UTE"
-  | "OSE"
-  | "TARIFA_SANEAMIENTO"
-  | "OTRO"
 
 type Servicio = {
   id: string
@@ -75,66 +57,36 @@ type Servicio = {
 
 type Props = {
   initialServicios: Servicio[]
+  initialTiposServicio: TipoServicioType[]
 }
 
-const tipoServicioLabels: Record<string, string> = {
-  ELECTRICISTA: "Electricista",
-  PLOMERO: "Plomero",
-  SANITARIO: "Sanitario",
-  CERRAJERO: "Cerrajero",
-  PINTOR: "Pintor",
-  CARPINTERO: "Carpintero",
-  ALBANIL: "Albañil",
-  JARDINERO: "Jardinero",
-  LIMPIEZA: "Limpieza",
-  SEGURIDAD: "Seguridad",
-  FUMIGACION: "Fumigación",
-  ASCENSOR: "Ascensor",
-  VIDRIERIA: "Vidriería",
-  HERRERIA: "Herrería",
-  AIRE_ACONDICIONADO: "Aire Acondicionado",
-  GAS: "Gas",
-  UTE: "UTE (Electricidad)",
-  OSE: "OSE (Agua)",
-  TARIFA_SANEAMIENTO: "Tarifa de Saneamiento",
-  OTRO: "Otro",
-}
-
-const tipoServicioColors: Record<string, "default" | "secondary" | "destructive" | "outline"> = {
-  ELECTRICISTA: "default",
-  PLOMERO: "secondary",
-  SANITARIO: "secondary",
-  CERRAJERO: "default",
-  PINTOR: "outline",
-  CARPINTERO: "outline",
-  ALBANIL: "outline",
-  JARDINERO: "secondary",
-  LIMPIEZA: "secondary",
-  SEGURIDAD: "destructive",
-  FUMIGACION: "default",
-  ASCENSOR: "default",
-  VIDRIERIA: "outline",
-  HERRERIA: "outline",
-  AIRE_ACONDICIONADO: "default",
-  GAS: "destructive",
-  UTE: "destructive",
-  OSE: "secondary",
-  TARIFA_SANEAMIENTO: "secondary",
-  OTRO: "outline",
-}
-
-export function ServiciosClient({ initialServicios }: Props) {
+export function ServiciosClient({ initialServicios, initialTiposServicio }: Props) {
   const [servicios, setServicios] = useState(initialServicios)
+  const [tiposServicio, setTiposServicio] = useState<TipoServicioType[]>(initialTiposServicio)
   const [search, setSearch] = useState("")
-  const [filterTipo, setFilterTipo] = useState<TipoServicio | "TODOS">("TODOS")
+  const [filterTipo, setFilterTipo] = useState<string>("TODOS")
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isTiposDialogOpen, setIsTiposDialogOpen] = useState(false)
+  const [isDeleteTipoDialogOpen, setIsDeleteTipoDialogOpen] = useState(false)
   const [selectedServicio, setSelectedServicio] = useState<Servicio | null>(null)
+  const [selectedTipoToDelete, setSelectedTipoToDelete] = useState<TipoServicioType | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [tipoError, setTipoError] = useState<string | null>(null)
+  const [nuevoTipo, setNuevoTipo] = useState({ codigo: "", nombre: "" })
+
+  // Crear mapas de labels y colores dinámicos
+  const tipoServicioLabels: Record<string, string> = {}
+  const tipoServicioColors: Record<string, "default" | "secondary" | "destructive" | "outline"> = {}
+
+  tiposServicio.forEach(tipo => {
+    tipoServicioLabels[tipo.codigo] = tipo.nombre
+    tipoServicioColors[tipo.codigo] = tipo.color as "default" | "secondary" | "destructive" | "outline"
+  })
 
   const [formData, setFormData] = useState({
-    tipo: "ELECTRICISTA" as string,
+    tipo: tiposServicio[0]?.codigo || "",
     nombre: "",
     celular: "",
     email: "",
@@ -142,8 +94,9 @@ export function ServiciosClient({ initialServicios }: Props) {
   })
 
   const filteredServicios = servicios.filter((srv) => {
+    const tipoLabel = tipoServicioLabels[srv.tipo] || srv.tipo
     const matchesSearch = srv.nombre.toLowerCase().includes(search.toLowerCase()) ||
-      tipoServicioLabels[srv.tipo].toLowerCase().includes(search.toLowerCase())
+      tipoLabel.toLowerCase().includes(search.toLowerCase())
     const matchesTipo = filterTipo === "TODOS" || srv.tipo === filterTipo
     return matchesSearch && matchesTipo
   })
@@ -237,7 +190,7 @@ export function ServiciosClient({ initialServicios }: Props) {
   const handleExportCSV = () => {
     const headers = ["Tipo", "Nombre", "Celular", "Email", "Observaciones"]
     const rows = servicios.map((srv) => [
-      tipoServicioLabels[srv.tipo],
+      tipoServicioLabels[srv.tipo] || srv.tipo,
       srv.nombre,
       srv.celular || "",
       srv.email || "",
@@ -259,7 +212,7 @@ export function ServiciosClient({ initialServicios }: Props) {
   }
 
   const handleExportPDF = () => {
-    generateServiciosPDF(servicios)
+    generateServiciosPDF(servicios, tiposServicio)
     toast({
       title: "PDF descargado",
       description: "Directorio de servicios exportado correctamente",
@@ -273,6 +226,94 @@ export function ServiciosClient({ initialServicios }: Props) {
 
   const handleSendEmail = (email: string) => {
     window.open(`mailto:${email}`, '_blank')
+  }
+
+  // Funciones para gestionar tipos de servicio
+  const handleAddTipoServicio = async () => {
+    if (!nuevoTipo.codigo.trim() || !nuevoTipo.nombre.trim()) {
+      setTipoError("El código y nombre son requeridos")
+      return
+    }
+
+    // Normalizar el código: mayúsculas, sin espacios, solo letras/números/guión bajo
+    const codigoNormalizado = nuevoTipo.codigo
+      .toUpperCase()
+      .trim()
+      .replace(/\s+/g, '_')
+      .replace(/[^A-Z0-9_]/g, '')
+
+    if (!codigoNormalizado) {
+      setTipoError("El código debe contener al menos una letra o número")
+      return
+    }
+
+    // Verificar que el código no exista
+    if (tiposServicio.some(t => t.codigo === codigoNormalizado)) {
+      setTipoError("Ya existe un tipo con ese código")
+      return
+    }
+
+    setIsLoading(true)
+    setTipoError(null)
+
+    try {
+      const result = await createTipoServicio({
+        codigo: codigoNormalizado,
+        nombre: nuevoTipo.nombre.trim(),
+      })
+      setTiposServicio(prev => [...prev, result])
+      setNuevoTipo({ codigo: "", nombre: "" })
+      toast({
+        title: "Tipo agregado",
+        description: `Se agregó el tipo "${result.nombre}"`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error adding tipo:", error)
+      let errorMsg = "Error al agregar el tipo de servicio"
+      if (error instanceof Error) {
+        errorMsg = error.message
+      } else if (typeof error === 'string') {
+        errorMsg = error
+      } else if (error && typeof error === 'object' && 'message' in error) {
+        errorMsg = String((error as { message: unknown }).message)
+      }
+      setTipoError(errorMsg)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleDeleteTipoServicio = async () => {
+    if (!selectedTipoToDelete) return
+
+    setIsLoading(true)
+    try {
+      await deleteTipoServicio(selectedTipoToDelete.id)
+      setTiposServicio(prev => prev.filter(t => t.id !== selectedTipoToDelete.id))
+      setIsDeleteTipoDialogOpen(false)
+      setSelectedTipoToDelete(null)
+      toast({
+        title: "Tipo eliminado",
+        description: `Se eliminó el tipo "${selectedTipoToDelete.nombre}"`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error deleting tipo:", error)
+      const errorMsg = error instanceof Error ? error.message : "Error al eliminar el tipo"
+      toast({
+        title: "Error",
+        description: errorMsg,
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const openDeleteTipoDialog = (tipo: TipoServicioType) => {
+    setSelectedTipoToDelete(tipo)
+    setIsDeleteTipoDialogOpen(true)
   }
 
   const handleWhatsApp = (srv: Servicio) => {
@@ -303,6 +344,15 @@ export function ServiciosClient({ initialServicios }: Props) {
           </div>
 
           <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => setIsTiposDialogOpen(true)}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+              title="Gestionar tipos de servicio"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Tipos
+            </Button>
             <Button
               variant="secondary"
               onClick={handleExportPDF}
@@ -341,14 +391,14 @@ export function ServiciosClient({ initialServicios }: Props) {
             className="pl-10"
           />
         </div>
-        <Select value={filterTipo} onValueChange={(value) => setFilterTipo(value as TipoServicio | "TODOS")}>
+        <Select value={filterTipo} onValueChange={(value) => setFilterTipo(value)}>
           <SelectTrigger className="w-full sm:w-[200px]">
             <SelectValue placeholder="Filtrar por tipo" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="TODOS">Todos los tipos</SelectItem>
-            {Object.entries(tipoServicioLabels).map(([key, label]) => (
-              <SelectItem key={key} value={key}>{label}</SelectItem>
+            {tiposServicio.map((tipo) => (
+              <SelectItem key={tipo.codigo} value={tipo.codigo}>{tipo.nombre}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -475,14 +525,14 @@ export function ServiciosClient({ initialServicios }: Props) {
               <Label htmlFor="tipo">Tipo de Servicio *</Label>
               <Select
                 value={formData.tipo}
-                onValueChange={(value) => setFormData({ ...formData, tipo: value as TipoServicio })}
+                onValueChange={(value) => setFormData({ ...formData, tipo: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.entries(tipoServicioLabels).map(([key, label]) => (
-                    <SelectItem key={key} value={key}>{label}</SelectItem>
+                  {tiposServicio.map((tipo) => (
+                    <SelectItem key={tipo.codigo} value={tipo.codigo}>{tipo.nombre}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -563,6 +613,108 @@ export function ServiciosClient({ initialServicios }: Props) {
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {isLoading ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Tipos de Servicio Dialog */}
+      <Dialog open={isTiposDialogOpen} onOpenChange={setIsTiposDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Gestionar Tipos de Servicio
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Agregar nuevo tipo */}
+            <div className="p-4 bg-slate-50 rounded-lg space-y-3">
+              <h4 className="font-medium text-sm text-slate-700">Agregar nuevo tipo</h4>
+              {tipoError && (
+                <Alert variant="destructive" className="py-2">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{tipoError}</AlertDescription>
+                </Alert>
+              )}
+              <div className="grid grid-cols-2 gap-2">
+                <Input
+                  placeholder="Código (ej: PORTERO)"
+                  value={nuevoTipo.codigo}
+                  onChange={(e) => setNuevoTipo({ ...nuevoTipo, codigo: e.target.value })}
+                />
+                <Input
+                  placeholder="Nombre (ej: Portero)"
+                  value={nuevoTipo.nombre}
+                  onChange={(e) => setNuevoTipo({ ...nuevoTipo, nombre: e.target.value })}
+                />
+              </div>
+              <Button
+                size="sm"
+                onClick={handleAddTipoServicio}
+                disabled={isLoading || !nuevoTipo.codigo.trim() || !nuevoTipo.nombre.trim()}
+                className="w-full"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Agregar Tipo
+              </Button>
+            </div>
+
+            {/* Lista de tipos existentes */}
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-slate-700">Tipos existentes ({tiposServicio.length})</h4>
+              <div className="max-h-64 overflow-y-auto space-y-1">
+                {tiposServicio.map((tipo) => (
+                  <div
+                    key={tipo.id}
+                    className="flex items-center justify-between p-2 bg-white border rounded-lg hover:bg-slate-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Badge variant={tipo.color as "default" | "secondary" | "destructive" | "outline"}>
+                        {tipo.codigo}
+                      </Badge>
+                      <span className="text-sm text-slate-700">{tipo.nombre}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => openDeleteTipoDialog(tipo)}
+                      className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end pt-4">
+            <Button variant="outline" onClick={() => setIsTiposDialogOpen(false)}>
+              Cerrar
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Tipo Confirmation Dialog */}
+      <AlertDialog open={isDeleteTipoDialogOpen} onOpenChange={setIsDeleteTipoDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar tipo de servicio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se eliminará el tipo &quot;{selectedTipoToDelete?.nombre}&quot;.
+              No se puede eliminar si hay servicios usando este tipo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteTipoServicio}
               className="bg-red-600 hover:bg-red-700"
             >
               {isLoading ? "Eliminando..." : "Eliminar"}

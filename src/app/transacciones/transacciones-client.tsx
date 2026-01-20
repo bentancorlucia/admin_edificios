@@ -24,6 +24,7 @@ import {
   TrendingUp,
   TrendingDown,
   Download,
+  FileSpreadsheet,
   CreditCard,
   Receipt,
   Filter,
@@ -393,6 +394,46 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     })
   }, [filteredTransacciones])
 
+  const handleExportCSV = useCallback(() => {
+    const headers = ["Fecha", "Tipo", "Categoría", "Apartamento", "Descripción", "Método de Pago", "Referencia", "Monto"]
+
+    const rows = filteredTransacciones.map((t) => {
+      const fecha = typeof t.fecha === 'string'
+        ? new Date(t.fecha).toLocaleDateString('es-ES')
+        : t.fecha.toLocaleDateString('es-ES')
+      const tipo = tipoLabels[t.tipo] || t.tipo
+      const categoria = t.categoria ? (categoriaLabels[t.categoria] || t.categoria) : ""
+      const apartamento = t.apartamento ? `Apto ${t.apartamento.numero}` : "General"
+      const descripcion = t.descripcion || ""
+      const metodoPago = t.metodoPago || ""
+      const referencia = t.referencia || ""
+      const monto = t.tipo === "EGRESO" ? -t.monto : t.monto
+
+      return [fecha, tipo, categoria, apartamento, descripcion, metodoPago, referencia, monto.toFixed(2)]
+    })
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    ].join("\n")
+
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `transacciones_${new Date().toISOString().split("T")[0]}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "CSV descargado",
+      description: "Transacciones exportadas correctamente",
+      variant: "success",
+    })
+  }, [filteredTransacciones])
+
   const handleOpenEdit = useCallback((transaccion: Transaccion) => {
     setEditingTransaccion(transaccion)
     const fechaStr = typeof transaccion.fecha === 'string'
@@ -484,11 +525,19 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
           <div className="flex flex-wrap gap-2">
             <Button
               variant="secondary"
+              onClick={handleExportCSV}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <FileSpreadsheet className="h-4 w-4 mr-2" />
+              CSV
+            </Button>
+            <Button
+              variant="secondary"
               onClick={handleExport}
               className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
             >
               <Download className="h-4 w-4 mr-2" />
-              Exportar
+              PDF
             </Button>
             <Button
               variant="secondary"

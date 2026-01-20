@@ -1,4 +1,5 @@
 import jsPDF from "jspdf"
+import { type TipoServicio } from "./database"
 
 // Paleta de colores minimalista (consistente con informe-pdf.ts)
 const colors = {
@@ -10,28 +11,6 @@ const colors = {
   white: [255, 255, 255] as [number, number, number],
 }
 
-type TipoServicio =
-  | "ELECTRICISTA"
-  | "PLOMERO"
-  | "SANITARIO"
-  | "CERRAJERO"
-  | "PINTOR"
-  | "CARPINTERO"
-  | "ALBANIL"
-  | "JARDINERO"
-  | "LIMPIEZA"
-  | "SEGURIDAD"
-  | "FUMIGACION"
-  | "ASCENSOR"
-  | "VIDRIERIA"
-  | "HERRERIA"
-  | "AIRE_ACONDICIONADO"
-  | "GAS"
-  | "UTE"
-  | "OSE"
-  | "TARIFA_SANEAMIENTO"
-  | "OTRO"
-
 type Servicio = {
   id: string
   tipo: string
@@ -40,29 +19,6 @@ type Servicio = {
   email: string | null
   observaciones: string | null
   activo: boolean
-}
-
-const tipoServicioLabels: Record<string, string> = {
-  ELECTRICISTA: "Electricista",
-  PLOMERO: "Plomero",
-  SANITARIO: "Sanitario",
-  CERRAJERO: "Cerrajero",
-  PINTOR: "Pintor",
-  CARPINTERO: "Carpintero",
-  ALBANIL: "Albañil",
-  JARDINERO: "Jardinero",
-  LIMPIEZA: "Limpieza",
-  SEGURIDAD: "Seguridad",
-  FUMIGACION: "Fumigación",
-  ASCENSOR: "Ascensor",
-  VIDRIERIA: "Vidriería",
-  HERRERIA: "Herrería",
-  AIRE_ACONDICIONADO: "Aire Acondicionado",
-  GAS: "Gas",
-  UTE: "UTE (Electricidad)",
-  OSE: "OSE (Agua)",
-  TARIFA_SANEAMIENTO: "Tarifa de Saneamiento",
-  OTRO: "Otro",
 }
 
 function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): number {
@@ -80,7 +36,14 @@ function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): numb
   return y + 10
 }
 
-export function generateServiciosPDF(servicios: Servicio[]) {
+export function generateServiciosPDF(servicios: Servicio[], tiposServicio?: TipoServicio[]) {
+  // Crear mapa de labels dinámico
+  const tipoServicioLabels: Record<string, string> = {}
+  if (tiposServicio) {
+    tiposServicio.forEach(tipo => {
+      tipoServicioLabels[tipo.codigo] = tipo.nombre
+    })
+  }
   const doc = new jsPDF("portrait")
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -146,8 +109,8 @@ export function generateServiciosPDF(servicios: Servicio[]) {
   doc.setFontSize(7)
 
   const tiposOrdenados = Object.keys(serviciosPorTipo).sort((a, b) =>
-    tipoServicioLabels[a as TipoServicio].localeCompare(tipoServicioLabels[b as TipoServicio])
-  ) as TipoServicio[]
+    (tipoServicioLabels[a] || a).localeCompare(tipoServicioLabels[b] || b)
+  )
 
   for (const tipo of tiposOrdenados) {
     const serviciosDelTipo = serviciosPorTipo[tipo]
@@ -189,7 +152,7 @@ export function generateServiciosPDF(servicios: Servicio[]) {
       doc.setTextColor(...colors.secondary)
       doc.setFont("helvetica", "bold")
       if (i === 0) {
-        doc.text(tipoServicioLabels[tipo], colX, rowY)
+        doc.text(tipoServicioLabels[tipo] || tipo, colX, rowY)
       }
       colX += colWidths[0]
 
@@ -248,7 +211,7 @@ export function generateServiciosPDF(servicios: Servicio[]) {
 
       doc.setTextColor(...colors.primary)
       doc.setFont("helvetica", "bold")
-      doc.text(`${srv.nombre} (${tipoServicioLabels[srv.tipo]}):`, margin, y)
+      doc.text(`${srv.nombre} (${tipoServicioLabels[srv.tipo] || srv.tipo}):`, margin, y)
 
       doc.setFont("helvetica", "normal")
       doc.setTextColor(...colors.secondary)
