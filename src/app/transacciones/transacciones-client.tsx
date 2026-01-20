@@ -32,6 +32,7 @@ import {
   Trash2,
   Calendar,
   X,
+  Building,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import {
@@ -114,6 +115,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const [filter, setFilter] = useState("todos")
   const [fechaDesde, setFechaDesde] = useState("")
   const [fechaHasta, setFechaHasta] = useState("")
+  const [filterApartamento, setFilterApartamento] = useState("todos")
   const [isTransaccionDialogOpen, setIsTransaccionDialogOpen] = useState(false)
   const [isVentaCreditoDialogOpen, setIsVentaCreditoDialogOpen] = useState(false)
   const [isReciboPagoDialogOpen, setIsReciboPagoDialogOpen] = useState(false)
@@ -196,16 +198,24 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         if (fechaHasta && fechaStr > fechaHasta) return false
       }
 
+      // Filtro por apartamento (combinado con tipo de ocupación)
+      if (filterApartamento !== "todos" && t.apartamentoId !== filterApartamento) return false
+
       return true
     })
-  }, [transacciones, filter, fechaDesde, fechaHasta])
+  }, [transacciones, filter, fechaDesde, fechaHasta, filterApartamento])
 
   const limpiarFiltroFechas = () => {
     setFechaDesde("")
     setFechaHasta("")
   }
 
+  const limpiarFiltrosApartamento = () => {
+    setFilterApartamento("todos")
+  }
+
   const hayFiltroFechas = fechaDesde || fechaHasta
+  const hayFiltroApartamento = filterApartamento !== "todos"
 
   // Memoizar cálculos de estadísticas
   const { ingresosGastosComunes, ingresosFondoReserva, totalIngresos, creditosPendientes } = useMemo(() => {
@@ -590,15 +600,15 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       {/* Filtros */}
       <Card className="border-0 shadow-sm bg-slate-50/50">
         <CardContent className="p-4">
-          <div className="flex flex-wrap items-center gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {/* Filtro por tipo */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
                 <Filter className="h-4 w-4" />
-                <span>Tipo</span>
-              </div>
+                Tipo
+              </label>
               <Select value={filter} onValueChange={setFilter}>
-                <SelectTrigger className="w-36 bg-white">
+                <SelectTrigger className="w-full bg-white">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -610,34 +620,41 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </Select>
             </div>
 
-            <div className="h-8 w-px bg-slate-200 hidden sm:block" />
-
-            {/* Filtro por fecha */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 text-sm font-medium text-slate-600">
-                <Calendar className="h-4 w-4" />
-                <span>Período</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="date"
-                  value={fechaDesde}
-                  onChange={(e) => setFechaDesde(e.target.value)}
-                  className="w-[140px] bg-white"
-                />
-                <span className="text-slate-400 text-sm">hasta</span>
-                <Input
-                  type="date"
-                  value={fechaHasta}
-                  onChange={(e) => setFechaHasta(e.target.value)}
-                  className="w-[140px] bg-white"
-                />
-                {hayFiltroFechas && (
+            {/* Filtro por apartamento (combinado con tipo de ocupación) */}
+            <div className="space-y-1.5">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <Building className="h-4 w-4" />
+                Apartamento
+              </label>
+              <div className="flex gap-1">
+                <Select value={filterApartamento} onValueChange={setFilterApartamento}>
+                  <SelectTrigger className="w-full bg-white">
+                    <SelectValue placeholder="Todos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos</SelectItem>
+                    {apartamentos.map((apt) => (
+                      <SelectItem key={apt.id} value={apt.id}>
+                        <span className="flex items-center gap-2">
+                          Apto {apt.numero}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            apt.tipoOcupacion === "PROPIETARIO"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-purple-100 text-purple-700"
+                          }`}>
+                            {apt.tipoOcupacion === "PROPIETARIO" ? "Prop." : "Inq."}
+                          </span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {hayFiltroApartamento && (
                   <Button
                     variant="ghost"
-                    size="sm"
-                    onClick={limpiarFiltroFechas}
-                    className="h-8 px-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200"
+                    size="icon"
+                    onClick={limpiarFiltrosApartamento}
+                    className="h-10 w-10 shrink-0 text-slate-400 hover:text-slate-600"
                   >
                     <X className="h-4 w-4" />
                   </Button>
@@ -645,16 +662,48 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </div>
             </div>
 
-            {/* Contador de resultados */}
-            {(filter !== "todos" || hayFiltroFechas) && (
-              <>
-                <div className="h-8 w-px bg-slate-200 hidden sm:block" />
-                <Badge variant="secondary" className="bg-white text-slate-600">
-                  {filteredTransacciones.length} resultado{filteredTransacciones.length !== 1 ? "s" : ""}
-                </Badge>
-              </>
-            )}
+            {/* Filtro por fecha */}
+            <div className="space-y-1.5 lg:col-span-2">
+              <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+                <Calendar className="h-4 w-4" />
+                Período
+              </label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={fechaDesde}
+                  onChange={(e) => setFechaDesde(e.target.value)}
+                  className="flex-1 bg-white"
+                />
+                <span className="text-slate-400 text-sm shrink-0">hasta</span>
+                <Input
+                  type="date"
+                  value={fechaHasta}
+                  onChange={(e) => setFechaHasta(e.target.value)}
+                  className="flex-1 bg-white"
+                />
+                {hayFiltroFechas && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={limpiarFiltroFechas}
+                    className="h-10 w-10 shrink-0 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Contador de resultados */}
+          {(filter !== "todos" || hayFiltroFechas || hayFiltroApartamento) && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <Badge variant="secondary" className="bg-white text-slate-600">
+                {filteredTransacciones.length} resultado{filteredTransacciones.length !== 1 ? "s" : ""}
+              </Badge>
+            </div>
+          )}
         </CardContent>
       </Card>
 
