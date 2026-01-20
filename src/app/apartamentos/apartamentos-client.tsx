@@ -41,6 +41,8 @@ import {
   deleteApartamento,
   generarTransaccionesMensuales,
   obtenerSaldosCuentaCorriente,
+  getTransaccionesByApartamento,
+  type Transaccion,
 } from "@/lib/database"
 import {
   generateApartamentoPDF,
@@ -269,22 +271,44 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     })
   }, [])
 
-  const handleGeneratePropietarioPDF = useCallback((grupo: ApartamentoAgrupado) => {
-    generatePropietarioPDF(grupo, saldos)
-    toast({
-      title: "PDF descargado",
-      description: `Reporte de propietario del Apto ${grupo.numero} descargado correctamente`,
-      variant: "success",
-    })
+  const handleGeneratePropietarioPDF = useCallback(async (grupo: ApartamentoAgrupado) => {
+    if (!grupo.propietario) return
+    try {
+      const transacciones = await getTransaccionesByApartamento(grupo.propietario.id)
+      generatePropietarioPDF(grupo, saldos, transacciones)
+      toast({
+        title: "PDF descargado",
+        description: `Reporte de propietario del Apto ${grupo.numero} descargado correctamente`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error al generar PDF:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo generar el PDF",
+        variant: "destructive",
+      })
+    }
   }, [saldos])
 
-  const handleGenerateInquilinoPDF = useCallback((grupo: ApartamentoAgrupado) => {
-    generateInquilinoPDF(grupo, saldos)
-    toast({
-      title: "PDF descargado",
-      description: `Reporte de inquilino del Apto ${grupo.numero} descargado correctamente`,
-      variant: "success",
-    })
+  const handleGenerateInquilinoPDF = useCallback(async (grupo: ApartamentoAgrupado) => {
+    if (!grupo.inquilino) return
+    try {
+      const transacciones = await getTransaccionesByApartamento(grupo.inquilino.id)
+      generateInquilinoPDF(grupo, saldos, transacciones)
+      toast({
+        title: "PDF descargado",
+        description: `Reporte de inquilino del Apto ${grupo.numero} descargado correctamente`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error al generar PDF:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo generar el PDF",
+        variant: "destructive",
+      })
+    }
   }, [saldos])
 
   const handleGenerateCompletoPDF = useCallback((grupo: ApartamentoAgrupado) => {

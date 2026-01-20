@@ -23,9 +23,23 @@ type Transaccion = {
   descripcion: string | null
   referencia: string | null
   estadoCredito: string | null
+  categoria?: string | null
+  montoPagado?: number | null
   apartamento?: {
     numero: string
   } | null
+}
+
+// Tipo para transacciones de apartamento en PDFs
+type TransaccionApartamento = {
+  id: string
+  tipo: string
+  monto: number
+  fecha: string
+  descripcion: string | null
+  categoria: string | null
+  estadoCredito: string | null
+  montoPagado: number | null
 }
 
 const tipoOcupacionLabels: Record<string, string> = {
@@ -128,11 +142,12 @@ type ApartamentoAgrupado = {
 type SaldosCuentaCorriente = Record<string, number>
 
 // PDF para Propietario - Minimalista
-export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente) {
+export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente, transacciones?: TransaccionApartamento[]) {
   if (!grupo.propietario) return
 
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
   const apt = grupo.propietario
   const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
@@ -249,8 +264,105 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
   doc.setFont("helvetica", "bold")
   doc.text(`$ ${Math.abs(saldo).toLocaleString()}`, pageWidth / 2, y + 22, { align: "center" })
 
+  y += 45
+
+  // Sección de Transacciones
+  if (transacciones && transacciones.length > 0) {
+    // Verificar si necesitamos nueva página
+    if (y > pageHeight - 80) {
+      doc.addPage()
+      y = 20
+    }
+
+    doc.setDrawColor(226, 232, 240)
+    doc.setLineWidth(0.3)
+    doc.line(20, y, pageWidth - 20, y)
+    y += 15
+
+    doc.setFontSize(9)
+    doc.setTextColor(100, 116, 139)
+    doc.text("DETALLE DE TRANSACCIONES", 20, y)
+    y += 12
+
+    // Header de tabla
+    doc.setFillColor(241, 245, 249)
+    doc.rect(20, y, pageWidth - 40, 8, "F")
+
+    doc.setFontSize(8)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(71, 85, 105)
+    y += 6
+    doc.text("Fecha", 25, y)
+    doc.text("Descripción", 55, y)
+    doc.text("Tipo", 130, y)
+    doc.text("Monto", pageWidth - 25, y, { align: "right" })
+    y += 6
+
+    // Filas de transacciones
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8)
+
+    const tipoLabels: Record<string, string> = {
+      VENTA_CREDITO: "Cargo",
+      RECIBO_PAGO: "Pago",
+      INGRESO: "Ingreso",
+      EGRESO: "Egreso",
+    }
+
+    for (const trans of transacciones) {
+      if (y > pageHeight - 20) {
+        doc.addPage()
+        y = 20
+
+        // Repetir header
+        doc.setFillColor(241, 245, 249)
+        doc.rect(20, y, pageWidth - 40, 8, "F")
+        doc.setFontSize(8)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(71, 85, 105)
+        y += 6
+        doc.text("Fecha", 25, y)
+        doc.text("Descripción", 55, y)
+        doc.text("Tipo", 130, y)
+        doc.text("Monto", pageWidth - 25, y, { align: "right" })
+        y += 6
+        doc.setFont("helvetica", "normal")
+      }
+
+      const fechaTrans = new Date(trans.fecha).toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "short",
+      })
+
+      doc.setTextColor(71, 85, 105)
+      doc.text(fechaTrans, 25, y)
+
+      // Descripción (truncar si es muy larga)
+      let desc = trans.descripcion || "Sin descripción"
+      if (desc.length > 40) {
+        desc = desc.substring(0, 37) + "..."
+      }
+      doc.setTextColor(30, 41, 59)
+      doc.text(desc, 55, y)
+
+      // Tipo
+      doc.setTextColor(100, 116, 139)
+      doc.text(tipoLabels[trans.tipo] || trans.tipo, 130, y)
+
+      // Monto con color según tipo
+      if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
+        doc.setTextColor(22, 163, 74) // verde
+        doc.text(`+$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+      } else {
+        doc.setTextColor(220, 38, 38) // rojo
+        doc.text(`$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+      }
+
+      y += 7
+    }
+  }
+
   // Footer
-  const pageHeight = doc.internal.pageSize.getHeight()
   doc.setFontSize(8)
   doc.setTextColor(180, 180, 180)
   doc.setFont("helvetica", "normal")
@@ -260,11 +372,12 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
 }
 
 // PDF para Inquilino - Minimalista
-export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente) {
+export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente, transacciones?: TransaccionApartamento[]) {
   if (!grupo.inquilino) return
 
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
+  const pageHeight = doc.internal.pageSize.getHeight()
   const apt = grupo.inquilino
   const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
@@ -381,8 +494,105 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
   doc.setFont("helvetica", "bold")
   doc.text(`$ ${Math.abs(saldo).toLocaleString()}`, pageWidth / 2, y + 22, { align: "center" })
 
+  y += 45
+
+  // Sección de Transacciones
+  if (transacciones && transacciones.length > 0) {
+    // Verificar si necesitamos nueva página
+    if (y > pageHeight - 80) {
+      doc.addPage()
+      y = 20
+    }
+
+    doc.setDrawColor(226, 232, 240)
+    doc.setLineWidth(0.3)
+    doc.line(20, y, pageWidth - 20, y)
+    y += 15
+
+    doc.setFontSize(9)
+    doc.setTextColor(100, 116, 139)
+    doc.text("DETALLE DE TRANSACCIONES", 20, y)
+    y += 12
+
+    // Header de tabla
+    doc.setFillColor(241, 245, 249)
+    doc.rect(20, y, pageWidth - 40, 8, "F")
+
+    doc.setFontSize(8)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(71, 85, 105)
+    y += 6
+    doc.text("Fecha", 25, y)
+    doc.text("Descripción", 55, y)
+    doc.text("Tipo", 130, y)
+    doc.text("Monto", pageWidth - 25, y, { align: "right" })
+    y += 6
+
+    // Filas de transacciones
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8)
+
+    const tipoLabels: Record<string, string> = {
+      VENTA_CREDITO: "Cargo",
+      RECIBO_PAGO: "Pago",
+      INGRESO: "Ingreso",
+      EGRESO: "Egreso",
+    }
+
+    for (const trans of transacciones) {
+      if (y > pageHeight - 20) {
+        doc.addPage()
+        y = 20
+
+        // Repetir header
+        doc.setFillColor(241, 245, 249)
+        doc.rect(20, y, pageWidth - 40, 8, "F")
+        doc.setFontSize(8)
+        doc.setFont("helvetica", "bold")
+        doc.setTextColor(71, 85, 105)
+        y += 6
+        doc.text("Fecha", 25, y)
+        doc.text("Descripción", 55, y)
+        doc.text("Tipo", 130, y)
+        doc.text("Monto", pageWidth - 25, y, { align: "right" })
+        y += 6
+        doc.setFont("helvetica", "normal")
+      }
+
+      const fechaTrans = new Date(trans.fecha).toLocaleDateString("es-ES", {
+        day: "2-digit",
+        month: "short",
+      })
+
+      doc.setTextColor(71, 85, 105)
+      doc.text(fechaTrans, 25, y)
+
+      // Descripción (truncar si es muy larga)
+      let desc = trans.descripcion || "Sin descripción"
+      if (desc.length > 40) {
+        desc = desc.substring(0, 37) + "..."
+      }
+      doc.setTextColor(30, 41, 59)
+      doc.text(desc, 55, y)
+
+      // Tipo
+      doc.setTextColor(100, 116, 139)
+      doc.text(tipoLabels[trans.tipo] || trans.tipo, 130, y)
+
+      // Monto con color según tipo
+      if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
+        doc.setTextColor(22, 163, 74) // verde
+        doc.text(`+$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+      } else {
+        doc.setTextColor(220, 38, 38) // rojo
+        doc.text(`$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+      }
+
+      y += 7
+    }
+  }
+
   // Footer
-  const pageHeight = doc.internal.pageSize.getHeight()
   doc.setFontSize(8)
   doc.setTextColor(180, 180, 180)
   doc.setFont("helvetica", "normal")
