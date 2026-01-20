@@ -1,6 +1,9 @@
 import Database from '@tauri-apps/plugin-sql';
+import { documentDir, join } from '@tauri-apps/api/path';
+import { exists, mkdir } from '@tauri-apps/plugin-fs';
 
 let db: Database | null = null;
+let dbPath: string | null = null;
 let isInitialized = false;
 
 // SQL para crear las tablas
@@ -188,10 +191,23 @@ export async function getDatabase(): Promise<Database> {
     let retries = 5;
     let lastError: Error | null = null;
 
+    // Obtener ruta en carpeta Documentos
+    const docsPath = await documentDir();
+    const folderPath = await join(docsPath, 'AdminEdificios');
+
+    // Crear carpeta si no existe
+    if (!(await exists(folderPath))) {
+      await mkdir(folderPath, { recursive: true });
+      console.log(`Carpeta creada: ${folderPath}`);
+    }
+
+    dbPath = await join(folderPath, 'database.db');
+    console.log(`Ruta de base de datos: ${dbPath}`);
+
     while (retries > 0) {
       try {
         console.log(`Intentando conectar a la base de datos (intento ${6 - retries}/5)...`);
-        db = await Database.load('sqlite:database.db');
+        db = await Database.load(`sqlite:${dbPath}`);
         console.log('Conexión a la base de datos establecida correctamente');
         break;
       } catch (error) {
@@ -215,6 +231,10 @@ export async function getDatabase(): Promise<Database> {
     }
   }
   return db!;
+}
+
+export function getDatabasePath(): string | null {
+  return dbPath;
 }
 
 // Función auxiliar para generar IDs únicos (similar a cuid)
