@@ -76,6 +76,8 @@ CREATE TABLE IF NOT EXISTS Servicio (
     nombre TEXT NOT NULL,
     celular TEXT,
     email TEXT,
+    banco TEXT,
+    numeroCuenta TEXT,
     observaciones TEXT,
     activo INTEGER DEFAULT 1,
     createdAt TEXT DEFAULT (datetime('now')),
@@ -170,6 +172,29 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_aviso_mes_anio ON AvisoInforme(mes, anio)',
 ];
 
+// Migración para agregar columnas banco y numeroCuenta a Servicio
+async function migrateServicioBancoColumns(database: Database): Promise<void> {
+  try {
+    // Verificar si la columna banco existe
+    const tableInfo = await database.select<{ name: string }[]>(
+      "PRAGMA table_info(Servicio)"
+    );
+    const columnNames = tableInfo.map(col => col.name);
+
+    if (!columnNames.includes('banco')) {
+      await database.execute('ALTER TABLE Servicio ADD COLUMN banco TEXT');
+      console.log('Columna banco agregada a Servicio');
+    }
+
+    if (!columnNames.includes('numeroCuenta')) {
+      await database.execute('ALTER TABLE Servicio ADD COLUMN numeroCuenta TEXT');
+      console.log('Columna numeroCuenta agregada a Servicio');
+    }
+  } catch (error) {
+    console.error('Error en migración de Servicio:', error);
+  }
+}
+
 export async function initDatabase(): Promise<void> {
   if (isInitialized) return;
 
@@ -194,6 +219,9 @@ export async function initDatabase(): Promise<void> {
 
   // Inicializar tipos de servicio predeterminados
   await initTiposServicioDefault();
+
+  // Migración: agregar columnas banco y numeroCuenta a Servicio si no existen
+  await migrateServicioBancoColumns(database);
 
   console.log('Base de datos inicializada correctamente');
 }
@@ -1025,6 +1053,8 @@ export interface Servicio {
   nombre: string;
   celular: string | null;
   email: string | null;
+  banco: string | null;
+  numeroCuenta: string | null;
   observaciones: string | null;
   activo: boolean;
   createdAt: string;
@@ -1037,6 +1067,8 @@ interface ServicioDB {
   nombre: string;
   celular: string | null;
   email: string | null;
+  banco: string | null;
+  numeroCuenta: string | null;
   observaciones: string | null;
   activo: number;
   createdAt: string;
@@ -1073,9 +1105,9 @@ export async function createServicio(data: Omit<Servicio, 'id' | 'createdAt' | '
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO Servicio (id, tipo, nombre, celular, email, observaciones, activo, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.tipo, data.nombre, data.celular, data.email, data.observaciones, 1, now, now]
+    `INSERT INTO Servicio (id, tipo, nombre, celular, email, banco, numeroCuenta, observaciones, activo, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.tipo, data.nombre, data.celular, data.email, data.banco, data.numeroCuenta, data.observaciones, 1, now, now]
   );
 
   return (await getServicioById(id))!;

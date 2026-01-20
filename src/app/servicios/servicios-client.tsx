@@ -30,7 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Wrench, Plus, Search, Download, Edit, Trash2, AlertCircle, Phone, Mail, FileText, Settings, X } from "lucide-react"
+import { Wrench, Plus, Search, Download, Edit, Trash2, AlertCircle, Phone, Mail, FileText, Settings, X, Building2, CreditCard } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   createServicio,
@@ -51,6 +51,8 @@ type Servicio = {
   nombre: string
   celular: string | null
   email: string | null
+  banco: string | null
+  numeroCuenta: string | null
   observaciones: string | null
   activo: boolean
 }
@@ -90,6 +92,8 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
     nombre: "",
     celular: "",
     email: "",
+    banco: "",
+    numeroCuenta: "",
     observaciones: "",
   })
 
@@ -107,6 +111,8 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
       nombre: "",
       celular: "",
       email: "",
+      banco: "",
+      numeroCuenta: "",
       observaciones: "",
     })
     setSelectedServicio(null)
@@ -126,6 +132,8 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
       nombre: srv.nombre,
       celular: srv.celular || "",
       email: srv.email || "",
+      banco: srv.banco || "",
+      numeroCuenta: srv.numeroCuenta || "",
       observaciones: srv.observaciones || "",
     })
     setIsDialogOpen(true)
@@ -147,6 +155,8 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
         nombre: formData.nombre,
         celular: formData.celular || null,
         email: formData.email || null,
+        banco: formData.banco || null,
+        numeroCuenta: formData.numeroCuenta || null,
         observaciones: formData.observaciones || null,
       }
 
@@ -188,12 +198,14 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
   }
 
   const handleExportCSV = () => {
-    const headers = ["Tipo", "Nombre", "Celular", "Email", "Observaciones"]
+    const headers = ["Tipo", "Nombre", "Celular", "Email", "Banco", "Número de Cuenta", "Observaciones"]
     const rows = servicios.map((srv) => [
       tipoServicioLabels[srv.tipo] || srv.tipo,
       srv.nombre,
       srv.celular || "",
       srv.email || "",
+      srv.banco || "",
+      srv.numeroCuenta || "",
       srv.observaciones || "",
     ])
 
@@ -458,6 +470,25 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
                   )}
                 </div>
 
+                {/* Datos Bancarios */}
+                {(srv.banco || srv.numeroCuenta) && (
+                  <div className="mb-4 p-3 bg-blue-50 rounded-lg space-y-2">
+                    <p className="text-xs text-blue-600 mb-1 font-medium">Datos Bancarios</p>
+                    {srv.banco && (
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-blue-400" />
+                        <span className="text-sm text-slate-700">{srv.banco}</span>
+                      </div>
+                    )}
+                    {srv.numeroCuenta && (
+                      <div className="flex items-center gap-2">
+                        <CreditCard className="h-4 w-4 text-blue-400" />
+                        <span className="text-sm text-slate-700">{srv.numeroCuenta}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Observaciones */}
                 {srv.observaciones && (
                   <div className="mb-4 p-3 bg-amber-50 rounded-lg">
@@ -569,6 +600,28 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
                   placeholder="ejemplo@correo.com"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* Datos Bancarios */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="banco">Banco</Label>
+                <Input
+                  id="banco"
+                  placeholder="Ej: BROU, Santander"
+                  value={formData.banco}
+                  onChange={(e) => setFormData({ ...formData, banco: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="numeroCuenta">Número de Cuenta</Label>
+                <Input
+                  id="numeroCuenta"
+                  placeholder="Ej: 123456789"
+                  value={formData.numeroCuenta}
+                  onChange={(e) => setFormData({ ...formData, numeroCuenta: e.target.value })}
                 />
               </div>
             </div>
