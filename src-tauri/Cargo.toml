@@ -1,6 +1,6 @@
 [package]
 name = "admin-edificios"
-version = "1.0.4"
+version = "1.0.7"
 description = "Sistema de Administración de Edificios"
 authors = ["Admin Edificios"]
 license = "MIT"
