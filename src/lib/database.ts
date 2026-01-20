@@ -215,13 +215,14 @@ export async function initDatabase(): Promise<void> {
     await database.execute(indexSql);
   }
 
-  isInitialized = true;
+  // Migración: agregar columnas banco y numeroCuenta a Servicio si no existen
+  // Debe ejecutarse ANTES de marcar como inicializado
+  await migrateServicioBancoColumns(database);
 
   // Inicializar tipos de servicio predeterminados
   await initTiposServicioDefault();
 
-  // Migración: agregar columnas banco y numeroCuenta a Servicio si no existen
-  await migrateServicioBancoColumns(database);
+  isInitialized = true;
 
   console.log('Base de datos inicializada correctamente');
 }
@@ -256,6 +257,12 @@ export async function getDatabase(): Promise<Database> {
       const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
       console.error('Error al cargar la base de datos después de varios intentos:', errorMsg);
       throw new Error(`No se pudo conectar a la base de datos: ${errorMsg}`);
+    }
+
+    // Ejecutar migración de columnas banco/numeroCuenta en Servicio
+    // Esto asegura que las columnas existan incluso si la DB ya estaba creada
+    if (db) {
+      await migrateServicioBancoColumns(db);
     }
   }
   return db!;
