@@ -866,31 +866,54 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.text("DETALLE DE MOVIMIENTOS", 20, y)
   y += 12
 
-  // Header de tabla
-  doc.setFillColor(241, 245, 249)
-  doc.rect(15, y, pageWidth - 30, 10, "F")
+  // Definir columnas escaladas
+  const margin = 15
+  const tableWidth = pageWidth - margin * 2
+  const colWidthsBase = [25, 70, 30, 30, 30] // Fecha, Descripción, Ingreso, Egreso, Saldo
+  const totalBase = colWidthsBase.reduce((a, b) => a + b, 0)
+  const scaleFactor = tableWidth / totalBase
+  const colWidths = colWidthsBase.map(w => w * scaleFactor)
 
-  doc.setFontSize(9)
-  doc.setFont("helvetica", "bold")
-  doc.setTextColor(71, 85, 105)
-  y += 7
-  doc.text("Fecha", 20, y)
-  doc.text("Descripción", 50, y)
-  doc.text("Ingreso", 120, y, { align: "right" })
-  doc.text("Egreso", 150, y, { align: "right" })
-  doc.text("Saldo", pageWidth - 20, y, { align: "right" })
+  // Posiciones X de columnas
+  const colX = [
+    margin + 5,
+    margin + 5 + colWidths[0],
+    margin + colWidths[0] + colWidths[1] + colWidths[2] - 5, // Ingreso alineado a la derecha
+    margin + colWidths[0] + colWidths[1] + colWidths[2] + colWidths[3] - 5, // Egreso alineado a la derecha
+    margin + tableWidth - 5, // Saldo alineado a la derecha
+  ]
 
-  y += 8
+  // Calcular ancho máximo de descripción
+  const maxDescWidth = colWidths[1] - 10
+
+  // Función para dibujar header de tabla
+  const drawMovHeader = () => {
+    doc.setFillColor(241, 245, 249)
+    doc.rect(margin, y, tableWidth, 10, "F")
+
+    doc.setFontSize(9)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(71, 85, 105)
+    y += 7
+    doc.text("Fecha", colX[0], y)
+    doc.text("Descripción", colX[1], y)
+    doc.text("Ingreso", colX[2], y, { align: "right" })
+    doc.text("Egreso", colX[3], y, { align: "right" })
+    doc.text("Saldo", colX[4], y, { align: "right" })
+    y += 8
+    doc.setFont("helvetica", "normal")
+  }
+
+  drawMovHeader()
 
   // Línea de saldo inicial
-  doc.setFont("helvetica", "normal")
   doc.setTextColor(100, 116, 139)
-  doc.text("-", 20, y)
-  doc.text("Saldo Inicial", 50, y)
-  doc.text("-", 120, y, { align: "right" })
-  doc.text("-", 150, y, { align: "right" })
+  doc.text("-", colX[0], y)
+  doc.text("Saldo Inicial", colX[1], y)
+  doc.text("-", colX[2], y, { align: "right" })
+  doc.text("-", colX[3], y, { align: "right" })
   doc.setTextColor(30, 41, 59)
-  doc.text(`$${data.resumen.saldoInicial.toLocaleString()}`, pageWidth - 20, y, {
+  doc.text(`$${data.resumen.saldoInicial.toLocaleString()}`, colX[4], y, {
     align: "right",
   })
   y += 8
@@ -900,20 +923,7 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
     if (y > 270) {
       doc.addPage()
       y = 20
-
-      // Repetir header en nueva página
-      doc.setFillColor(241, 245, 249)
-      doc.rect(15, y, pageWidth - 30, 10, "F")
-      doc.setFontSize(9)
-      doc.setFont("helvetica", "bold")
-      doc.setTextColor(71, 85, 105)
-      y += 7
-      doc.text("Fecha", 20, y)
-      doc.text("Descripción", 50, y)
-      doc.text("Ingreso", 120, y, { align: "right" })
-      doc.text("Egreso", 150, y, { align: "right" })
-      doc.text("Saldo", pageWidth - 20, y, { align: "right" })
-      y += 8
+      drawMovHeader()
     }
 
     const fechaMov = new Date(mov.fecha).toLocaleDateString("es-ES", {
@@ -923,33 +933,33 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
 
     doc.setFont("helvetica", "normal")
     doc.setTextColor(71, 85, 105)
-    doc.text(fechaMov, 20, y)
+    doc.text(fechaMov, colX[0], y)
 
     // Descripción (truncar si es muy larga)
-    const desc =
-      mov.descripcion.length > 35
-        ? mov.descripcion.substring(0, 32) + "..."
-        : mov.descripcion
+    let desc = mov.descripcion
+    while (doc.getTextWidth(desc) > maxDescWidth && desc.length > 3) {
+      desc = desc.slice(0, -4) + "..."
+    }
     doc.setTextColor(30, 41, 59)
-    doc.text(desc, 50, y)
+    doc.text(desc, colX[1], y)
 
     // Ingreso
     if (mov.tipo === "INGRESO") {
       doc.setTextColor(22, 163, 74)
-      doc.text(`+$${mov.monto.toLocaleString()}`, 120, y, { align: "right" })
+      doc.text(`+$${mov.monto.toLocaleString()}`, colX[2], y, { align: "right" })
       doc.setTextColor(71, 85, 105)
-      doc.text("-", 150, y, { align: "right" })
+      doc.text("-", colX[3], y, { align: "right" })
     } else {
       doc.setTextColor(71, 85, 105)
-      doc.text("-", 120, y, { align: "right" })
+      doc.text("-", colX[2], y, { align: "right" })
       doc.setTextColor(220, 38, 38)
-      doc.text(`-$${mov.monto.toLocaleString()}`, 150, y, { align: "right" })
+      doc.text(`-$${mov.monto.toLocaleString()}`, colX[3], y, { align: "right" })
     }
 
     // Saldo
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
-    doc.text(`$${mov.saldoAcumulado.toLocaleString()}`, pageWidth - 20, y, {
+    doc.text(`$${mov.saldoAcumulado.toLocaleString()}`, colX[4], y, {
       align: "right",
     })
 
@@ -1029,42 +1039,64 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
   doc.text(`Balance: $ ${(ingresos - egresos).toLocaleString()}`, 20, y)
   y += 15
 
-  // Table header
-  doc.setFillColor(241, 245, 249)
-  doc.rect(15, y, pageWidth - 30, 10, "F")
+  // Definir columnas escaladas al ancho de página
+  const margin = 15
+  const tableWidth = pageWidth - margin * 2
+  const colWidthsBase = [30, 35, 45, 40] // Fecha, Tipo, Apartamento, Monto
+  const totalBase = colWidthsBase.reduce((a, b) => a + b, 0)
+  const scaleFactor = tableWidth / totalBase
+  const colWidths = colWidthsBase.map(w => w * scaleFactor)
 
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "bold")
-  y += 7
-  doc.text("Fecha", 20, y)
-  doc.text("Tipo", 55, y)
-  doc.text("Apartamento", 100, y)
-  doc.text("Monto", 155, y)
+  // Posiciones X de columnas
+  const colX = [
+    margin + 5,
+    margin + 5 + colWidths[0],
+    margin + 5 + colWidths[0] + colWidths[1],
+    margin + tableWidth - 5, // Monto alineado a la derecha
+  ]
 
-  y += 10
+  // Función para dibujar header de tabla
+  const drawTableHeader = () => {
+    doc.setFillColor(241, 245, 249)
+    doc.rect(margin, y, tableWidth, 10, "F")
+
+    doc.setFontSize(10)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(30, 41, 59)
+    y += 7
+    doc.text("Fecha", colX[0], y)
+    doc.text("Tipo", colX[1], y)
+    doc.text("Apartamento", colX[2], y)
+    doc.text("Monto", colX[3], y, { align: "right" })
+    y += 10
+    doc.setFont("helvetica", "normal")
+  }
+
+  drawTableHeader()
 
   // Table rows
-  doc.setFont("helvetica", "normal")
   transacciones.forEach((t) => {
     if (y > 270) {
       doc.addPage()
       y = 20
+      drawTableHeader()
     }
 
     const fecha = new Date(t.fecha).toLocaleDateString("es-ES")
     const tipoLabel = t.tipo === "INGRESO" ? "Ingreso" : t.tipo === "EGRESO" ? "Egreso" : t.tipo === "VENTA_CREDITO" ? "Venta Crédito" : "Recibo Pago"
     const apto = t.apartamento?.numero ? `Apto ${t.apartamento.numero}` : "General"
 
-    doc.text(fecha, 20, y)
-    doc.text(tipoLabel, 55, y)
-    doc.text(apto, 100, y)
+    doc.setTextColor(30, 41, 59)
+    doc.text(fecha, colX[0], y)
+    doc.text(tipoLabel, colX[1], y)
+    doc.text(apto, colX[2], y)
 
     if (t.tipo === "EGRESO") {
       doc.setTextColor(239, 68, 68)
     } else {
       doc.setTextColor(34, 197, 94)
     }
-    doc.text(`$ ${t.monto.toLocaleString()}`, 155, y)
+    doc.text(`$ ${t.monto.toLocaleString()}`, colX[3], y, { align: "right" })
     doc.setTextColor(30, 41, 59)
 
     y += 8

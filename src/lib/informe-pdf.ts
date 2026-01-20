@@ -98,10 +98,14 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   // Sección: Desglose por Apartamento
   y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
 
-  // Tabla de apartamentos
+  // Tabla de apartamentos - ajustada al ancho completo de la página
   const tableHeaders = ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Saldo Actual"]
-  const colWidths = [30, 45, 42, 42, 42, 42, 45]
-  const tableWidth = colWidths.reduce((a, b) => a + b, 0)
+  const availableWidth = pageWidth - margin * 2
+  const colWidths = [1, 1, 1, 1, 1, 1, 1] // Todas las columnas con el mismo ancho
+  const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
+  const scaleFactor = availableWidth / totalColWidth
+  const scaledColWidths = colWidths.map(w => w * scaleFactor)
+  const tableWidth = availableWidth
   const tableX = margin
 
   // Header de tabla
@@ -115,9 +119,10 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   let colX = tableX + 4
   tableHeaders.forEach((header, i) => {
     const align = i > 1 ? "right" : "left"
-    const textX = i > 1 ? colX + colWidths[i] - 4 : colX
+    // Última columna alineada al borde derecho de la tabla
+    const textX = i === 6 ? tableX + tableWidth - 4 : (i > 1 ? colX + scaledColWidths[i] - 4 : colX)
     doc.text(header, textX, y + 6, { align })
-    colX += colWidths[i]
+    colX += scaledColWidths[i]
   })
 
   y += 9
@@ -143,9 +148,10 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
       colX = tableX + 4
       tableHeaders.forEach((header, idx) => {
         const align = idx > 1 ? "right" : "left"
-        const textX = idx > 1 ? colX + colWidths[idx] - 4 : colX
+        // Última columna alineada al borde derecho de la tabla
+        const textX = idx === 6 ? tableX + tableWidth - 4 : (idx > 1 ? colX + scaledColWidths[idx] - 4 : colX)
         doc.text(header, textX, y + 6, { align })
-        colX += colWidths[idx]
+        colX += scaledColWidths[idx]
       })
       y += 9
       doc.setFont("helvetica", "normal")
@@ -164,41 +170,41 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     doc.setTextColor(...colors.primary)
     doc.setFont("helvetica", "bold")
     doc.text(apt.numero, colX, rowY)
-    colX += colWidths[0]
+    colX += scaledColWidths[0]
 
     // Tipo
     doc.setFont("helvetica", "normal")
     doc.setTextColor(...colors.secondary)
     doc.text(tipoOcupacionLabels[apt.tipoOcupacion], colX, rowY)
-    colX += colWidths[1]
+    colX += scaledColWidths[1]
 
     // Saldo Anterior
     doc.setTextColor(apt.saldoAnterior > 0 ? colors.negative[0] : colors.primary[0],
                      apt.saldoAnterior > 0 ? colors.negative[1] : colors.primary[1],
                      apt.saldoAnterior > 0 ? colors.negative[2] : colors.primary[2])
-    doc.text(formatCurrency(apt.saldoAnterior), colX + colWidths[2] - 4, rowY, { align: "right" })
-    colX += colWidths[2]
+    doc.text(formatCurrency(apt.saldoAnterior), colX + scaledColWidths[2] - 4, rowY, { align: "right" })
+    colX += scaledColWidths[2]
 
     // Pagos Mes
     doc.setTextColor(...colors.positive)
-    doc.text(formatCurrency(apt.pagosMes), colX + colWidths[3] - 4, rowY, { align: "right" })
-    colX += colWidths[3]
+    doc.text(formatCurrency(apt.pagosMes), colX + scaledColWidths[3] - 4, rowY, { align: "right" })
+    colX += scaledColWidths[3]
 
     // Gastos Comunes
     doc.setTextColor(...colors.primary)
-    doc.text(formatCurrency(apt.gastosComunesMes), colX + colWidths[4] - 4, rowY, { align: "right" })
-    colX += colWidths[4]
+    doc.text(formatCurrency(apt.gastosComunesMes), colX + scaledColWidths[4] - 4, rowY, { align: "right" })
+    colX += scaledColWidths[4]
 
     // Fondo Reserva
-    doc.text(formatCurrency(apt.fondoReservaMes), colX + colWidths[5] - 4, rowY, { align: "right" })
-    colX += colWidths[5]
+    doc.text(formatCurrency(apt.fondoReservaMes), colX + scaledColWidths[5] - 4, rowY, { align: "right" })
+    colX += scaledColWidths[5]
 
-    // Saldo Actual
+    // Saldo Actual - alinear al borde derecho de la tabla
     doc.setFont("helvetica", "bold")
     doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
                      apt.saldoActual > 0 ? colors.negative[1] : colors.positive[1],
                      apt.saldoActual > 0 ? colors.negative[2] : colors.positive[2])
-    doc.text(formatCurrency(apt.saldoActual), colX + colWidths[6] - 4, rowY, { align: "right" })
+    doc.text(formatCurrency(apt.saldoActual), tableX + tableWidth - 4, rowY, { align: "right" })
 
     y += 7
   }
@@ -217,26 +223,26 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
 
   colX = tableX + 4
   doc.text("TOTALES", colX, y + 5.5)
-  colX += colWidths[0] + colWidths[1]
+  colX += scaledColWidths[0] + scaledColWidths[1]
 
-  doc.text(formatCurrency(data.totales.totalSaldoAnterior), colX + colWidths[2] - 4, y + 5.5, { align: "right" })
-  colX += colWidths[2]
+  doc.text(formatCurrency(data.totales.totalSaldoAnterior), colX + scaledColWidths[2] - 4, y + 5.5, { align: "right" })
+  colX += scaledColWidths[2]
 
   doc.setTextColor(...colors.positive)
-  doc.text(formatCurrency(data.totales.totalPagosMes), colX + colWidths[3] - 4, y + 5.5, { align: "right" })
-  colX += colWidths[3]
+  doc.text(formatCurrency(data.totales.totalPagosMes), colX + scaledColWidths[3] - 4, y + 5.5, { align: "right" })
+  colX += scaledColWidths[3]
 
   doc.setTextColor(...colors.primary)
-  doc.text(formatCurrency(data.totales.totalGastosComunesMes), colX + colWidths[4] - 4, y + 5.5, { align: "right" })
-  colX += colWidths[4]
+  doc.text(formatCurrency(data.totales.totalGastosComunesMes), colX + scaledColWidths[4] - 4, y + 5.5, { align: "right" })
+  colX += scaledColWidths[4]
 
-  doc.text(formatCurrency(data.totales.totalFondoReservaMes), colX + colWidths[5] - 4, y + 5.5, { align: "right" })
-  colX += colWidths[5]
+  doc.text(formatCurrency(data.totales.totalFondoReservaMes), colX + scaledColWidths[5] - 4, y + 5.5, { align: "right" })
+  colX += scaledColWidths[5]
 
   doc.setTextColor(data.totales.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
                    data.totales.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
                    data.totales.totalSaldoActual > 0 ? colors.negative[2] : colors.positive[2])
-  doc.text(formatCurrency(data.totales.totalSaldoActual), colX + colWidths[6] - 4, y + 5.5, { align: "right" })
+  doc.text(formatCurrency(data.totales.totalSaldoActual), tableX + tableWidth - 4, y + 5.5, { align: "right" })
 
   y += 16
 
@@ -342,8 +348,11 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     y = drawSectionTitle(doc, "Detalle de Egresos", margin, y)
 
     const egresoHeaders = ["Fecha", "Descripción", "Clasificación", "Banco", "Monto"]
-    const egresoColWidths = [30, 130, 45, 45, 40]
-    const egresoTableWidth = egresoColWidths.reduce((a, b) => a + b, 0)
+    const egresoColBase = [25, 120, 40, 40, 32]
+    const egresoTotalBase = egresoColBase.reduce((a, b) => a + b, 0)
+    const egresoScaleFactor = availableWidth / egresoTotalBase
+    const egresoColWidths = egresoColBase.map(w => w * egresoScaleFactor)
+    const egresoTableWidth = availableWidth
 
     // Header
     doc.setFillColor(...colors.primary)
