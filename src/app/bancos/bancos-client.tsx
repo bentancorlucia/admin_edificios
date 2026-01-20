@@ -581,8 +581,33 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     }
   }
 
-  // Estado de cuenta handlers
-  const openEstadoCuentaDialog = async (cuenta: CuentaBancaria) => {
+  // Estado de cuenta handlers - descarga directa de PDF
+  const handleDownloadEstadoCuenta = async (cuenta: CuentaBancaria) => {
+    setIsLoading(true)
+
+    try {
+      const data = await getEstadoCuenta(cuenta.id)
+      if (data) {
+        generateEstadoCuentaPDF(data)
+        toast({
+          title: "PDF descargado",
+          description: `Estado de cuenta de ${cuenta.banco} descargado correctamente`,
+          variant: "success",
+        })
+      }
+    } catch {
+      toast({
+        title: "Error",
+        description: "Error al generar el estado de cuenta",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  // Abrir diálogo de historial de movimientos
+  const openHistorialMovimientosDialog = async (cuenta: CuentaBancaria) => {
     setSelectedCuenta(cuenta)
     setEstadoCuentaFiltro({ fechaInicio: "", fechaFin: "" })
     setIsLoading(true)
@@ -592,7 +617,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       setEstadoCuenta(data)
       setIsEstadoCuentaDialogOpen(true)
     } catch {
-      alert("Error al cargar el estado de cuenta")
+      alert("Error al cargar el historial de movimientos")
     } finally {
       setIsLoading(false)
     }
@@ -886,18 +911,31 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => openEstadoCuentaDialog(cuenta)}
+                      onClick={() => handleDownloadEstadoCuenta(cuenta)}
+                      disabled={isLoading}
                     >
-                      <FileText className="h-4 w-4 mr-2" />
+                      <Download className="h-4 w-4 mr-2" />
                       Estado de Cuenta
                     </Button>
                   </div>
 
                   {/* Últimos Movimientos */}
                   <div className="border-t pt-4">
-                    <h4 className="text-sm font-medium text-slate-700 mb-3">
-                      Últimos Movimientos
-                    </h4>
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-sm font-medium text-slate-700">
+                        Últimos Movimientos
+                      </h4>
+                      {cuenta.movimientos.length > 0 && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => openHistorialMovimientosDialog(cuenta)}
+                          className="text-blue-600 hover:text-blue-800 p-0 h-auto"
+                        >
+                          Ver más
+                        </Button>
+                      )}
+                    </div>
                     {cuenta.movimientos.length === 0 ? (
                       <p className="text-sm text-slate-400 text-center py-4">
                         Sin movimientos
@@ -1448,16 +1486,16 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         </DialogContent>
       </Dialog>
 
-      {/* Dialog: Estado de Cuenta */}
+      {/* Dialog: Historial de Movimientos */}
       <Dialog
         open={isEstadoCuentaDialogOpen}
         onOpenChange={setIsEstadoCuentaDialogOpen}
       >
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Estado de Cuenta Bancario</DialogTitle>
+            <DialogTitle>Historial de Movimientos</DialogTitle>
           </DialogHeader>
-          {estadoCuenta && (
+          {estadoCuenta && selectedCuenta && (
             <div className="space-y-4">
               {/* Info Cuenta */}
               <div className="p-4 bg-slate-50 rounded-lg">
@@ -1586,6 +1624,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                       <th className="px-4 py-3 text-right font-medium text-slate-700">
                         Saldo
                       </th>
+                      <th className="px-4 py-3 text-center font-medium text-slate-700">
+                        Acciones
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1599,45 +1640,83 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                       <td className="px-4 py-2 text-right font-medium">
                         {formatCurrency(estadoCuenta.resumen.saldoInicial)}
                       </td>
+                      <td className="px-4 py-2 text-center">-</td>
                     </tr>
-                    {estadoCuenta.movimientos.map((mov) => (
-                      <tr key={mov.id} className="border-t hover:bg-slate-50">
-                        <td className="px-4 py-2 text-slate-600">
-                          {formatDate(new Date(mov.fecha))}
-                        </td>
-                        <td className="px-4 py-2">
-                          <div>
-                            <p className="text-slate-700">{mov.descripcion}</p>
-                            {mov.clasificacion && (
-                              <p className="text-xs text-slate-400">
-                                {mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : "Fondo de Reserva"}
-                              </p>
+                    {estadoCuenta.movimientos.map((mov) => {
+                      // Buscar el movimiento completo en la cuenta para poder editarlo
+                      const movCompleto = selectedCuenta.movimientos.find(m => m.id === mov.id)
+                      return (
+                        <tr key={mov.id} className="border-t hover:bg-slate-50">
+                          <td className="px-4 py-2 text-slate-600">
+                            {formatDate(new Date(mov.fecha))}
+                          </td>
+                          <td className="px-4 py-2">
+                            <div>
+                              <p className="text-slate-700">{mov.descripcion}</p>
+                              {mov.clasificacion && (
+                                <p className="text-xs text-slate-400">
+                                  {mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : "Fondo de Reserva"}
+                                </p>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {mov.tipo === "INGRESO" && (
+                              <span className="text-green-600 font-medium">
+                                +{formatCurrency(mov.monto)}
+                              </span>
                             )}
-                          </div>
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {mov.tipo === "INGRESO" && (
-                            <span className="text-green-600 font-medium">
-                              +{formatCurrency(mov.monto)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right">
-                          {mov.tipo === "EGRESO" && (
-                            <span className="text-red-600 font-medium">
-                              -{formatCurrency(mov.monto)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right font-medium text-slate-700">
-                          {formatCurrency(mov.saldoAcumulado)}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            {mov.tipo === "EGRESO" && (
+                              <span className="text-red-600 font-medium">
+                                -{formatCurrency(mov.monto)}
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right font-medium text-slate-700">
+                            {formatCurrency(mov.saldoAcumulado)}
+                          </td>
+                          <td className="px-4 py-2 text-center">
+                            {mov.tipo === "EGRESO" && movCompleto && (
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setIsEstadoCuentaDialogOpen(false)
+                                    openEditMovimientoDialog(selectedCuenta, movCompleto)
+                                  }}
+                                  className="h-7 w-7 p-0 text-slate-400 hover:text-blue-600"
+                                  title="Editar egreso"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setIsEstadoCuentaDialogOpen(false)
+                                    openDeleteMovDialog(selectedCuenta, movCompleto)
+                                  }}
+                                  className="h-7 w-7 p-0 text-slate-400 hover:text-red-600"
+                                  title="Eliminar egreso"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            )}
+                            {mov.tipo === "INGRESO" && (
+                              <span className="text-xs text-slate-400">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                     {estadoCuenta.movimientos.length === 0 && (
                       <tr>
                         <td
-                          colSpan={5}
+                          colSpan={6}
                           className="px-4 py-8 text-center text-slate-400"
                         >
                           No hay movimientos en el período seleccionado
