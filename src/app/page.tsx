@@ -202,9 +202,6 @@ export default function DashboardPage() {
                 <p className="text-xs font-semibold text-blue-700">PROPIETARIOS ({data.propietarios})</p>
                 <span className="text-lg font-bold text-blue-700">{formatCurrency(data.gastosPropietarios)}</span>
               </div>
-              <div className="text-xs text-slate-600">
-                Promedio por unidad: {data.propietarios > 0 ? formatCurrency(data.gastosPropietarios / data.propietarios) : '$0'}
-              </div>
             </div>
 
             {/* Inquilinos */}
@@ -212,9 +209,6 @@ export default function DashboardPage() {
               <div className="flex justify-between items-start mb-2">
                 <p className="text-xs font-semibold text-purple-700">INQUILINOS ({data.inquilinosRegistrados})</p>
                 <span className="text-lg font-bold text-purple-700">{formatCurrency(data.gastosInquilinos)}</span>
-              </div>
-              <div className="text-xs text-slate-600">
-                Promedio por unidad: {data.inquilinosRegistrados > 0 ? formatCurrency(data.gastosInquilinos / data.inquilinosRegistrados) : '$0'}
               </div>
             </div>
           </div>

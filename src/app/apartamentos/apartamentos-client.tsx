@@ -48,7 +48,6 @@ import {
   generateApartamentoPDF,
   generatePropietarioPDF,
   generateInquilinoPDF,
-  generateApartamentoCompletoPDF
 } from "@/lib/pdf"
 import { toast } from "@/hooks/use-toast"
 
@@ -309,15 +308,6 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
         variant: "destructive",
       })
     }
-  }, [saldos])
-
-  const handleGenerateCompletoPDF = useCallback((grupo: ApartamentoAgrupado) => {
-    generateApartamentoCompletoPDF(grupo, saldos)
-    toast({
-      title: "PDF descargado",
-      description: `Reporte completo del Apto ${grupo.numero} descargado correctamente`,
-      variant: "success",
-    })
   }, [saldos])
 
   const handleShareWhatsApp = useCallback((apt: Apartamento) => {
@@ -639,19 +629,6 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                     >
                       <Plus className="h-3 w-3 mr-1" />
                       Agregar {grupo.propietario ? "Inquilino" : "Propietario"}
-                    </Button>
-                  )}
-
-                  {/* Botón PDF Completo (cuando hay ambos) */}
-                  {tieneAmbos && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full text-xs h-8"
-                      onClick={() => handleGenerateCompletoPDF(grupo)}
-                    >
-                      <FileText className="h-3 w-3 mr-1" />
-                      PDF Completo
                     </Button>
                   )}
                 </CardContent>
