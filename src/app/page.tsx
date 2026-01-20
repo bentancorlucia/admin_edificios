@@ -227,7 +227,7 @@ export default function DashboardPage() {
 
       {/* Building View */}
       <div className="mb-6">
-        <BuildingView apartamentos={data.apartamentos} />
+        <BuildingView apartamentos={data.apartamentos} saldos={data.saldos} />
       </div>
 
       {/* Recent Transactions */}

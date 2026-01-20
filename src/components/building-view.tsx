@@ -40,6 +40,7 @@ interface ApartamentoAgrupado {
 
 interface BuildingViewProps {
   apartamentos: Apartamento[]
+  saldos: Record<string, number>
 }
 
 const tipoOcupacionBadge = {
@@ -120,7 +121,7 @@ function getGrupoBadge(grupo: ApartamentoAgrupado) {
   return null
 }
 
-export function BuildingView({ apartamentos }: BuildingViewProps) {
+export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
   const [selectedGrupo, setSelectedGrupo] = useState<ApartamentoAgrupado | null>(null)
 
   // Crear un mapa de apartamentos agrupados por número
@@ -369,6 +370,29 @@ export function BuildingView({ apartamentos }: BuildingViewProps) {
                       <p className="font-bold text-blue-700">{formatCurrency(selectedGrupo.propietario.gastosComunes + selectedGrupo.propietario.fondoReserva)}</p>
                     </div>
                   </div>
+
+                  {/* Saldo de Cuenta Corriente */}
+                  <div className="mt-3 pt-3 border-t border-blue-200">
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs font-medium text-slate-600">Saldo Cuenta Corriente</p>
+                      <p className={`text-sm font-bold ${
+                        (saldos[selectedGrupo.propietario.id] || 0) > 0
+                          ? 'text-red-600'
+                          : (saldos[selectedGrupo.propietario.id] || 0) < 0
+                            ? 'text-green-600'
+                            : 'text-slate-500'
+                      }`}>
+                        {(saldos[selectedGrupo.propietario.id] || 0) > 0 ? '+ ' : ''}
+                        {formatCurrency(Math.abs(saldos[selectedGrupo.propietario.id] || 0))}
+                        {(saldos[selectedGrupo.propietario.id] || 0) > 0 && (
+                          <span className="text-xs font-normal ml-1">(Debe)</span>
+                        )}
+                        {(saldos[selectedGrupo.propietario.id] || 0) < 0 && (
+                          <span className="text-xs font-normal ml-1">(A favor)</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -427,6 +451,29 @@ export function BuildingView({ apartamentos }: BuildingViewProps) {
                     <div>
                       <p className="text-purple-600 font-medium">Total</p>
                       <p className="font-bold text-purple-700">{formatCurrency(selectedGrupo.inquilino.gastosComunes + selectedGrupo.inquilino.fondoReserva)}</p>
+                    </div>
+                  </div>
+
+                  {/* Saldo de Cuenta Corriente */}
+                  <div className="mt-3 pt-3 border-t border-purple-200">
+                    <div className="flex justify-between items-center">
+                      <p className="text-xs font-medium text-slate-600">Saldo Cuenta Corriente</p>
+                      <p className={`text-sm font-bold ${
+                        (saldos[selectedGrupo.inquilino.id] || 0) > 0
+                          ? 'text-red-600'
+                          : (saldos[selectedGrupo.inquilino.id] || 0) < 0
+                            ? 'text-green-600'
+                            : 'text-slate-500'
+                      }`}>
+                        {(saldos[selectedGrupo.inquilino.id] || 0) > 0 ? '+ ' : ''}
+                        {formatCurrency(Math.abs(saldos[selectedGrupo.inquilino.id] || 0))}
+                        {(saldos[selectedGrupo.inquilino.id] || 0) > 0 && (
+                          <span className="text-xs font-normal ml-1">(Debe)</span>
+                        )}
+                        {(saldos[selectedGrupo.inquilino.id] || 0) < 0 && (
+                          <span className="text-xs font-normal ml-1">(A favor)</span>
+                        )}
+                      </p>
                     </div>
                   </div>
                 </div>

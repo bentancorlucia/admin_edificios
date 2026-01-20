@@ -1876,14 +1876,16 @@ export interface DashboardData {
   creditosPendientes: number;
   transaccionesRecientes: TransaccionConApartamento[];
   apartamentos: Apartamento[];
+  saldos: Record<string, number>;
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
   // Ejecutar todas las queries en paralelo
-  const [apartamentos, todasTransacciones, transaccionesRecientes] = await Promise.all([
+  const [apartamentos, todasTransacciones, transaccionesRecientes, saldos] = await Promise.all([
     getApartamentosOrdenados(),
     getTransacciones(),
-    getTransaccionesRecientes(10)
+    getTransaccionesRecientes(10),
+    obtenerSaldosCuentaCorriente()
   ]);
 
   // Contar unidades únicas y tipos
@@ -1935,5 +1937,6 @@ export async function getDashboardData(): Promise<DashboardData> {
     creditosPendientes,
     transaccionesRecientes,
     apartamentos,
+    saldos,
   };
 }
