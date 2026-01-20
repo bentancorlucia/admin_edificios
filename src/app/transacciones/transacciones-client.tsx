@@ -177,6 +177,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     descripcion: "",
     referencia: "",
     notas: "",
+    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
   })
 
   // Memoizar filtrado para evitar re-cálculos en cada render
@@ -271,12 +272,21 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     setIsLoading(true)
 
     try {
+      // Crear fecha sin problemas de zona horaria (usar mediodía UTC)
+      const fechaParts = transaccionForm.fecha.split('-')
+      const fechaCorrecta = new Date(Date.UTC(
+        parseInt(fechaParts[0]),
+        parseInt(fechaParts[1]) - 1,
+        parseInt(fechaParts[2]),
+        12, 0, 0
+      ))
+
       const data = {
         tipo: transaccionForm.tipo as "INGRESO" | "EGRESO",
         monto: parseFloat(transaccionForm.monto),
         categoria: transaccionForm.categoria || null,
         apartamentoId: transaccionForm.apartamentoId || null,
-        fecha: new Date(transaccionForm.fecha).toISOString(),
+        fecha: fechaCorrecta.toISOString(),
         metodoPago: transaccionForm.metodoPago,
         descripcion: transaccionForm.descripcion || null,
         referencia: transaccionForm.referencia || null,
@@ -319,10 +329,19 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     setIsLoading(true)
 
     try {
+      // Crear fecha sin problemas de zona horaria (usar mediodía UTC)
+      const fechaParts = ventaCreditoForm.fecha.split('-')
+      const fechaCorrecta = new Date(Date.UTC(
+        parseInt(fechaParts[0]),
+        parseInt(fechaParts[1]) - 1,
+        parseInt(fechaParts[2]),
+        12, 0, 0
+      ))
+
       const data = {
         monto: parseFloat(ventaCreditoForm.monto),
         apartamentoId: ventaCreditoForm.apartamentoId,
-        fecha: new Date(ventaCreditoForm.fecha).toISOString(),
+        fecha: fechaCorrecta.toISOString(),
         categoria: "GASTOS_COMUNES",
         descripcion: ventaCreditoForm.descripcion || "Gastos Comunes",
       }
@@ -362,10 +381,19 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     setIsLoading(true)
 
     try {
+      // Crear fecha sin problemas de zona horaria (usar mediodía UTC)
+      const fechaParts = reciboPagoForm.fecha.split('-')
+      const fechaCorrecta = new Date(Date.UTC(
+        parseInt(fechaParts[0]),
+        parseInt(fechaParts[1]) - 1,
+        parseInt(fechaParts[2]),
+        12, 0, 0
+      ))
+
       const data = {
         monto: parseFloat(reciboPagoForm.monto),
         apartamentoId: reciboPagoForm.apartamentoId,
-        fecha: new Date(reciboPagoForm.fecha).toISOString(),
+        fecha: fechaCorrecta.toISOString(),
         metodoPago: reciboPagoForm.metodoPago,
         cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
         referencia: reciboPagoForm.referencia || null,
@@ -446,9 +474,12 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
 
   const handleOpenEdit = useCallback((transaccion: Transaccion) => {
     setEditingTransaccion(transaccion)
-    const fechaStr = typeof transaccion.fecha === 'string'
-      ? transaccion.fecha.split("T")[0]
-      : new Date(transaccion.fecha).toISOString().split("T")[0]
+    // Extraer fecha en formato YYYY-MM-DD usando UTC para evitar problemas de zona horaria
+    const d = typeof transaccion.fecha === 'string' ? new Date(transaccion.fecha) : transaccion.fecha
+    const year = d.getUTCFullYear()
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(d.getUTCDate()).padStart(2, '0')
+    const fechaStr = `${year}-${month}-${day}`
 
     setEditForm({
       tipo: transaccion.tipo,
@@ -456,10 +487,11 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       categoria: transaccion.categoria || "",
       apartamentoId: transaccion.apartamentoId || "",
       fecha: fechaStr,
-      metodoPago: transaccion.metodoPago || "",
+      metodoPago: transaccion.metodoPago || "TRANSFERENCIA",
       descripcion: transaccion.descripcion || "",
       referencia: transaccion.referencia || "",
       notas: transaccion.notas || "",
+      clasificacionPago: (transaccion.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA") || "GASTO_COMUN",
     })
     setIsEditDialogOpen(true)
   }, [])
@@ -470,16 +502,26 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     setIsLoading(true)
 
     try {
+      // Crear fecha sin problemas de zona horaria (usar mediodía UTC)
+      const fechaParts = editForm.fecha.split('-')
+      const fechaCorrecta = new Date(Date.UTC(
+        parseInt(fechaParts[0]),
+        parseInt(fechaParts[1]) - 1,
+        parseInt(fechaParts[2]),
+        12, 0, 0
+      ))
+
       const data = {
         tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
         monto: parseFloat(editForm.monto),
         categoria: editForm.categoria || null,
         apartamentoId: editForm.apartamentoId || null,
-        fecha: new Date(editForm.fecha).toISOString(),
+        fecha: fechaCorrecta.toISOString(),
         metodoPago: editForm.metodoPago || null,
         descripcion: editForm.descripcion || null,
         referencia: editForm.referencia || null,
         notas: editForm.notas || null,
+        clasificacionPago: editForm.tipo === "RECIBO_PAGO" ? editForm.clasificacionPago : null,
       }
 
       const updated = await updateTransaccion(editingTransaccion.id, data)
@@ -724,16 +766,21 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                 >
                   <div className="flex items-center gap-4">
                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                      t.tipo === "EGRESO" ? "bg-red-50" : "bg-green-50"
+                      t.tipo === "EGRESO" ? "bg-red-50" :
+                      t.tipo === "VENTA_CREDITO" ? "bg-amber-50" : "bg-green-50"
                     }`}>
                       {t.tipo === "EGRESO" ? (
                         <TrendingDown className="h-5 w-5 text-red-600" />
+                      ) : t.tipo === "VENTA_CREDITO" ? (
+                        <CreditCard className="h-5 w-5 text-amber-600" />
+                      ) : t.tipo === "RECIBO_PAGO" ? (
+                        <Receipt className="h-5 w-5 text-green-600" />
                       ) : (
                         <TrendingUp className="h-5 w-5 text-green-600" />
                       )}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-slate-900">
                           {tipoLabels[t.tipo]}
                         </p>
@@ -742,15 +789,36 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                             {t.estadoCredito === "PAGADO" ? "Pagado" : t.estadoCredito === "PARCIAL" ? "Parcial" : "Pendiente"}
                           </Badge>
                         )}
+                        {t.tipo === "RECIBO_PAGO" && t.clasificacionPago && (
+                          <Badge variant="outline" className={
+                            t.clasificacionPago === "GASTO_COMUN"
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-purple-200 bg-purple-50 text-purple-700"
+                          }>
+                            {t.clasificacionPago === "GASTO_COMUN" ? "Gasto Común" : "Fondo Reserva"}
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-sm text-slate-500">
-                        {formatDate(t.fecha)} • {t.apartamento ? `Apto ${t.apartamento.numero}` : "General"} • {t.descripcion || `${tipoLabels[t.tipo]} - ${t.categoria ? categoriaLabels[t.categoria] : "Sin categoría"}`}
-                      </p>
+                      <div className="flex items-center gap-2 text-sm text-slate-500">
+                        <span className="inline-flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDate(t.fecha)}
+                        </span>
+                        <span>•</span>
+                        <span>{t.apartamento ? `Apto ${t.apartamento.numero}` : "General"}</span>
+                        {t.descripcion && (
+                          <>
+                            <span>•</span>
+                            <span className="truncate max-w-[200px]">{t.descripcion}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <p className={`font-semibold ${
-                      t.tipo === "EGRESO" ? "text-red-600" : "text-green-600"
+                      t.tipo === "EGRESO" ? "text-red-600" :
+                      t.tipo === "VENTA_CREDITO" ? "text-amber-600" : "text-green-600"
                     }`}>
                       {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
                     </p>
@@ -1181,27 +1249,12 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Editar Transacción</DialogTitle>
+            <DialogTitle>
+              {editForm.tipo === "RECIBO_PAGO" ? "Editar Recibo de Pago" : "Editar Transacción"}
+            </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Tipo *</Label>
-                <Select
-                  value={editForm.tipo}
-                  onValueChange={(value) => setEditForm({ ...editForm, tipo: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="INGRESO">Ingreso</SelectItem>
-                    <SelectItem value="EGRESO">Egreso</SelectItem>
-                    <SelectItem value="VENTA_CREDITO">Venta Crédito</SelectItem>
-                    <SelectItem value="RECIBO_PAGO">Recibo de Pago</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
               <div className="space-y-2">
                 <Label>Monto *</Label>
                 <Input
@@ -1214,45 +1267,31 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                   required
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Categoría</Label>
-                <Select
-                  value={editForm.categoria || "none"}
-                  onValueChange={(value) => setEditForm({ ...editForm, categoria: value === "none" ? "" : value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sin categoría</SelectItem>
-                    <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
-                    <SelectItem value="MANTENIMIENTO">Mantenimiento</SelectItem>
-                    <SelectItem value="SERVICIOS">Servicios</SelectItem>
-                    <SelectItem value="ADMINISTRACION">Administración</SelectItem>
-                    <SelectItem value="REPARACIONES">Reparaciones</SelectItem>
-                    <SelectItem value="LIMPIEZA">Limpieza</SelectItem>
-                    <SelectItem value="SEGURIDAD">Seguridad</SelectItem>
-                    <SelectItem value="OTROS">Otros</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Apartamento</Label>
+                <Label>Apartamento {editForm.tipo === "RECIBO_PAGO" ? "*" : ""}</Label>
                 <Select
                   value={editForm.apartamentoId || "none"}
                   onValueChange={(value) => setEditForm({ ...editForm, apartamentoId: value === "none" ? "" : value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="General" />
+                    <SelectValue placeholder={editForm.tipo === "RECIBO_PAGO" ? "Seleccionar" : "General"} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">General</SelectItem>
+                    {editForm.tipo !== "RECIBO_PAGO" && (
+                      <SelectItem value="none">General</SelectItem>
+                    )}
                     {apartamentos.map((apt) => (
                       <SelectItem key={apt.id} value={apt.id}>
-                        Apto {apt.numero}
+                        <span className="flex items-center gap-2">
+                          Apto {apt.numero}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            apt.tipoOcupacion === "PROPIETARIO"
+                              ? "bg-blue-100 text-blue-700"
+                              : "bg-purple-100 text-purple-700"
+                          }`}>
+                            {apt.tipoOcupacion === "PROPIETARIO" ? "Propietario" : "Inquilino"}
+                          </span>
+                        </span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1290,19 +1329,55 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Descripción</Label>
-              <Input
-                placeholder="Descripción breve"
-                value={editForm.descripcion}
-                onChange={(e) => setEditForm({ ...editForm, descripcion: e.target.value })}
-              />
-            </div>
+            {/* Campos específicos para Recibo de Pago */}
+            {editForm.tipo === "RECIBO_PAGO" && (
+              <div className="space-y-2">
+                <Label>Clasificación del Pago *</Label>
+                <Select
+                  value={editForm.clasificacionPago}
+                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setEditForm({ ...editForm, clasificacionPago: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
+                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Campos para otros tipos de transacción */}
+            {editForm.tipo !== "RECIBO_PAGO" && (
+              <div className="space-y-2">
+                <Label>Categoría</Label>
+                <Select
+                  value={editForm.categoria || "none"}
+                  onValueChange={(value) => setEditForm({ ...editForm, categoria: value === "none" ? "" : value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Seleccionar" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin categoría</SelectItem>
+                    <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
+                    <SelectItem value="MANTENIMIENTO">Mantenimiento</SelectItem>
+                    <SelectItem value="SERVICIOS">Servicios</SelectItem>
+                    <SelectItem value="ADMINISTRACION">Administración</SelectItem>
+                    <SelectItem value="REPARACIONES">Reparaciones</SelectItem>
+                    <SelectItem value="LIMPIEZA">Limpieza</SelectItem>
+                    <SelectItem value="SEGURIDAD">Seguridad</SelectItem>
+                    <SelectItem value="OTROS">Otros</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label>Número de referencia</Label>
               <Input
-                placeholder="Ej: Factura #123"
+                placeholder={editForm.tipo === "RECIBO_PAGO" ? "Ej: Transferencia #456" : "Ej: Factura #123"}
                 value={editForm.referencia}
                 onChange={(e) => setEditForm({ ...editForm, referencia: e.target.value })}
               />

@@ -15,10 +15,12 @@ export function formatCurrency(amount: number): string {
 }
 
 export function formatDate(date: Date | string): string {
-  const d = new Date(date)
+  const d = typeof date === 'string' ? new Date(date) : date
+  // Usar UTC para evitar problemas de zona horaria
   return d.toLocaleDateString('es-ES', {
-    day: 'numeric',
+    day: '2-digit',
     month: 'short',
-    year: 'numeric'
+    year: 'numeric',
+    timeZone: 'UTC'
   })
 }
