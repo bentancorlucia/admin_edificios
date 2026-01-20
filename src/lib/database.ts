@@ -1204,16 +1204,23 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
 }
 
 // Obtener saldos de cuenta corriente - Optimizado para evitar N+1
+// Saldo = Total créditos (VENTA_CREDITO) - Total pagos (RECIBO_PAGO)
+// Si saldo > 0: el cliente debe dinero
+// Si saldo < 0: el cliente tiene saldo a favor
 export async function obtenerSaldosCuentaCorriente(): Promise<Record<string, number>> {
   const database = await getDatabase();
 
-  // Una sola query para obtener todos los saldos pendientes por apartamento
+  // Query que calcula: créditos - pagos por apartamento
   const saldosDB = await database.select<{ apartamentoId: string; saldo: number }[]>(`
     SELECT
       apartamentoId,
-      SUM(monto - COALESCE(montoPagado, 0)) as saldo
+      SUM(CASE
+        WHEN tipo = 'VENTA_CREDITO' THEN monto
+        WHEN tipo = 'RECIBO_PAGO' THEN -monto
+        ELSE 0
+      END) as saldo
     FROM Transaccion
-    WHERE tipo = 'VENTA_CREDITO' AND apartamentoId IS NOT NULL
+    WHERE (tipo = 'VENTA_CREDITO' OR tipo = 'RECIBO_PAGO') AND apartamentoId IS NOT NULL
     GROUP BY apartamentoId
   `);
 
