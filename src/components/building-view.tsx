@@ -211,10 +211,13 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
                         key={grupo.numero}
                         onClick={() => setSelectedGrupo(grupo)}
                         className={`
-                          flex-1 h-16 rounded transition-all duration-200
+                          flex-1 h-16 rounded-lg transition-all duration-300 ease-out
                           flex flex-col items-center justify-center gap-1
                           ${getGrupoColor(grupo)} text-white cursor-pointer
-                          ${isSelected ? "ring-4 ring-slate-900 scale-105" : ""}
+                          hover:shadow-md hover:-translate-y-0.5
+                          ${isSelected
+                            ? "ring-4 ring-white shadow-[0_0_15px_rgba(0,0,0,0.3)] scale-110 z-10"
+                            : "opacity-75 hover:opacity-100"}
                         `}
                       >
                         <div className="flex items-center gap-1">
