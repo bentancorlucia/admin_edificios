@@ -481,7 +481,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       )}
 
       {/* Apartments Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
         {filteredApartamentos.length === 0 ? (
           <div className="col-span-full text-center py-12">
             <Building2 className="h-12 w-12 text-slate-300 mx-auto mb-4" />
@@ -493,116 +493,71 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
             const aptPrincipal = grupo.propietario || grupo.inquilino!
 
             return (
-              <Card key={grupo.numero} className="hover:shadow-md transition-shadow">
-                <CardContent className="p-6">
-                  {/* Header */}
-                  <div className="flex items-start justify-between mb-4">
+              <Card key={grupo.numero} className="group hover:shadow-md transition-all duration-200 border-slate-200 hover:border-slate-300">
+                <CardContent className="p-4">
+                  {/* Header compacto */}
+                  <div className="flex items-center justify-between mb-3">
                     <div className="flex items-center gap-3">
-                      <div className="h-12 w-12 rounded-lg bg-blue-50 flex items-center justify-center">
-                        <Building2 className="h-6 w-6 text-blue-600" />
+                      <div className="h-10 w-10 rounded-lg bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-sm">
+                        <span className="text-white font-bold text-sm">{grupo.numero}</span>
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-slate-900">Apto {grupo.numero}</h3>
-                          {tieneAmbos ? (
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
-                              P/I
-                            </span>
-                          ) : (
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-slate-200 text-slate-700">
-                              {tipoOcupacionBadge[aptPrincipal.tipoOcupacion]}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-sm text-slate-500">Piso {grupo.piso || 'N/A'}</p>
+                        <h3 className="font-semibold text-slate-900">Apto {grupo.numero}</h3>
+                        <p className="text-xs text-slate-500">Piso {grupo.piso || 'N/A'}</p>
                       </div>
                     </div>
-                    {tieneAmbos ? (
-                      <Badge variant="info">P / I</Badge>
-                    ) : (
-                      <Badge variant={tipoOcupacionColors[aptPrincipal.tipoOcupacion]}>
-                        {tipoOcupacionLabels[aptPrincipal.tipoOcupacion]}
-                      </Badge>
-                    )}
+                    <div className="flex gap-1">
+                      {grupo.propietario && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">P</span>
+                      )}
+                      {grupo.inquilino && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">I</span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Sección Propietario */}
                   {grupo.propietario && (
-                    <div className="mb-3 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                    <div className="mb-3 p-3 bg-blue-50/70 rounded-lg border border-blue-100">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-semibold text-blue-700">PROPIETARIO</p>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-blue-600 hover:text-blue-700 hover:bg-blue-100"
-                            onClick={() => handleGeneratePropietarioPDF(grupo)}
-                            title="PDF Propietario"
-                          >
-                            <FileText className="h-3 w-3" />
+                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wide">Propietario</span>
+                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-100" onClick={() => handleGeneratePropietarioPDF(grupo)} title="PDF">
+                            <FileText className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-100"
-                            onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')}
-                            title="WhatsApp Propietario"
-                          >
-                            <Share2 className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')} title="WhatsApp">
+                            <Share2 className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            onClick={() => openEditDialog(grupo.propietario!)}
-                            title="Editar Propietario"
-                          >
-                            <Edit className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.propietario!)} title="Editar">
+                            <Edit className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
-                            onClick={() => openDeleteDialog(grupo.propietario!)}
-                            title="Eliminar Propietario"
-                          >
-                            <Trash2 className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.propietario!)} title="Eliminar">
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </div>
-                      {grupo.propietario.contactoNombre ? (
-                        <p className="font-medium text-slate-900 text-sm">
-                          {grupo.propietario.contactoNombre} {grupo.propietario.contactoApellido || ''}
-                          {grupo.propietario.contactoCelular && (
-                            <span className="text-slate-500 font-normal"> · {grupo.propietario.contactoCelular}</span>
-                          )}
-                        </p>
-                      ) : (
-                        <p className="text-sm text-slate-400">Sin contacto</p>
+                      <p className="font-medium text-slate-800 text-sm truncate">
+                        {grupo.propietario.contactoNombre
+                          ? `${grupo.propietario.contactoNombre} ${grupo.propietario.contactoApellido || ''}`.trim()
+                          : <span className="text-slate-400 italic">Sin contacto</span>
+                        }
+                      </p>
+                      {grupo.propietario.contactoCelular && (
+                        <p className="text-xs text-slate-500 mt-0.5">{grupo.propietario.contactoCelular}</p>
                       )}
-                      {/* Gastos del Propietario */}
-                      <div className="mt-2 pt-2 border-t border-blue-200 grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <p className="text-slate-500">G. Comunes</p>
-                          <p className="font-semibold text-slate-800">{formatCurrency(grupo.propietario.gastosComunes)}</p>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-blue-200/50">
+                        <div className="flex gap-3 text-xs">
+                          <span className="text-slate-500">GC: <span className="font-medium text-slate-700">{formatCurrency(grupo.propietario.gastosComunes)}</span></span>
+                          <span className="text-slate-500">FR: <span className="font-medium text-slate-700">{formatCurrency(grupo.propietario.fondoReserva)}</span></span>
                         </div>
-                        <div>
-                          <p className="text-slate-500">F. Reserva</p>
-                          <p className="font-semibold text-slate-800">{formatCurrency(grupo.propietario.fondoReserva)}</p>
-                        </div>
-                        <div>
-                          <p className="text-blue-600 font-medium">Total</p>
-                          <p className="font-bold text-blue-700">{formatCurrency(grupo.propietario.gastosComunes + grupo.propietario.fondoReserva)}</p>
-                        </div>
+                        <span className="text-xs font-bold text-blue-700">{formatCurrency(grupo.propietario.gastosComunes + grupo.propietario.fondoReserva)}</span>
                       </div>
-                      {/* Cuenta Corriente Propietario */}
-                      <div className="mt-2 pt-2 border-t border-blue-200 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <Wallet className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-xs text-slate-600 font-medium">Cuenta Corriente</span>
-                        </div>
-                        <span className={`text-sm font-bold ${(saldos[grupo.propietario.id] || 0) > 0 ? 'text-red-600' : (saldos[grupo.propietario.id] || 0) < 0 ? 'text-green-600' : 'text-slate-600'}`}>
-                          {(saldos[grupo.propietario.id] || 0) > 0 ? 'Debe: ' : (saldos[grupo.propietario.id] || 0) < 0 ? 'A favor: ' : ''}
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-blue-200/50">
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <Wallet className="h-3 w-3" /> Saldo
+                        </span>
+                        <span className={`text-xs font-bold ${(saldos[grupo.propietario.id] || 0) > 0 ? 'text-red-600' : (saldos[grupo.propietario.id] || 0) < 0 ? 'text-green-600' : 'text-slate-500'}`}>
+                          {(saldos[grupo.propietario.id] || 0) > 0 ? '-' : (saldos[grupo.propietario.id] || 0) < 0 ? '+' : ''}
                           {formatCurrency(Math.abs(saldos[grupo.propietario.id] || 0))}
                         </span>
                       </div>
@@ -611,81 +566,46 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
 
                   {/* Sección Inquilino */}
                   {grupo.inquilino && (
-                    <div className="mb-3 p-3 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                    <div className="mb-3 p-3 bg-purple-50/70 rounded-lg border border-purple-100">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-xs font-semibold text-purple-700">INQUILINO</p>
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-purple-600 hover:text-purple-700 hover:bg-purple-100"
-                            onClick={() => handleGenerateInquilinoPDF(grupo)}
-                            title="PDF Inquilino"
-                          >
-                            <FileText className="h-3 w-3" />
+                        <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">Inquilino</span>
+                        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-purple-600 hover:bg-purple-100" onClick={() => handleGenerateInquilinoPDF(grupo)} title="PDF">
+                            <FileText className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-green-600 hover:text-green-700 hover:bg-green-100"
-                            onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')}
-                            title="WhatsApp Inquilino"
-                          >
-                            <Share2 className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')} title="WhatsApp">
+                            <Share2 className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            onClick={() => openEditDialog(grupo.inquilino!)}
-                            title="Editar Inquilino"
-                          >
-                            <Edit className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.inquilino!)} title="Editar">
+                            <Edit className="h-3.5 w-3.5" />
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-red-600 hover:text-red-700"
-                            onClick={() => openDeleteDialog(grupo.inquilino!)}
-                            title="Eliminar Inquilino"
-                          >
-                            <Trash2 className="h-3 w-3" />
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.inquilino!)} title="Eliminar">
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       </div>
-                      {grupo.inquilino.contactoNombre ? (
-                        <p className="font-medium text-slate-900 text-sm">
-                          {grupo.inquilino.contactoNombre} {grupo.inquilino.contactoApellido || ''}
-                          {grupo.inquilino.contactoCelular && (
-                            <span className="text-slate-500 font-normal"> · {grupo.inquilino.contactoCelular}</span>
-                          )}
-                        </p>
-                      ) : (
-                        <p className="text-sm text-slate-400">Sin contacto</p>
+                      <p className="font-medium text-slate-800 text-sm truncate">
+                        {grupo.inquilino.contactoNombre
+                          ? `${grupo.inquilino.contactoNombre} ${grupo.inquilino.contactoApellido || ''}`.trim()
+                          : <span className="text-slate-400 italic">Sin contacto</span>
+                        }
+                      </p>
+                      {grupo.inquilino.contactoCelular && (
+                        <p className="text-xs text-slate-500 mt-0.5">{grupo.inquilino.contactoCelular}</p>
                       )}
-                      {/* Gastos del Inquilino */}
-                      <div className="mt-2 pt-2 border-t border-purple-200 grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <p className="text-slate-500">G. Comunes</p>
-                          <p className="font-semibold text-slate-800">{formatCurrency(grupo.inquilino.gastosComunes)}</p>
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-purple-200/50">
+                        <div className="flex gap-3 text-xs">
+                          <span className="text-slate-500">GC: <span className="font-medium text-slate-700">{formatCurrency(grupo.inquilino.gastosComunes)}</span></span>
+                          <span className="text-slate-500">FR: <span className="font-medium text-slate-700">{formatCurrency(grupo.inquilino.fondoReserva)}</span></span>
                         </div>
-                        <div>
-                          <p className="text-slate-500">F. Reserva</p>
-                          <p className="font-semibold text-slate-800">{formatCurrency(grupo.inquilino.fondoReserva)}</p>
-                        </div>
-                        <div>
-                          <p className="text-purple-600 font-medium">Total</p>
-                          <p className="font-bold text-purple-700">{formatCurrency(grupo.inquilino.gastosComunes + grupo.inquilino.fondoReserva)}</p>
-                        </div>
+                        <span className="text-xs font-bold text-purple-700">{formatCurrency(grupo.inquilino.gastosComunes + grupo.inquilino.fondoReserva)}</span>
                       </div>
-                      {/* Cuenta Corriente Inquilino */}
-                      <div className="mt-2 pt-2 border-t border-purple-200 flex items-center justify-between">
-                        <div className="flex items-center gap-1.5">
-                          <Wallet className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-xs text-slate-600 font-medium">Cuenta Corriente</span>
-                        </div>
-                        <span className={`text-sm font-bold ${(saldos[grupo.inquilino.id] || 0) > 0 ? 'text-red-600' : (saldos[grupo.inquilino.id] || 0) < 0 ? 'text-green-600' : 'text-slate-600'}`}>
-                          {(saldos[grupo.inquilino.id] || 0) > 0 ? 'Debe: ' : (saldos[grupo.inquilino.id] || 0) < 0 ? 'A favor: ' : ''}
+                      <div className="flex items-center justify-between mt-2 pt-2 border-t border-purple-200/50">
+                        <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <Wallet className="h-3 w-3" /> Saldo
+                        </span>
+                        <span className={`text-xs font-bold ${(saldos[grupo.inquilino.id] || 0) > 0 ? 'text-red-600' : (saldos[grupo.inquilino.id] || 0) < 0 ? 'text-green-600' : 'text-slate-500'}`}>
+                          {(saldos[grupo.inquilino.id] || 0) > 0 ? '-' : (saldos[grupo.inquilino.id] || 0) < 0 ? '+' : ''}
                           {formatCurrency(Math.abs(saldos[grupo.inquilino.id] || 0))}
                         </span>
                       </div>
@@ -697,7 +617,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                     <Button
                       variant="outline"
                       size="sm"
-                      className="w-full mb-3 border-dashed"
+                      className="w-full border-dashed text-xs h-8"
                       onClick={() => {
                         const tipoFaltante = grupo.propietario ? "INQUILINO" : "PROPIETARIO"
                         setFormData({
@@ -717,24 +637,22 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                         setIsDialogOpen(true)
                       }}
                     >
-                      <Plus className="h-4 w-4 mr-2" />
+                      <Plus className="h-3 w-3 mr-1" />
                       Agregar {grupo.propietario ? "Inquilino" : "Propietario"}
                     </Button>
                   )}
 
                   {/* Botón PDF Completo (cuando hay ambos) */}
                   {tieneAmbos && (
-                    <div className="border-t pt-3">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={() => handleGenerateCompletoPDF(grupo)}
-                      >
-                        <FileText className="h-4 w-4 mr-2" />
-                        PDF Completo (Propietario + Inquilino)
-                      </Button>
-                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full text-xs h-8"
+                      onClick={() => handleGenerateCompletoPDF(grupo)}
+                    >
+                      <FileText className="h-3 w-3 mr-1" />
+                      PDF Completo
+                    </Button>
                   )}
                 </CardContent>
               </Card>
