@@ -72,6 +72,19 @@ CREATE TABLE IF NOT EXISTS CuentaBancaria (
     updatedAt TEXT DEFAULT (datetime('now'))
 );
 
+-- Tabla Servicio (debe ir antes de MovimientoBancario por la FK)
+CREATE TABLE IF NOT EXISTS Servicio (
+    id TEXT PRIMARY KEY,
+    tipo TEXT NOT NULL CHECK (tipo IN ('ELECTRICISTA', 'PLOMERO', 'SANITARIO', 'CERRAJERO', 'PINTOR', 'CARPINTERO', 'ALBANIL', 'JARDINERO', 'LIMPIEZA', 'SEGURIDAD', 'FUMIGACION', 'ASCENSOR', 'VIDRIERIA', 'HERRERIA', 'AIRE_ACONDICIONADO', 'GAS', 'UTE', 'OSE', 'TARIFA_SANEAMIENTO', 'OTRO')),
+    nombre TEXT NOT NULL,
+    celular TEXT,
+    email TEXT,
+    observaciones TEXT,
+    activo INTEGER DEFAULT 1,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
 -- Tabla MovimientoBancario
 CREATE TABLE IF NOT EXISTS MovimientoBancario (
     id TEXT PRIMARY KEY,
@@ -92,19 +105,6 @@ CREATE TABLE IF NOT EXISTS MovimientoBancario (
     FOREIGN KEY (cuentaBancariaId) REFERENCES CuentaBancaria(id) ON DELETE CASCADE,
     FOREIGN KEY (transaccionId) REFERENCES Transaccion(id) ON DELETE SET NULL,
     FOREIGN KEY (servicioId) REFERENCES Servicio(id) ON DELETE SET NULL
-);
-
--- Tabla Servicio
-CREATE TABLE IF NOT EXISTS Servicio (
-    id TEXT PRIMARY KEY,
-    tipo TEXT NOT NULL CHECK (tipo IN ('ELECTRICISTA', 'PLOMERO', 'SANITARIO', 'CERRAJERO', 'PINTOR', 'CARPINTERO', 'ALBANIL', 'JARDINERO', 'LIMPIEZA', 'SEGURIDAD', 'FUMIGACION', 'ASCENSOR', 'VIDRIERIA', 'HERRERIA', 'AIRE_ACONDICIONADO', 'GAS', 'UTE', 'OSE', 'TARIFA_SANEAMIENTO', 'OTRO')),
-    nombre TEXT NOT NULL,
-    celular TEXT,
-    email TEXT,
-    observaciones TEXT,
-    activo INTEGER DEFAULT 1,
-    createdAt TEXT DEFAULT (datetime('now')),
-    updatedAt TEXT DEFAULT (datetime('now'))
 );
 
 -- Tabla Registro
