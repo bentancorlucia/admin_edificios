@@ -184,9 +184,37 @@ export async function initDatabase(): Promise<void> {
 
 export async function getDatabase(): Promise<Database> {
   if (!db) {
-    db = await Database.load('sqlite:database.db');
+    // Intentar cargar la base de datos con reintentos
+    let retries = 5;
+    let lastError: Error | null = null;
+
+    while (retries > 0) {
+      try {
+        console.log(`Intentando conectar a la base de datos (intento ${6 - retries}/5)...`);
+        db = await Database.load('sqlite:database.db');
+        console.log('Conexión a la base de datos establecida correctamente');
+        break;
+      } catch (error) {
+        lastError = error as Error;
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.error(`Error al conectar (intento ${6 - retries}/5):`, errorMsg);
+        retries--;
+        if (retries > 0) {
+          // Esperar más tiempo entre reintentos para dar tiempo al plugin SQL
+          const waitTime = (6 - retries) * 500; // 500ms, 1000ms, 1500ms, 2000ms
+          console.log(`Esperando ${waitTime}ms antes de reintentar...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+        }
+      }
+    }
+
+    if (!db && lastError) {
+      const errorMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      console.error('Error al cargar la base de datos después de varios intentos:', errorMsg);
+      throw new Error(`No se pudo conectar a la base de datos: ${errorMsg}`);
+    }
   }
-  return db;
+  return db!;
 }
 
 // Función auxiliar para generar IDs únicos (similar a cuid)
