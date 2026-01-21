@@ -160,6 +160,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     fecha: new Date().toISOString().split("T")[0],
     descripcion: "Gastos Comunes",
     notas: "",
+    categoria: "GASTOS_COMUNES" as "GASTOS_COMUNES" | "FONDO_RESERVA",
   })
 
   // Obtener la cuenta bancaria por defecto
@@ -418,8 +419,8 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         monto: parseFloat(ventaCreditoForm.monto),
         apartamentoId: ventaCreditoForm.apartamentoId,
         fecha: fechaCorrecta.toISOString(),
-        categoria: "GASTOS_COMUNES",
-        descripcion: ventaCreditoForm.descripcion || "Gastos Comunes",
+        categoria: ventaCreditoForm.categoria,
+        descripcion: ventaCreditoForm.descripcion || (ventaCreditoForm.categoria === "GASTOS_COMUNES" ? "Gastos Comunes" : "Fondo de Reserva"),
       }
 
       const created = await createVentaCredito(data)
@@ -432,6 +433,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         fecha: new Date().toISOString().split("T")[0],
         descripcion: "Gastos Comunes",
         notas: "",
+        categoria: "GASTOS_COMUNES",
       })
     } catch (error) {
       console.error("Error creating venta credito:", error)
@@ -908,6 +910,15 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                             {t.estadoCredito === "PAGADO" ? "Pagado" : t.estadoCredito === "PARCIAL" ? "Parcial" : "Pendiente"}
                           </Badge>
                         )}
+                        {t.tipo === "VENTA_CREDITO" && t.categoria && (
+                          <Badge variant="outline" className={
+                            t.categoria === "GASTOS_COMUNES"
+                              ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : "border-purple-200 bg-purple-50 text-purple-700"
+                          }>
+                            {t.categoria === "GASTOS_COMUNES" ? "Gasto Común" : "Fondo Reserva"}
+                          </Badge>
+                        )}
                         {t.tipo === "RECIBO_PAGO" && t.clasificacionPago && (
                           <Badge variant="outline" className={
                             t.clasificacionPago === "GASTO_COMUN"
@@ -927,7 +938,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                         </span>
                         <span>•</span>
                         <span>{t.apartamento ? `Apto ${t.apartamento.numero}` : "General"}</span>
-                        {t.descripcion && (
+                        {t.tipo !== "VENTA_CREDITO" && t.tipo !== "RECIBO_PAGO" && t.descripcion && (
                           <>
                             <span>•</span>
                             <span className="truncate max-w-[200px]">{t.descripcion}</span>
@@ -1185,32 +1196,35 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Fecha *</Label>
-              <Input
-                type="date"
-                value={ventaCreditoForm.fecha}
-                onChange={(e) => setVentaCreditoForm({ ...ventaCreditoForm, fecha: e.target.value })}
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Descripción</Label>
-              <Input
-                placeholder="Ej: Gastos Comunes Enero 2026"
-                value={ventaCreditoForm.descripcion}
-                onChange={(e) => setVentaCreditoForm({ ...ventaCreditoForm, descripcion: e.target.value })}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Notas</Label>
-              <Textarea
-                placeholder="Notas adicionales..."
-                value={ventaCreditoForm.notas}
-                onChange={(e) => setVentaCreditoForm({ ...ventaCreditoForm, notas: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Fecha *</Label>
+                <Input
+                  type="date"
+                  value={ventaCreditoForm.fecha}
+                  onChange={(e) => setVentaCreditoForm({ ...ventaCreditoForm, fecha: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Clasificación *</Label>
+                <Select
+                  value={ventaCreditoForm.categoria}
+                  onValueChange={(value: "GASTOS_COMUNES" | "FONDO_RESERVA") => setVentaCreditoForm({
+                    ...ventaCreditoForm,
+                    categoria: value,
+                    descripcion: value === "GASTOS_COMUNES" ? "Gastos Comunes" : "Fondo de Reserva"
+                  })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
+                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-4">
@@ -1621,8 +1635,27 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </>
             )}
 
-            {/* Campos para otros tipos de transacción */}
-            {editForm.tipo !== "RECIBO_PAGO" && (
+            {/* Clasificación para Venta Crédito */}
+            {editForm.tipo === "VENTA_CREDITO" && (
+              <div className="space-y-2">
+                <Label>Clasificación *</Label>
+                <Select
+                  value={editForm.categoria || "GASTOS_COMUNES"}
+                  onValueChange={(value) => setEditForm({ ...editForm, categoria: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
+                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Campos para otros tipos de transacción (INGRESO/EGRESO) */}
+            {editForm.tipo !== "RECIBO_PAGO" && editForm.tipo !== "VENTA_CREDITO" && (
               <div className="space-y-2">
                 <Label>Categoría</Label>
                 <Select
@@ -1647,23 +1680,29 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               </div>
             )}
 
-            <div className="space-y-2">
-              <Label>Número de referencia</Label>
-              <Input
-                placeholder={editForm.tipo === "RECIBO_PAGO" ? "Ej: Transferencia #456" : "Ej: Factura #123"}
-                value={editForm.referencia}
-                onChange={(e) => setEditForm({ ...editForm, referencia: e.target.value })}
-              />
-            </div>
+            {/* Número de referencia solo para INGRESO/EGRESO */}
+            {editForm.tipo !== "RECIBO_PAGO" && editForm.tipo !== "VENTA_CREDITO" && (
+              <div className="space-y-2">
+                <Label>Número de referencia</Label>
+                <Input
+                  placeholder="Ej: Factura #123"
+                  value={editForm.referencia}
+                  onChange={(e) => setEditForm({ ...editForm, referencia: e.target.value })}
+                />
+              </div>
+            )}
 
-            <div className="space-y-2">
-              <Label>Notas</Label>
-              <Textarea
-                placeholder="Notas adicionales..."
-                value={editForm.notas}
-                onChange={(e) => setEditForm({ ...editForm, notas: e.target.value })}
-              />
-            </div>
+            {/* Notas solo para tipos que no son VENTA_CREDITO */}
+            {editForm.tipo !== "VENTA_CREDITO" && (
+              <div className="space-y-2">
+                <Label>Notas</Label>
+                <Textarea
+                  placeholder="Notas adicionales..."
+                  value={editForm.notas}
+                  onChange={(e) => setEditForm({ ...editForm, notas: e.target.value })}
+                />
+              </div>
+            )}
 
             <div className="flex justify-end gap-2 pt-4">
               <Button
