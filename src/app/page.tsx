@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Building2, TrendingUp, TrendingDown, Wallet, User, UserCheck } from "lucide-react"
+import { Building2, TrendingUp, TrendingDown, Wallet, User, UserCheck, CreditCard, Receipt, Calendar } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { BuildingView } from "@/components/building-view"
@@ -226,48 +226,79 @@ export default function DashboardPage() {
 
       {/* Recent Transactions */}
       <Card>
-        <CardContent className="p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-4">Transacciones Recientes</h2>
-          <div className="space-y-4">
-            {data.transaccionesRecientes.length === 0 ? (
-              <p className="text-slate-500 text-center py-8">No hay transacciones registradas</p>
-            ) : (
-              data.transaccionesRecientes.map((transaccion: TransaccionConApartamento) => (
+        <CardContent className="p-0">
+          <div className="p-6 pb-4">
+            <h2 className="text-lg font-semibold text-slate-900">Transacciones Recientes</h2>
+          </div>
+          {data.transaccionesRecientes.length === 0 ? (
+            <div className="text-center py-12">
+              <TrendingUp className="h-12 w-12 text-slate-300 mx-auto mb-4" />
+              <p className="text-slate-500">No hay transacciones registradas</p>
+            </div>
+          ) : (
+            <div className="divide-y">
+              {data.transaccionesRecientes.map((transaccion: TransaccionConApartamento) => (
                 <div
                   key={transaccion.id}
-                  className="flex items-center justify-between py-3 border-b border-slate-100 last:border-0"
+                  className="flex items-center justify-between p-4 hover:bg-slate-50"
                 >
                   <div className="flex items-center gap-4">
                     <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                      transaccion.tipo === 'EGRESO' ? 'bg-red-50' : 'bg-green-50'
+                      transaccion.tipo === 'EGRESO' ? 'bg-red-50' :
+                      transaccion.tipo === 'VENTA_CREDITO' ? 'bg-amber-50' : 'bg-green-50'
                     }`}>
                       {transaccion.tipo === 'EGRESO' ? (
                         <TrendingDown className="h-5 w-5 text-red-600" />
+                      ) : transaccion.tipo === 'VENTA_CREDITO' ? (
+                        <CreditCard className="h-5 w-5 text-amber-600" />
+                      ) : transaccion.tipo === 'RECIBO_PAGO' ? (
+                        <Receipt className="h-5 w-5 text-green-600" />
                       ) : (
                         <TrendingUp className="h-5 w-5 text-green-600" />
                       )}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-slate-900">
                           {getTransactionTypeLabel(transaccion.tipo)}
                         </p>
                         {transaccion.tipo === 'VENTA_CREDITO' && getEstadoCreditoBadge(transaccion.estadoCredito)}
+                        {transaccion.tipo === 'RECIBO_PAGO' && transaccion.clasificacionPago && (
+                          <Badge variant="outline" className={
+                            transaccion.clasificacionPago === 'GASTO_COMUN'
+                              ? 'border-blue-200 bg-blue-50 text-blue-700'
+                              : 'border-purple-200 bg-purple-50 text-purple-700'
+                          }>
+                            {transaccion.clasificacionPago === 'GASTO_COMUN' ? 'Gasto Común' : 'Fondo Reserva'}
+                          </Badge>
+                        )}
                       </div>
-                      <p className="text-sm text-slate-500">
-                        {formatDate(transaccion.fecha)} • {transaccion.apartamento?.numero ? `Apto ${transaccion.apartamento.numero}` : 'General'} • {transaccion.descripcion || `${getTransactionTypeLabel(transaccion.tipo)} - ${transaccion.categoria || 'Sin categoría'}`}
-                      </p>
+                      <div className="flex items-center gap-2 text-sm text-slate-500">
+                        <span className="inline-flex items-center gap-1">
+                          <Calendar className="h-3.5 w-3.5" />
+                          {formatDate(transaccion.fecha)}
+                        </span>
+                        <span>•</span>
+                        <span>{transaccion.apartamento?.numero ? `Apto ${transaccion.apartamento.numero}` : 'General'}</span>
+                        {transaccion.descripcion && (
+                          <>
+                            <span>•</span>
+                            <span className="truncate max-w-[200px]">{transaccion.descripcion}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <p className={`font-semibold ${
-                    transaccion.tipo === 'EGRESO' ? 'text-red-600' : 'text-green-600'
+                    transaccion.tipo === 'EGRESO' ? 'text-red-600' :
+                    transaccion.tipo === 'VENTA_CREDITO' ? 'text-amber-600' : 'text-green-600'
                   }`}>
                     {transaccion.tipo === 'EGRESO' ? '-' : '+'}{formatCurrency(transaccion.monto)}
                   </p>
                 </div>
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

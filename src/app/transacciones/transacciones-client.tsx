@@ -33,6 +33,7 @@ import {
   Calendar,
   X,
   Building,
+  Star,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import {
@@ -40,6 +41,7 @@ import {
   createVentaCredito,
   createReciboPago,
   updateTransaccion,
+  updateReciboPago,
   deleteTransaccion,
   type Transaccion as DBTransaccion,
 } from "@/lib/database"
@@ -77,6 +79,7 @@ type Transaccion = {
   clasificacionPago?: string | null
   montoGastoComun?: number | null
   montoFondoReserva?: number | null
+  cuentaBancariaId?: string | null
 }
 
 type Props = {
@@ -178,6 +181,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     referencia: "",
     notas: "",
     clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
+    cuentaBancariaId: "",
   })
 
   // Memoizar filtrado para evitar re-cálculos en cada render
@@ -492,6 +496,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       referencia: transaccion.referencia || "",
       notas: transaccion.notas || "",
       clasificacionPago: (transaccion.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA") || "GASTO_COMUN",
+      cuentaBancariaId: transaccion.cuentaBancariaId || "",
     })
     setIsEditDialogOpen(true)
   }, [])
@@ -511,25 +516,40 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         12, 0, 0
       ))
 
-      const data = {
-        tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
-        monto: parseFloat(editForm.monto),
-        categoria: editForm.categoria || null,
-        apartamentoId: editForm.apartamentoId || null,
-        fecha: fechaCorrecta.toISOString(),
-        metodoPago: editForm.metodoPago || null,
-        descripcion: editForm.descripcion || null,
-        referencia: editForm.referencia || null,
-        notas: editForm.notas || null,
-        clasificacionPago: editForm.tipo === "RECIBO_PAGO" ? editForm.clasificacionPago : null,
+      let updated
+      if (editForm.tipo === "RECIBO_PAGO") {
+        // Usar función específica para recibos de pago que maneja la cuenta bancaria
+        updated = await updateReciboPago(editingTransaccion.id, {
+          monto: parseFloat(editForm.monto),
+          apartamentoId: editForm.apartamentoId || undefined,
+          fecha: fechaCorrecta.toISOString(),
+          metodoPago: editForm.metodoPago || undefined,
+          referencia: editForm.referencia || null,
+          notas: editForm.notas || null,
+          clasificacionPago: editForm.clasificacionPago,
+          cuentaBancariaId: editForm.cuentaBancariaId || null,
+        })
+      } else {
+        const data = {
+          tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
+          monto: parseFloat(editForm.monto),
+          categoria: editForm.categoria || null,
+          apartamentoId: editForm.apartamentoId || null,
+          fecha: fechaCorrecta.toISOString(),
+          metodoPago: editForm.metodoPago || null,
+          descripcion: editForm.descripcion || null,
+          referencia: editForm.referencia || null,
+          notas: editForm.notas || null,
+          clasificacionPago: null,
+        }
+        updated = await updateTransaccion(editingTransaccion.id, data)
       }
 
-      const updated = await updateTransaccion(editingTransaccion.id, data)
       const aptData = editForm.apartamentoId
         ? apartamentos.find(a => a.id === editForm.apartamentoId) || null
         : null
       setTransacciones((prev) =>
-        prev.map((t) => (t.id === updated.id ? { ...updated, apartamento: aptData } as Transaccion : t))
+        prev.map((t) => (t.id === updated.id ? { ...updated, apartamento: aptData, cuentaBancariaId: editForm.cuentaBancariaId || null } as Transaccion : t))
       )
       setIsEditDialogOpen(false)
       setEditingTransaccion(null)
@@ -1201,7 +1221,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                   {cuentasBancarias.map((cuenta) => (
                     <SelectItem key={cuenta.id} value={cuenta.id}>
                       {cuenta.banco} - {cuenta.tipoCuenta} ({cuenta.numeroCuenta.slice(-4)})
-                      {cuenta.porDefecto && " ⭐"}
+                      {cuenta.porDefecto && <Star className="inline h-3 w-3 ml-1 fill-amber-400 text-amber-400" />}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1331,21 +1351,44 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
 
             {/* Campos específicos para Recibo de Pago */}
             {editForm.tipo === "RECIBO_PAGO" && (
-              <div className="space-y-2">
-                <Label>Clasificación del Pago *</Label>
-                <Select
-                  value={editForm.clasificacionPago}
-                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setEditForm({ ...editForm, clasificacionPago: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
-                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label>Clasificación del Pago *</Label>
+                  <Select
+                    value={editForm.clasificacionPago}
+                    onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setEditForm({ ...editForm, clasificacionPago: value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
+                      <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Cuenta Bancaria</Label>
+                  <Select
+                    value={editForm.cuentaBancariaId || "none"}
+                    onValueChange={(value) => setEditForm({ ...editForm, cuentaBancariaId: value === "none" ? "" : value })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar cuenta (opcional)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sin asignar</SelectItem>
+                      {cuentasBancarias.map((cuenta) => (
+                        <SelectItem key={cuenta.id} value={cuenta.id}>
+                          {cuenta.banco} - {cuenta.tipoCuenta} ({cuenta.numeroCuenta.slice(-4)})
+                          {cuenta.porDefecto && <Star className="inline h-3 w-3 ml-1 fill-amber-400 text-amber-400" />}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
             )}
 
             {/* Campos para otros tipos de transacción */}
