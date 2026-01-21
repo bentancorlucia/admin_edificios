@@ -11,6 +11,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import {
@@ -129,6 +139,8 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editingTransaccion, setEditingTransaccion] = useState<Transaccion | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [transaccionToDelete, setTransaccionToDelete] = useState<string | null>(null)
 
   const [transaccionForm, setTransaccionForm] = useState({
     tipo: "INGRESO",
@@ -630,17 +642,34 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm("¿Estás seguro de eliminar esta transacción?")) return
+  const handleDeleteClick = (id: string) => {
+    setTransaccionToDelete(id)
+    setIsDeleteDialogOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!transaccionToDelete) return
     setIsLoading(true)
 
     try {
-      await deleteTransaccion(id)
-      setTransacciones((prev) => prev.filter((t) => t.id !== id))
+      await deleteTransaccion(transaccionToDelete)
+      setTransacciones((prev) => prev.filter((t) => t.id !== transaccionToDelete))
+      toast({
+        title: "Transacción eliminada",
+        description: "La transacción se eliminó correctamente",
+        variant: "success",
+      })
     } catch (error) {
       console.error("Error deleting transaccion:", error)
+      toast({
+        title: "Error al eliminar",
+        description: error instanceof Error ? error.message : "No se pudo eliminar la transacción",
+        variant: "destructive",
+      })
     } finally {
       setIsLoading(false)
+      setIsDeleteDialogOpen(false)
+      setTransaccionToDelete(null)
     }
   }
 
@@ -941,7 +970,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => handleDelete(t.id)}
+                      onClick={() => handleDeleteClick(t.id)}
                       className="h-8 w-8 text-slate-400 hover:text-red-600"
                     >
                       <Trash2 className="h-4 w-4" />
@@ -1441,6 +1470,30 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Confirmar Eliminación Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar transacción?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. La transacción será eliminada permanentemente.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setTransaccionToDelete(null)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-red-600 hover:bg-red-700"
+              disabled={isLoading}
+            >
+              {isLoading ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Editar Transacción Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>

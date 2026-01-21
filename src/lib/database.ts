@@ -172,149 +172,23 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_aviso_mes_anio ON AvisoInforme(mes, anio)',
 ];
 
-// ============ MIGRACIONES ============
-// Estas funciones migran bases de datos existentes (v1.0.9 o anterior) al esquema actual
-
-// Migración: crear tabla TipoServicio si no existe (nueva en v1.0.10)
-async function migrateTipoServicioTable(database: Database): Promise<void> {
-  try {
-    // Verificar si la tabla existe
-    const tables = await database.select<{ name: string }[]>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='TipoServicio'"
-    );
-
-    if (tables.length === 0) {
-      await database.execute(`
-        CREATE TABLE TipoServicio (
-          id TEXT PRIMARY KEY,
-          codigo TEXT UNIQUE NOT NULL,
-          nombre TEXT NOT NULL,
-          color TEXT DEFAULT 'default',
-          orden INTEGER DEFAULT 0,
-          activo INTEGER DEFAULT 1,
-          createdAt TEXT DEFAULT (datetime('now')),
-          updatedAt TEXT DEFAULT (datetime('now'))
-        )
-      `);
-      console.log('Tabla TipoServicio creada');
-    }
-  } catch (error) {
-    console.error('Error en migración de TipoServicio:', error);
-  }
-}
-
-// Migración: agregar columnas banco y numeroCuenta a Servicio (nueva en v1.0.10)
-async function migrateServicioBancoColumns(database: Database): Promise<void> {
-  try {
-    const tableInfo = await database.select<{ name: string }[]>(
-      "PRAGMA table_info(Servicio)"
-    );
-    const columnNames = tableInfo.map(col => col.name);
-
-    if (!columnNames.includes('banco')) {
-      await database.execute('ALTER TABLE Servicio ADD COLUMN banco TEXT');
-      console.log('Columna banco agregada a Servicio');
-    }
-
-    if (!columnNames.includes('numeroCuenta')) {
-      await database.execute('ALTER TABLE Servicio ADD COLUMN numeroCuenta TEXT');
-      console.log('Columna numeroCuenta agregada a Servicio');
-    }
-  } catch (error) {
-    console.error('Error en migración de Servicio:', error);
-  }
-}
-
-// Migración: actualizar constraint de clasificacionPago para incluir 'MIXTO'
-// SQLite no permite ALTER TABLE para modificar CHECK constraints, así que recreamos la tabla
-async function migrateClasificacionPagoMixto(database: Database): Promise<void> {
-  try {
-    // Verificar si el constraint permite MIXTO revisando el esquema de la tabla
-    const tableInfo = await database.select<{ sql: string }[]>(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name='Transaccion'"
-    );
-
-    if (tableInfo.length > 0 && tableInfo[0].sql) {
-      const schemaSql = tableInfo[0].sql;
-
-      // Si el esquema NO incluye MIXTO, necesitamos migrar
-      if (!schemaSql.includes("'MIXTO'") && schemaSql.includes("clasificacionPago")) {
-        console.log('Migrando tabla Transaccion para soportar clasificacionPago MIXTO...');
-
-        // 1. Renombrar tabla original
-        await database.execute('ALTER TABLE Transaccion RENAME TO Transaccion_old');
-
-        // 2. Crear nueva tabla con constraint actualizado
-        await database.execute(`
-          CREATE TABLE Transaccion (
-            id TEXT PRIMARY KEY,
-            tipo TEXT NOT NULL CHECK (tipo IN ('INGRESO', 'EGRESO', 'VENTA_CREDITO', 'RECIBO_PAGO')),
-            monto REAL NOT NULL,
-            fecha TEXT DEFAULT (datetime('now')),
-            categoria TEXT CHECK (categoria IN ('GASTOS_COMUNES', 'FONDO_RESERVA', 'MANTENIMIENTO', 'SERVICIOS', 'ADMINISTRACION', 'REPARACIONES', 'LIMPIEZA', 'SEGURIDAD', 'OTROS')),
-            descripcion TEXT,
-            referencia TEXT,
-            metodoPago TEXT DEFAULT 'EFECTIVO' CHECK (metodoPago IN ('EFECTIVO', 'TRANSFERENCIA', 'TARJETA', 'CHEQUE', 'OTRO')),
-            notas TEXT,
-            estadoCredito TEXT CHECK (estadoCredito IN ('PENDIENTE', 'PARCIAL', 'PAGADO')),
-            montoPagado REAL DEFAULT 0,
-            clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'MIXTO')),
-            montoGastoComun REAL,
-            montoFondoReserva REAL,
-            createdAt TEXT DEFAULT (datetime('now')),
-            updatedAt TEXT DEFAULT (datetime('now')),
-            apartamentoId TEXT,
-            FOREIGN KEY (apartamentoId) REFERENCES Apartamento(id) ON DELETE SET NULL
-          )
-        `);
-
-        // 3. Copiar datos de la tabla vieja a la nueva
-        await database.execute(`
-          INSERT INTO Transaccion
-          SELECT * FROM Transaccion_old
-        `);
-
-        // 4. Eliminar tabla vieja
-        await database.execute('DROP TABLE Transaccion_old');
-
-        // 5. Recrear índices
-        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_apartamento ON Transaccion(apartamentoId)');
-        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_fecha ON Transaccion(fecha)');
-        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_tipo ON Transaccion(tipo)');
-
-        console.log('Migración de clasificacionPago MIXTO completada');
-      }
-    }
-  } catch (error) {
-    console.error('Error en migración de clasificacionPago MIXTO:', error);
-    throw error; // Re-lanzar para que se detecte el error
-  }
-}
-
-// Función principal de migraciones - ejecuta todas las migraciones necesarias
-async function runMigrations(database: Database): Promise<void> {
-  console.log('Ejecutando migraciones de base de datos...');
-
-  // Migración v1.0.9 -> v1.0.10+
-  await migrateTipoServicioTable(database);
-  await migrateServicioBancoColumns(database);
-
-  // Migración: agregar soporte para clasificacionPago 'MIXTO'
-  await migrateClasificacionPagoMixto(database);
-
-  console.log('Migraciones completadas');
-}
-
 export async function initDatabase(): Promise<void> {
   if (isInitialized) return;
 
   const database = await getDatabase();
 
   // Ejecutar cada statement de creación de tabla por separado
-  const statements = INIT_SQL
+  // Primero eliminar comentarios línea por línea, luego dividir por ;
+  const sqlSinComentarios = INIT_SQL
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => !line.startsWith('--'))
+    .join('\n');
+
+  const statements = sqlSinComentarios
     .split(';')
     .map(s => s.trim())
-    .filter(s => s.length > 0 && !s.startsWith('--'));
+    .filter(s => s.length > 0);
 
   for (const statement of statements) {
     await database.execute(statement);
@@ -324,10 +198,6 @@ export async function initDatabase(): Promise<void> {
   for (const indexSql of INDEX_SQL) {
     await database.execute(indexSql);
   }
-
-  // Ejecutar migraciones para bases de datos existentes (v1.0.9 o anterior)
-  // Debe ejecutarse ANTES de marcar como inicializado
-  await runMigrations(database);
 
   // Inicializar tipos de servicio predeterminados
   await initTiposServicioDefault();
@@ -369,10 +239,6 @@ export async function getDatabase(): Promise<Database> {
       throw new Error(`No se pudo conectar a la base de datos: ${errorMsg}`);
     }
 
-    // Ejecutar migraciones para asegurar que el esquema esté actualizado
-    if (db) {
-      await runMigrations(db);
-    }
   }
   return db!;
 }
@@ -592,9 +458,83 @@ export async function updateTransaccion(id: string, data: Partial<Omit<Transacci
 
 export async function deleteTransaccion(id: string): Promise<void> {
   const database = await getDatabase();
-  // Primero eliminar movimientos bancarios relacionados
-  await database.execute('DELETE FROM MovimientoBancario WHERE transaccionId = ?', [id]);
-  await database.execute('DELETE FROM Transaccion WHERE id = ?', [id]);
+
+  // Obtener la transacción antes de eliminarla para saber si hay que recalcular
+  const transaccion = await getTransaccionById(id);
+  const apartamentoId = transaccion?.apartamentoId;
+  const tipo = transaccion?.tipo;
+
+  try {
+    // Primero, desvincular movimientos bancarios relacionados (set NULL en lugar de DELETE)
+    await database.execute('UPDATE MovimientoBancario SET transaccionId = NULL WHERE transaccionId = ?', [id]);
+
+    // Eliminar la transacción
+    await database.execute('DELETE FROM Transaccion WHERE id = ?', [id]);
+  } catch (error) {
+    console.error('Error al eliminar transacción:', error);
+    throw new Error(`Error al eliminar la transacción: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  // Si era un RECIBO_PAGO o VENTA_CREDITO, recalcular el estado de los créditos del apartamento
+  if ((tipo === 'RECIBO_PAGO' || tipo === 'VENTA_CREDITO') && apartamentoId) {
+    try {
+      await recalcularEstadoCreditosApartamento(apartamentoId);
+    } catch (error) {
+      // Si falla el recálculo, no bloqueamos la eliminación
+      console.error('Error al recalcular créditos:', error);
+    }
+  }
+}
+
+// Recalcular el estado de los créditos de un apartamento basándose en los pagos existentes
+async function recalcularEstadoCreditosApartamento(apartamentoId: string): Promise<void> {
+  const database = await getDatabase();
+
+  // Obtener todos los créditos del apartamento ordenados por fecha (FIFO)
+  const creditos = await database.select<Transaccion[]>(
+    `SELECT * FROM Transaccion
+     WHERE apartamentoId = ? AND tipo = 'VENTA_CREDITO'
+     ORDER BY fecha ASC`,
+    [apartamentoId]
+  );
+
+  // Obtener todos los recibos de pago del apartamento ordenados por fecha
+  const recibos = await database.select<Transaccion[]>(
+    `SELECT * FROM Transaccion
+     WHERE apartamentoId = ? AND tipo = 'RECIBO_PAGO'
+     ORDER BY fecha ASC`,
+    [apartamentoId]
+  );
+
+  // Calcular el total pagado
+  const totalPagado = recibos.reduce((sum, r) => sum + r.monto, 0);
+
+  // Resetear todos los créditos a PENDIENTE con montoPagado = 0
+  for (const credito of creditos) {
+    await database.execute(
+      `UPDATE Transaccion SET montoPagado = 0, estadoCredito = 'PENDIENTE', updatedAt = ? WHERE id = ?`,
+      [getCurrentTimestamp(), credito.id]
+    );
+  }
+
+  // Redistribuir los pagos en orden FIFO
+  let montoRestante = totalPagado;
+
+  for (const credito of creditos) {
+    if (montoRestante <= 0) break;
+
+    const montoCredito = credito.monto;
+    const aplicar = Math.min(montoRestante, montoCredito);
+
+    const nuevoEstado = aplicar >= montoCredito ? 'PAGADO' : 'PARCIAL';
+
+    await database.execute(
+      `UPDATE Transaccion SET montoPagado = ?, estadoCredito = ?, updatedAt = ? WHERE id = ?`,
+      [aplicar, nuevoEstado, getCurrentTimestamp(), credito.id]
+    );
+
+    montoRestante -= aplicar;
+  }
 }
 
 // Crear venta a crédito
