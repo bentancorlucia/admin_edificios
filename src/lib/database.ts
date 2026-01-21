@@ -912,42 +912,13 @@ const TIPOS_SERVICIO_DEFAULT: Array<{ codigo: string; nombre: string; color: str
 // Variable para evitar múltiples inicializaciones de la tabla TipoServicio
 let tipoServicioTableInitialized = false;
 
-// Función para asegurar que la tabla TipoServicio existe
+// Función para asegurar que la tabla TipoServicio existe y tiene datos
+// Nota: La tabla se crea en initDatabase() via INIT_SQL, esta función es defensiva
 async function ensureTipoServicioTable(): Promise<void> {
   if (tipoServicioTableInitialized) return;
 
-  const database = await getDatabase();
-  await database.execute(`
-    CREATE TABLE IF NOT EXISTS TipoServicio (
-      id TEXT PRIMARY KEY,
-      codigo TEXT UNIQUE NOT NULL,
-      nombre TEXT NOT NULL,
-      color TEXT DEFAULT 'default',
-      orden INTEGER DEFAULT 0,
-      activo INTEGER DEFAULT 1,
-      createdAt TEXT DEFAULT (datetime('now')),
-      updatedAt TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  // Inicializar tipos predeterminados si la tabla está vacía
-  const existentes = await database.select<{ count: number }[]>(
-    'SELECT COUNT(*) as count FROM TipoServicio'
-  );
-
-  if (existentes[0]?.count === 0) {
-    const now = getCurrentTimestamp();
-    for (let i = 0; i < TIPOS_SERVICIO_DEFAULT.length; i++) {
-      const tipo = TIPOS_SERVICIO_DEFAULT[i];
-      const id = generateId();
-      await database.execute(
-        `INSERT INTO TipoServicio (id, codigo, nombre, color, orden, activo, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, tipo.codigo, tipo.nombre, tipo.color, i, 1, now, now]
-      );
-    }
-  }
-
+  // Asegurar que los datos predeterminados existan
+  await initTiposServicioDefault();
   tipoServicioTableInitialized = true;
 }
 
