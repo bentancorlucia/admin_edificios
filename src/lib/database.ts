@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS Transaccion (
     notas TEXT,
     estadoCredito TEXT CHECK (estadoCredito IN ('PENDIENTE', 'PARCIAL', 'PAGADO')),
     montoPagado REAL DEFAULT 0,
-    clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA')),
+    clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'MIXTO')),
     montoGastoComun REAL,
     montoFondoReserva REAL,
     createdAt TEXT DEFAULT (datetime('now')),
@@ -172,10 +172,40 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_aviso_mes_anio ON AvisoInforme(mes, anio)',
 ];
 
-// Migración para agregar columnas banco y numeroCuenta a Servicio
+// ============ MIGRACIONES ============
+// Estas funciones migran bases de datos existentes (v1.0.9 o anterior) al esquema actual
+
+// Migración: crear tabla TipoServicio si no existe (nueva en v1.0.10)
+async function migrateTipoServicioTable(database: Database): Promise<void> {
+  try {
+    // Verificar si la tabla existe
+    const tables = await database.select<{ name: string }[]>(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='TipoServicio'"
+    );
+
+    if (tables.length === 0) {
+      await database.execute(`
+        CREATE TABLE TipoServicio (
+          id TEXT PRIMARY KEY,
+          codigo TEXT UNIQUE NOT NULL,
+          nombre TEXT NOT NULL,
+          color TEXT DEFAULT 'default',
+          orden INTEGER DEFAULT 0,
+          activo INTEGER DEFAULT 1,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now'))
+        )
+      `);
+      console.log('Tabla TipoServicio creada');
+    }
+  } catch (error) {
+    console.error('Error en migración de TipoServicio:', error);
+  }
+}
+
+// Migración: agregar columnas banco y numeroCuenta a Servicio (nueva en v1.0.10)
 async function migrateServicioBancoColumns(database: Database): Promise<void> {
   try {
-    // Verificar si la columna banco existe
     const tableInfo = await database.select<{ name: string }[]>(
       "PRAGMA table_info(Servicio)"
     );
@@ -193,6 +223,86 @@ async function migrateServicioBancoColumns(database: Database): Promise<void> {
   } catch (error) {
     console.error('Error en migración de Servicio:', error);
   }
+}
+
+// Migración: actualizar constraint de clasificacionPago para incluir 'MIXTO'
+// SQLite no permite ALTER TABLE para modificar CHECK constraints, así que recreamos la tabla
+async function migrateClasificacionPagoMixto(database: Database): Promise<void> {
+  try {
+    // Verificar si el constraint permite MIXTO revisando el esquema de la tabla
+    const tableInfo = await database.select<{ sql: string }[]>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='Transaccion'"
+    );
+
+    if (tableInfo.length > 0 && tableInfo[0].sql) {
+      const schemaSql = tableInfo[0].sql;
+
+      // Si el esquema NO incluye MIXTO, necesitamos migrar
+      if (!schemaSql.includes("'MIXTO'") && schemaSql.includes("clasificacionPago")) {
+        console.log('Migrando tabla Transaccion para soportar clasificacionPago MIXTO...');
+
+        // 1. Renombrar tabla original
+        await database.execute('ALTER TABLE Transaccion RENAME TO Transaccion_old');
+
+        // 2. Crear nueva tabla con constraint actualizado
+        await database.execute(`
+          CREATE TABLE Transaccion (
+            id TEXT PRIMARY KEY,
+            tipo TEXT NOT NULL CHECK (tipo IN ('INGRESO', 'EGRESO', 'VENTA_CREDITO', 'RECIBO_PAGO')),
+            monto REAL NOT NULL,
+            fecha TEXT DEFAULT (datetime('now')),
+            categoria TEXT CHECK (categoria IN ('GASTOS_COMUNES', 'FONDO_RESERVA', 'MANTENIMIENTO', 'SERVICIOS', 'ADMINISTRACION', 'REPARACIONES', 'LIMPIEZA', 'SEGURIDAD', 'OTROS')),
+            descripcion TEXT,
+            referencia TEXT,
+            metodoPago TEXT DEFAULT 'EFECTIVO' CHECK (metodoPago IN ('EFECTIVO', 'TRANSFERENCIA', 'TARJETA', 'CHEQUE', 'OTRO')),
+            notas TEXT,
+            estadoCredito TEXT CHECK (estadoCredito IN ('PENDIENTE', 'PARCIAL', 'PAGADO')),
+            montoPagado REAL DEFAULT 0,
+            clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'MIXTO')),
+            montoGastoComun REAL,
+            montoFondoReserva REAL,
+            createdAt TEXT DEFAULT (datetime('now')),
+            updatedAt TEXT DEFAULT (datetime('now')),
+            apartamentoId TEXT,
+            FOREIGN KEY (apartamentoId) REFERENCES Apartamento(id) ON DELETE SET NULL
+          )
+        `);
+
+        // 3. Copiar datos de la tabla vieja a la nueva
+        await database.execute(`
+          INSERT INTO Transaccion
+          SELECT * FROM Transaccion_old
+        `);
+
+        // 4. Eliminar tabla vieja
+        await database.execute('DROP TABLE Transaccion_old');
+
+        // 5. Recrear índices
+        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_apartamento ON Transaccion(apartamentoId)');
+        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_fecha ON Transaccion(fecha)');
+        await database.execute('CREATE INDEX IF NOT EXISTS idx_transaccion_tipo ON Transaccion(tipo)');
+
+        console.log('Migración de clasificacionPago MIXTO completada');
+      }
+    }
+  } catch (error) {
+    console.error('Error en migración de clasificacionPago MIXTO:', error);
+    throw error; // Re-lanzar para que se detecte el error
+  }
+}
+
+// Función principal de migraciones - ejecuta todas las migraciones necesarias
+async function runMigrations(database: Database): Promise<void> {
+  console.log('Ejecutando migraciones de base de datos...');
+
+  // Migración v1.0.9 -> v1.0.10+
+  await migrateTipoServicioTable(database);
+  await migrateServicioBancoColumns(database);
+
+  // Migración: agregar soporte para clasificacionPago 'MIXTO'
+  await migrateClasificacionPagoMixto(database);
+
+  console.log('Migraciones completadas');
 }
 
 export async function initDatabase(): Promise<void> {
@@ -215,9 +325,9 @@ export async function initDatabase(): Promise<void> {
     await database.execute(indexSql);
   }
 
-  // Migración: agregar columnas banco y numeroCuenta a Servicio si no existen
+  // Ejecutar migraciones para bases de datos existentes (v1.0.9 o anterior)
   // Debe ejecutarse ANTES de marcar como inicializado
-  await migrateServicioBancoColumns(database);
+  await runMigrations(database);
 
   // Inicializar tipos de servicio predeterminados
   await initTiposServicioDefault();
@@ -259,10 +369,9 @@ export async function getDatabase(): Promise<Database> {
       throw new Error(`No se pudo conectar a la base de datos: ${errorMsg}`);
     }
 
-    // Ejecutar migración de columnas banco/numeroCuenta en Servicio
-    // Esto asegura que las columnas existan incluso si la DB ya estaba creada
+    // Ejecutar migraciones para asegurar que el esquema esté actualizado
     if (db) {
-      await migrateServicioBancoColumns(db);
+      await runMigrations(db);
     }
   }
   return db!;
@@ -1541,7 +1650,136 @@ export async function obtenerSaldosCuentaCorriente(): Promise<Record<string, num
   return saldos;
 }
 
-// Crear recibo de pago con lógica de negocio
+// Obtener deudas desglosadas por concepto (GC y FR) para un apartamento
+export interface DeudasPorConcepto {
+  gastosComunes: number;
+  fondoReserva: number;
+  total: number;
+}
+
+export async function obtenerDeudasPorConcepto(apartamentoId: string): Promise<DeudasPorConcepto> {
+  const database = await getDatabase();
+
+  // Obtener créditos (VENTA_CREDITO) pendientes/parciales y pagos (RECIBO_PAGO) del apartamento
+  const creditos = await database.select<{ categoria: string; monto: number; montoPagado: number }[]>(`
+    SELECT categoria, monto, COALESCE(montoPagado, 0) as montoPagado
+    FROM Transaccion
+    WHERE apartamentoId = ?
+      AND tipo = 'VENTA_CREDITO'
+      AND (estadoCredito = 'PENDIENTE' OR estadoCredito = 'PARCIAL')
+  `, [apartamentoId]);
+
+  // Calcular totales de créditos por categoría
+  let creditosGC = 0;
+  let creditosFR = 0;
+
+  for (const credito of creditos) {
+    const pendiente = credito.monto - credito.montoPagado;
+    if (credito.categoria === 'GASTOS_COMUNES') {
+      creditosGC += pendiente;
+    } else if (credito.categoria === 'FONDO_RESERVA') {
+      creditosFR += pendiente;
+    }
+  }
+
+  return {
+    gastosComunes: Math.max(0, creditosGC),
+    fondoReserva: Math.max(0, creditosFR),
+    total: Math.max(0, creditosGC) + Math.max(0, creditosFR),
+  };
+}
+
+// Obtener créditos pendientes ordenados por fecha (FIFO) para un apartamento
+export interface CreditoPendiente {
+  id: string;
+  monto: number;
+  montoPagado: number;
+  pendiente: number;
+  categoria: string;
+  fecha: string;
+  descripcion: string | null;
+}
+
+export async function getCreditosPendientes(apartamentoId: string): Promise<CreditoPendiente[]> {
+  const database = await getDatabase();
+
+  const creditos = await database.select<{
+    id: string;
+    monto: number;
+    montoPagado: number | null;
+    categoria: string;
+    fecha: string;
+    descripcion: string | null;
+  }[]>(`
+    SELECT id, monto, COALESCE(montoPagado, 0) as montoPagado, categoria, fecha, descripcion
+    FROM Transaccion
+    WHERE apartamentoId = ?
+      AND tipo = 'VENTA_CREDITO'
+      AND (estadoCredito = 'PENDIENTE' OR estadoCredito = 'PARCIAL')
+    ORDER BY fecha ASC
+  `, [apartamentoId]);
+
+  return creditos.map(c => ({
+    ...c,
+    montoPagado: c.montoPagado || 0,
+    pendiente: c.monto - (c.montoPagado || 0),
+  }));
+}
+
+// Interfaz para resultado de distribución de pago
+export interface DistribucionPago {
+  aplicadoGastosComunes: number;
+  aplicadoFondoReserva: number;
+  excedente: number;
+  creditosActualizados: { id: string; montoAplicado: number; nuevoMontoPagado: number; nuevoEstado: string }[];
+}
+
+// Calcular distribución de pago FIFO (sin aplicar)
+export async function calcularDistribucionPago(
+  apartamentoId: string,
+  montoTransferencia: number
+): Promise<DistribucionPago> {
+  const creditosPendientes = await getCreditosPendientes(apartamentoId);
+
+  let montoRestante = montoTransferencia;
+  let aplicadoGC = 0;
+  let aplicadoFR = 0;
+  const creditosActualizados: DistribucionPago['creditosActualizados'] = [];
+
+  for (const credito of creditosPendientes) {
+    if (montoRestante <= 0) break;
+
+    const pendiente = credito.pendiente;
+    const aplicar = Math.min(montoRestante, pendiente);
+
+    if (credito.categoria === 'GASTOS_COMUNES') {
+      aplicadoGC += aplicar;
+    } else if (credito.categoria === 'FONDO_RESERVA') {
+      aplicadoFR += aplicar;
+    }
+
+    const nuevoMontoPagado = credito.montoPagado + aplicar;
+    const nuevoEstado = nuevoMontoPagado >= credito.monto ? 'PAGADO' : 'PARCIAL';
+
+    creditosActualizados.push({
+      id: credito.id,
+      montoAplicado: aplicar,
+      nuevoMontoPagado,
+      nuevoEstado,
+    });
+
+    montoRestante -= aplicar;
+  }
+
+  return {
+    aplicadoGastosComunes: aplicadoGC,
+    aplicadoFondoReserva: aplicadoFR,
+    excedente: montoRestante,
+    creditosActualizados,
+  };
+}
+
+// Crear recibo de pago con lógica de negocio y distribución FIFO
 export async function createReciboPago(data: {
   monto: number;
   apartamentoId: string;
@@ -1551,6 +1789,12 @@ export async function createReciboPago(data: {
   referencia: string | null;
   notas: string | null;
   clasificacionPago: 'GASTO_COMUN' | 'FONDO_RESERVA';
+  // Nuevos parámetros para distribución automática
+  usarDistribucionAutomatica?: boolean;
+  excedentePara?: 'GASTO_COMUN' | 'FONDO_RESERVA';
+  // Montos pre-calculados (si vienen del frontend)
+  montoGastoComun?: number;
+  montoFondoReserva?: number;
 }): Promise<Transaccion> {
   const apartamento = await getApartamentoById(data.apartamentoId);
   if (!apartamento) {
@@ -1558,11 +1802,81 @@ export async function createReciboPago(data: {
   }
 
   const tipoLabel = apartamento.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
-  const clasificacionLabels = {
+
+  // Calcular distribución automática si está habilitada
+  let montoGC = data.montoGastoComun ?? 0;
+  let montoFR = data.montoFondoReserva ?? 0;
+  let clasificacionFinal: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'MIXTO' = data.clasificacionPago;
+
+  if (data.usarDistribucionAutomatica) {
+    const distribucion = await calcularDistribucionPago(data.apartamentoId, data.monto);
+
+    montoGC = distribucion.aplicadoGastosComunes;
+    montoFR = distribucion.aplicadoFondoReserva;
+
+    // Asignar excedente al concepto elegido
+    if (distribucion.excedente > 0 && data.excedentePara) {
+      if (data.excedentePara === 'GASTO_COMUN') {
+        montoGC += distribucion.excedente;
+      } else {
+        montoFR += distribucion.excedente;
+      }
+    }
+
+    // Determinar clasificación final
+    if (montoGC > 0 && montoFR > 0) {
+      clasificacionFinal = 'MIXTO';
+    } else if (montoGC > 0) {
+      clasificacionFinal = 'GASTO_COMUN';
+    } else if (montoFR > 0) {
+      clasificacionFinal = 'FONDO_RESERVA';
+    }
+
+    // Actualizar créditos pendientes con la distribución calculada
+    for (const creditoActualizado of distribucion.creditosActualizados) {
+      await updateTransaccion(creditoActualizado.id, {
+        montoPagado: creditoActualizado.nuevoMontoPagado,
+        estadoCredito: creditoActualizado.nuevoEstado,
+      });
+    }
+  } else {
+    // Modo legacy: usar clasificación simple
+    montoGC = data.clasificacionPago === 'GASTO_COMUN' ? data.monto : 0;
+    montoFR = data.clasificacionPago === 'FONDO_RESERVA' ? data.monto : 0;
+
+    // Actualizar créditos pendientes de forma secuencial (modo legacy)
+    const transacciones = await getTransaccionesByApartamento(data.apartamentoId);
+    const pendingCredits = transacciones
+      .filter(t => t.tipo === 'VENTA_CREDITO' && (t.estadoCredito === 'PENDIENTE' || t.estadoCredito === 'PARCIAL'))
+      .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+
+    let remainingPayment = data.monto;
+
+    for (const credit of pendingCredits) {
+      if (remainingPayment <= 0) break;
+
+      const pendingAmount = credit.monto - (credit.montoPagado || 0);
+      const paymentToApply = Math.min(remainingPayment, pendingAmount);
+
+      const newMontoPagado = (credit.montoPagado || 0) + paymentToApply;
+      const newEstado = newMontoPagado >= credit.monto ? 'PAGADO' : 'PARCIAL';
+
+      await updateTransaccion(credit.id, {
+        montoPagado: newMontoPagado,
+        estadoCredito: newEstado,
+      });
+
+      remainingPayment -= paymentToApply;
+    }
+  }
+
+  // Generar descripción del recibo
+  const clasificacionLabels: Record<string, string> = {
     GASTO_COMUN: 'Gasto Común',
     FONDO_RESERVA: 'Fondo de Reserva',
+    MIXTO: 'Mixto',
   };
-  const clasificacionLabel = clasificacionLabels[data.clasificacionPago];
+  const clasificacionLabel = clasificacionLabels[clasificacionFinal];
   const descripcionRecibo = `Recibo de Pago (${clasificacionLabel}) - Apto ${apartamento.numero} (${tipoLabel})${data.referencia ? ` - Ref: ${data.referencia}` : ''}`;
 
   const recibo = await createTransaccion({
@@ -1574,9 +1888,9 @@ export async function createReciboPago(data: {
     referencia: data.referencia,
     notas: data.notas,
     descripcion: descripcionRecibo,
-    clasificacionPago: data.clasificacionPago,
-    montoGastoComun: data.clasificacionPago === 'GASTO_COMUN' ? data.monto : null,
-    montoFondoReserva: data.clasificacionPago === 'FONDO_RESERVA' ? data.monto : null,
+    clasificacionPago: clasificacionFinal,
+    montoGastoComun: montoGC > 0 ? montoGC : null,
+    montoFondoReserva: montoFR > 0 ? montoFR : null,
     categoria: null,
     estadoCredito: null,
     montoPagado: null,
@@ -1598,31 +1912,6 @@ export async function createReciboPago(data: {
       conciliado: false,
       servicioId: null,
     });
-  }
-
-  // Actualizar créditos pendientes
-  const transacciones = await getTransaccionesByApartamento(data.apartamentoId);
-  const pendingCredits = transacciones
-    .filter(t => t.tipo === 'VENTA_CREDITO' && (t.estadoCredito === 'PENDIENTE' || t.estadoCredito === 'PARCIAL'))
-    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
-
-  let remainingPayment = data.monto;
-
-  for (const credit of pendingCredits) {
-    if (remainingPayment <= 0) break;
-
-    const pendingAmount = credit.monto - (credit.montoPagado || 0);
-    const paymentToApply = Math.min(remainingPayment, pendingAmount);
-
-    const newMontoPagado = (credit.montoPagado || 0) + paymentToApply;
-    const newEstado = newMontoPagado >= credit.monto ? 'PAGADO' : 'PARCIAL';
-
-    await updateTransaccion(credit.id, {
-      montoPagado: newMontoPagado,
-      estadoCredito: newEstado,
-    });
-
-    remainingPayment -= paymentToApply;
   }
 
   return recibo;

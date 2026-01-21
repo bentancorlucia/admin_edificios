@@ -43,7 +43,11 @@ import {
   updateTransaccion,
   updateReciboPago,
   deleteTransaccion,
+  obtenerDeudasPorConcepto,
+  calcularDistribucionPago,
   type Transaccion as DBTransaccion,
+  type DeudasPorConcepto,
+  type DistribucionPago,
 } from "@/lib/database"
 import { generateTransaccionesPDF } from "@/lib/pdf"
 import { toast } from "@/hooks/use-toast"
@@ -158,7 +162,63 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     referencia: "",
     notas: "",
     clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
+    excedentePara: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
   })
+
+  // Estados para deudas y distribución automática
+  const [deudaApartamento, setDeudaApartamento] = useState<DeudasPorConcepto | null>(null)
+  const [distribucionPago, setDistribucionPago] = useState<DistribucionPago | null>(null)
+  const [cargandoDeuda, setCargandoDeuda] = useState(false)
+
+  // Efecto para cargar deudas cuando se selecciona un apartamento
+  useEffect(() => {
+    const cargarDeudas = async () => {
+      if (!reciboPagoForm.apartamentoId) {
+        setDeudaApartamento(null)
+        setDistribucionPago(null)
+        return
+      }
+
+      setCargandoDeuda(true)
+      try {
+        const deudas = await obtenerDeudasPorConcepto(reciboPagoForm.apartamentoId)
+        setDeudaApartamento(deudas)
+      } catch (error) {
+        console.error("Error al cargar deudas:", error)
+        setDeudaApartamento(null)
+      } finally {
+        setCargandoDeuda(false)
+      }
+    }
+
+    cargarDeudas()
+  }, [reciboPagoForm.apartamentoId])
+
+  // Efecto para calcular distribución cuando cambia el monto
+  useEffect(() => {
+    const calcularDistribucion = async () => {
+      if (!reciboPagoForm.apartamentoId || !reciboPagoForm.monto) {
+        setDistribucionPago(null)
+        return
+      }
+
+      const montoNum = parseFloat(reciboPagoForm.monto)
+      if (isNaN(montoNum) || montoNum <= 0) {
+        setDistribucionPago(null)
+        return
+      }
+
+      try {
+        const distribucion = await calcularDistribucionPago(reciboPagoForm.apartamentoId, montoNum)
+        setDistribucionPago(distribucion)
+      } catch (error) {
+        console.error("Error al calcular distribución:", error)
+        setDistribucionPago(null)
+      }
+    }
+
+    calcularDistribucion()
+  }, [reciboPagoForm.apartamentoId, reciboPagoForm.monto])
 
   // Efecto para establecer la cuenta por defecto cuando se carga
   useEffect(() => {
@@ -394,6 +454,10 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         12, 0, 0
       ))
 
+      // Determinar si hay deuda pendiente para usar distribución automática
+      const tieneDeuda = !!(deudaApartamento && deudaApartamento.total > 0)
+      const tieneExcedente = !!(distribucionPago && distribucionPago.excedente > 0)
+
       const data = {
         monto: parseFloat(reciboPagoForm.monto),
         apartamentoId: reciboPagoForm.apartamentoId,
@@ -403,6 +467,9 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         referencia: reciboPagoForm.referencia || null,
         notas: reciboPagoForm.notas || null,
         clasificacionPago: reciboPagoForm.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA",
+        // Usar distribución automática si hay deuda pendiente
+        usarDistribucionAutomatica: tieneDeuda,
+        excedentePara: tieneExcedente ? reciboPagoForm.excedentePara : undefined,
       }
 
       const created = await createReciboPago(data)
@@ -418,7 +485,10 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         referencia: "",
         notas: "",
         clasificacionPago: "GASTO_COMUN",
+        excedentePara: "GASTO_COMUN",
       })
+      setDeudaApartamento(null)
+      setDistribucionPago(null)
     } catch (error) {
       console.error("Error creating recibo pago:", error)
       alert("Error al registrar el pago. Intente nuevamente.")
@@ -813,9 +883,11 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                           <Badge variant="outline" className={
                             t.clasificacionPago === "GASTO_COMUN"
                               ? "border-blue-200 bg-blue-50 text-blue-700"
+                              : t.clasificacionPago === "MIXTO"
+                              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
                               : "border-purple-200 bg-purple-50 text-purple-700"
                           }>
-                            {t.clasificacionPago === "GASTO_COMUN" ? "Gasto Común" : "Fondo Reserva"}
+                            {t.clasificacionPago === "GASTO_COMUN" ? "Gasto Común" : t.clasificacionPago === "MIXTO" ? "Mixto" : "Fondo Reserva"}
                           </Badge>
                         )}
                       </div>
@@ -836,12 +908,28 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <p className={`font-semibold ${
-                      t.tipo === "EGRESO" ? "text-red-600" :
-                      t.tipo === "VENTA_CREDITO" ? "text-amber-600" : "text-green-600"
-                    }`}>
-                      {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
-                    </p>
+                    <div className="text-right">
+                      <p className={`font-semibold ${
+                        t.tipo === "EGRESO" ? "text-red-600" :
+                        t.tipo === "VENTA_CREDITO" ? "text-amber-600" : "text-green-600"
+                      }`}>
+                        {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
+                      </p>
+                      {/* Desglose para pagos mixtos */}
+                      {t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "MIXTO" && (t.montoGastoComun || t.montoFondoReserva) && (
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {t.montoGastoComun && t.montoGastoComun > 0 && (
+                            <span className="text-blue-600">GC: {formatCurrency(t.montoGastoComun)}</span>
+                          )}
+                          {t.montoGastoComun && t.montoGastoComun > 0 && t.montoFondoReserva && t.montoFondoReserva > 0 && (
+                            <span className="mx-1">|</span>
+                          )}
+                          {t.montoFondoReserva && t.montoFondoReserva > 0 && (
+                            <span className="text-purple-600">FR: {formatCurrency(t.montoFondoReserva)}</span>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1113,53 +1201,158 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       </Dialog>
 
       {/* Recibo de Pago Dialog */}
-      <Dialog open={isReciboPagoDialogOpen} onOpenChange={setIsReciboPagoDialogOpen}>
-        <DialogContent className="max-w-md">
+      <Dialog open={isReciboPagoDialogOpen} onOpenChange={(open) => {
+        setIsReciboPagoDialogOpen(open)
+        if (!open) {
+          setDeudaApartamento(null)
+          setDistribucionPago(null)
+        }
+      }}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nuevo Recibo de Pago</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleReciboPagoSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            {/* 1. Selección de Apartamento */}
+            <div className="space-y-2">
+              <Label>Apartamento *</Label>
+              <Select
+                value={reciboPagoForm.apartamentoId}
+                onValueChange={(value) => setReciboPagoForm({ ...reciboPagoForm, apartamentoId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccionar apartamento" />
+                </SelectTrigger>
+                <SelectContent>
+                  {apartamentos.map((apt) => (
+                    <SelectItem key={apt.id} value={apt.id}>
+                      <span className="flex items-center gap-2">
+                        Apto {apt.numero}
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${
+                          apt.tipoOcupacion === "PROPIETARIO"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-purple-100 text-purple-700"
+                        }`}>
+                          {apt.tipoOcupacion === "PROPIETARIO" ? "Propietario" : "Inquilino"}
+                        </span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* 2. Card de Deuda Actual */}
+            {reciboPagoForm.apartamentoId && (
+              <Card className="border-amber-200 bg-amber-50/50">
+                <CardContent className="p-3">
+                  {cargandoDeuda ? (
+                    <p className="text-sm text-amber-700">Cargando deuda...</p>
+                  ) : deudaApartamento ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-amber-800">Deuda actual:</p>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
+                        <div>
+                          <span className="text-amber-600">Gastos Comunes:</span>
+                          <p className="font-semibold text-amber-900">{formatCurrency(deudaApartamento.gastosComunes)}</p>
+                        </div>
+                        <div>
+                          <span className="text-amber-600">Fondo Reserva:</span>
+                          <p className="font-semibold text-amber-900">{formatCurrency(deudaApartamento.fondoReserva)}</p>
+                        </div>
+                        <div>
+                          <span className="text-amber-600">Total:</span>
+                          <p className="font-bold text-amber-900">{formatCurrency(deudaApartamento.total)}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-green-700">Sin deuda pendiente</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 3. Monto de la transferencia */}
+            <div className="space-y-2">
+              <Label>Monto de la transferencia *</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                value={reciboPagoForm.monto}
+                onChange={(e) => setReciboPagoForm({ ...reciboPagoForm, monto: e.target.value })}
+                required
+                className="text-lg font-semibold"
+              />
+            </div>
+
+            {/* 4. Card de Distribución Automática */}
+            {reciboPagoForm.apartamentoId && reciboPagoForm.monto && parseFloat(reciboPagoForm.monto) > 0 && distribucionPago && (
+              <Card className="border-blue-200 bg-blue-50/50">
+                <CardContent className="p-3">
+                  <p className="text-sm font-medium text-blue-800 mb-2">Distribución del pago:</p>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-blue-600">A Gastos Comunes:</span>
+                      <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoGastosComunes)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-blue-600">A Fondo de Reserva:</span>
+                      <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoFondoReserva)}</span>
+                    </div>
+                    {distribucionPago.excedente > 0 && (
+                      <div className="flex justify-between pt-1 border-t border-blue-200">
+                        <span className="text-green-600 font-medium">Excedente:</span>
+                        <span className="font-bold text-green-700">{formatCurrency(distribucionPago.excedente)}</span>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 5. Selector de Excedente (solo si hay excedente) */}
+            {distribucionPago && distribucionPago.excedente > 0 && (
               <div className="space-y-2">
-                <Label>Monto *</Label>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={reciboPagoForm.monto}
-                  onChange={(e) => setReciboPagoForm({ ...reciboPagoForm, monto: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Apartamento *</Label>
+                <Label>Asignar excedente a:</Label>
                 <Select
-                  value={reciboPagoForm.apartamentoId}
-                  onValueChange={(value) => setReciboPagoForm({ ...reciboPagoForm, apartamentoId: value })}
+                  value={reciboPagoForm.excedentePara}
+                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, excedentePara: value })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Seleccionar" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {apartamentos.map((apt) => (
-                      <SelectItem key={apt.id} value={apt.id}>
-                        <span className="flex items-center gap-2">
-                          Apto {apt.numero}
-                          <span className={`text-xs px-1.5 py-0.5 rounded ${
-                            apt.tipoOcupacion === "PROPIETARIO"
-                              ? "bg-blue-100 text-blue-700"
-                              : "bg-purple-100 text-purple-700"
-                          }`}>
-                            {apt.tipoOcupacion === "PROPIETARIO" ? "Propietario" : "Inquilino"}
-                          </span>
-                        </span>
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="GASTO_COMUN">Gastos Comunes (saldo a favor)</SelectItem>
+                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva (saldo a favor)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-500">
+                  El excedente de {formatCurrency(distribucionPago.excedente)} quedará como saldo a favor
+                </p>
+              </div>
+            )}
+
+            {/* 6. Clasificación manual (solo si NO hay deuda - modo legacy) */}
+            {(!deudaApartamento || deudaApartamento.total === 0) && (
+              <div className="space-y-2">
+                <Label>Clasificación del Pago *</Label>
+                <Select
+                  value={reciboPagoForm.clasificacionPago}
+                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, clasificacionPago: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
+                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-            </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -1189,22 +1382,6 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Clasificación del Pago *</Label>
-              <Select
-                value={reciboPagoForm.clasificacionPago}
-                onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, clasificacionPago: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
-                  <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
 
             <div className="space-y-2">
