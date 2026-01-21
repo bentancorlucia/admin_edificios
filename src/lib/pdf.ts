@@ -141,7 +141,7 @@ type ApartamentoAgrupado = {
 // Tipo para saldos de cuenta corriente
 type SaldosCuentaCorriente = Record<string, number>
 
-// PDF para Propietario - Minimalista
+// PDF para Propietario - Compacto
 export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente, transacciones?: TransaccionApartamento[]) {
   if (!grupo.propietario) return
 
@@ -151,156 +151,111 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
   const apt = grupo.propietario
   const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
-
-  // Header minimalista
-  doc.setFillColor(37, 99, 235)
-  doc.rect(0, 0, pageWidth, 8, "F")
-
-  doc.setTextColor(37, 99, 235)
-  doc.setFontSize(20)
-  doc.setFont("helvetica", "bold")
-  doc.text(`Apto ${grupo.numero}`, 20, 25)
-
-  doc.setFontSize(11)
-  doc.setTextColor(100, 116, 139)
-  doc.setFont("helvetica", "normal")
-  doc.text(`Propietario · Piso ${grupo.piso || 'N/A'} · ${fecha}`, 20, 33)
-
-  let y = 50
-
-  // Línea separadora
-  doc.setDrawColor(226, 232, 240)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
-
-  // Contacto
-  doc.setFontSize(9)
-  doc.setTextColor(100, 116, 139)
-  doc.text("CONTACTO", 20, y)
-  y += 8
-
-  doc.setFontSize(12)
-  doc.setTextColor(30, 41, 59)
-  doc.setFont("helvetica", "bold")
   const nombreCompleto = apt.contactoNombre
     ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim()
     : "Sin registrar"
-  doc.text(nombreCompleto, 20, y)
-  y += 7
 
-  doc.setFont("helvetica", "normal")
-  doc.setFontSize(10)
-  if (apt.contactoCelular) {
-    doc.text(apt.contactoCelular, 20, y)
-    y += 6
-  }
-  if (apt.contactoEmail) {
-    doc.setTextColor(100, 116, 139)
-    doc.text(apt.contactoEmail, 20, y)
-    y += 6
-  }
+  // Header compacto con barra de color
+  doc.setFillColor(37, 99, 235)
+  doc.rect(0, 0, pageWidth, 5, "F")
 
-  y += 10
-
-  // Gastos - Tabla simple
-  doc.setDrawColor(226, 232, 240)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
+  // Título y fecha en la misma línea
+  doc.setTextColor(37, 99, 235)
+  doc.setFontSize(16)
+  doc.setFont("helvetica", "bold")
+  doc.text(`Apto ${grupo.numero}`, 15, 15)
 
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
-  doc.text("GASTOS MENSUALES", 20, y)
-  y += 12
+  doc.setFont("helvetica", "normal")
+  doc.text(fecha, pageWidth - 15, 15, { align: "right" })
 
-  doc.setFontSize(11)
+  // Segunda línea: tipo, piso, contacto
+  doc.text(`Propietario · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 22)
+
+  // Contacto en la misma línea si hay espacio
+  const contactoInfo = [apt.contactoCelular, apt.contactoEmail].filter(Boolean).join(" · ")
+  if (contactoInfo) {
+    doc.text(contactoInfo, pageWidth - 15, 22, { align: "right" })
+  }
+
+  let y = 32
+
+  // Sección combinada: Gastos y Estado de Cuenta lado a lado
+  doc.setDrawColor(226, 232, 240)
+  doc.line(15, y, pageWidth - 15, y)
+  y += 8
+
+  const halfWidth = (pageWidth - 40) / 2
+
+  // Columna izquierda: Gastos
+  doc.setFontSize(8)
+  doc.setTextColor(100, 116, 139)
+  doc.text("GASTOS MENSUALES", 15, y)
+
+  // Columna derecha: Estado de cuenta
+  doc.text("ESTADO DE CUENTA", 15 + halfWidth + 10, y)
+  y += 6
+
+  // Gastos en formato compacto
+  doc.setFontSize(9)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "normal")
+  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString()}`, 15, y)
+  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString()}`, 15, y + 5)
 
-  doc.text("Gastos Comunes", 20, y)
-  doc.text(`$ ${apt.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-  y += 10
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(37, 99, 235)
+  doc.text(`Total: $${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, 15, y + 12)
 
-  doc.text("Fondo de Reserva", 20, y)
-  doc.text(`$ ${apt.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-  y += 12
+  // Estado de cuenta compacto (cuadro más pequeño)
+  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
+  const estadoTexto = saldo > 0 ? "DEUDOR" : saldo < 0 ? "A FAVOR" : "AL DÍA"
 
-  // Total destacado
-  doc.setDrawColor(37, 99, 235)
-  doc.setLineWidth(0.5)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 10
+  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
+  doc.roundedRect(15 + halfWidth + 10, y - 2, halfWidth, 18, 2, 2, "F")
+
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(8)
+  doc.setFont("helvetica", "normal")
+  doc.text(estadoTexto, 15 + halfWidth + 10 + halfWidth / 2, y + 4, { align: "center" })
 
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
-  doc.setTextColor(37, 99, 235)
-  doc.text("TOTAL MENSUAL", 20, y)
-  doc.text(`$ ${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, pageWidth - 20, y, { align: "right" })
+  doc.text(`$${Math.abs(saldo).toLocaleString()}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
 
-  // Estado de Cuenta
-  y += 25
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.3)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
-
-  doc.setFontSize(9)
-  doc.setTextColor(100, 116, 139)
-  doc.text("ESTADO DE CUENTA", 20, y)
-  y += 12
-
-  // Cuadro de estado de cuenta
-  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
-  const estadoTexto = saldo > 0 ? "SALDO DEUDOR" : saldo < 0 ? "SALDO A FAVOR" : "SIN SALDO PENDIENTE"
-
-  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
-  doc.roundedRect(20, y, pageWidth - 40, 30, 3, 3, "F")
-
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "normal")
-  doc.text(estadoTexto, pageWidth / 2, y + 10, { align: "center" })
-
-  doc.setFontSize(16)
-  doc.setFont("helvetica", "bold")
-  doc.text(`$ ${Math.abs(saldo).toLocaleString()}`, pageWidth / 2, y + 22, { align: "center" })
-
-  y += 45
+  y += 22
 
   // Sección de Transacciones
   if (transacciones && transacciones.length > 0) {
-    // Verificar si necesitamos nueva página
-    if (y > pageHeight - 80) {
-      doc.addPage()
-      y = 20
-    }
-
     doc.setDrawColor(226, 232, 240)
     doc.setLineWidth(0.3)
-    doc.line(20, y, pageWidth - 20, y)
-    y += 15
-
-    doc.setFontSize(9)
-    doc.setTextColor(100, 116, 139)
-    doc.text("DETALLE DE TRANSACCIONES", 20, y)
-    y += 12
-
-    // Header de tabla
-    doc.setFillColor(241, 245, 249)
-    doc.rect(20, y, pageWidth - 40, 8, "F")
+    doc.line(15, y, pageWidth - 15, y)
+    y += 6
 
     doc.setFontSize(8)
+    doc.setTextColor(100, 116, 139)
+    doc.setFont("helvetica", "normal")
+    doc.text("TRANSACCIONES", 15, y)
+    y += 5
+
+    // Header de tabla compacto
+    doc.setFillColor(248, 250, 252)
+    doc.rect(15, y, pageWidth - 30, 6, "F")
+
+    doc.setFontSize(7)
     doc.setFont("helvetica", "bold")
     doc.setTextColor(71, 85, 105)
-    y += 6
-    doc.text("Fecha", 25, y)
-    doc.text("Descripción", 55, y)
+    y += 4
+    doc.text("Fecha", 17, y)
+    doc.text("Descripción", 40, y)
     doc.text("Tipo", 130, y)
-    doc.text("Monto", pageWidth - 25, y, { align: "right" })
-    y += 6
+    doc.text("Monto", pageWidth - 17, y, { align: "right" })
+    y += 4
 
-    // Filas de transacciones
+    // Filas de transacciones más compactas
     doc.setFont("helvetica", "normal")
-    doc.setFontSize(8)
+    doc.setFontSize(7)
 
     const tipoLabels: Record<string, string> = {
       VENTA_CREDITO: "Cargo",
@@ -310,40 +265,40 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
     }
 
     for (const trans of transacciones) {
-      if (y > pageHeight - 20) {
+      if (y > pageHeight - 12) {
         doc.addPage()
-        y = 20
+        y = 12
 
-        // Repetir header
-        doc.setFillColor(241, 245, 249)
-        doc.rect(20, y, pageWidth - 40, 8, "F")
-        doc.setFontSize(8)
+        // Repetir header compacto
+        doc.setFillColor(248, 250, 252)
+        doc.rect(15, y, pageWidth - 30, 6, "F")
+        doc.setFontSize(7)
         doc.setFont("helvetica", "bold")
         doc.setTextColor(71, 85, 105)
-        y += 6
-        doc.text("Fecha", 25, y)
-        doc.text("Descripción", 55, y)
+        y += 4
+        doc.text("Fecha", 17, y)
+        doc.text("Descripción", 40, y)
         doc.text("Tipo", 130, y)
-        doc.text("Monto", pageWidth - 25, y, { align: "right" })
-        y += 6
+        doc.text("Monto", pageWidth - 17, y, { align: "right" })
+        y += 4
         doc.setFont("helvetica", "normal")
       }
 
       const fechaTrans = new Date(trans.fecha).toLocaleDateString("es-ES", {
         day: "2-digit",
-        month: "short",
+        month: "2-digit",
       })
 
       doc.setTextColor(71, 85, 105)
-      doc.text(fechaTrans, 25, y)
+      doc.text(fechaTrans, 17, y)
 
       // Descripción (truncar si es muy larga)
       let desc = trans.descripcion || "Sin descripción"
-      if (desc.length > 40) {
-        desc = desc.substring(0, 37) + "..."
+      if (desc.length > 50) {
+        desc = desc.substring(0, 47) + "..."
       }
       doc.setTextColor(30, 41, 59)
-      doc.text(desc, 55, y)
+      doc.text(desc, 40, y)
 
       // Tipo
       doc.setTextColor(100, 116, 139)
@@ -351,27 +306,27 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
 
       // Monto con color según tipo
       if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
-        doc.setTextColor(22, 163, 74) // verde
-        doc.text(`+$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+        doc.setTextColor(22, 163, 74)
+        doc.text(`+$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
       } else {
-        doc.setTextColor(220, 38, 38) // rojo
-        doc.text(`$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+        doc.setTextColor(220, 38, 38)
+        doc.text(`$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
       }
 
-      y += 7
+      y += 5
     }
   }
 
-  // Footer
-  doc.setFontSize(8)
+  // Footer mínimo
+  doc.setFontSize(7)
   doc.setTextColor(180, 180, 180)
   doc.setFont("helvetica", "normal")
-  doc.text("EdificioApp", pageWidth / 2, pageHeight - 10, { align: "center" })
+  doc.text("EdificioApp", pageWidth / 2, pageHeight - 5, { align: "center" })
 
   doc.save(`apto-${grupo.numero}-propietario.pdf`)
 }
 
-// PDF para Inquilino - Minimalista
+// PDF para Inquilino - Compacto
 export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: SaldosCuentaCorriente, transacciones?: TransaccionApartamento[]) {
   if (!grupo.inquilino) return
 
@@ -381,156 +336,111 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
   const apt = grupo.inquilino
   const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
-
-  // Header minimalista
-  doc.setFillColor(147, 51, 234)
-  doc.rect(0, 0, pageWidth, 8, "F")
-
-  doc.setTextColor(147, 51, 234)
-  doc.setFontSize(20)
-  doc.setFont("helvetica", "bold")
-  doc.text(`Apto ${grupo.numero}`, 20, 25)
-
-  doc.setFontSize(11)
-  doc.setTextColor(100, 116, 139)
-  doc.setFont("helvetica", "normal")
-  doc.text(`Inquilino · Piso ${grupo.piso || 'N/A'} · ${fecha}`, 20, 33)
-
-  let y = 50
-
-  // Línea separadora
-  doc.setDrawColor(226, 232, 240)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
-
-  // Contacto
-  doc.setFontSize(9)
-  doc.setTextColor(100, 116, 139)
-  doc.text("CONTACTO", 20, y)
-  y += 8
-
-  doc.setFontSize(12)
-  doc.setTextColor(30, 41, 59)
-  doc.setFont("helvetica", "bold")
   const nombreCompleto = apt.contactoNombre
     ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim()
     : "Sin registrar"
-  doc.text(nombreCompleto, 20, y)
-  y += 7
 
-  doc.setFont("helvetica", "normal")
-  doc.setFontSize(10)
-  if (apt.contactoCelular) {
-    doc.text(apt.contactoCelular, 20, y)
-    y += 6
-  }
-  if (apt.contactoEmail) {
-    doc.setTextColor(100, 116, 139)
-    doc.text(apt.contactoEmail, 20, y)
-    y += 6
-  }
+  // Header compacto con barra de color
+  doc.setFillColor(147, 51, 234)
+  doc.rect(0, 0, pageWidth, 5, "F")
 
-  y += 10
-
-  // Gastos - Tabla simple
-  doc.setDrawColor(226, 232, 240)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
+  // Título y fecha en la misma línea
+  doc.setTextColor(147, 51, 234)
+  doc.setFontSize(16)
+  doc.setFont("helvetica", "bold")
+  doc.text(`Apto ${grupo.numero}`, 15, 15)
 
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
-  doc.text("GASTOS MENSUALES", 20, y)
-  y += 12
+  doc.setFont("helvetica", "normal")
+  doc.text(fecha, pageWidth - 15, 15, { align: "right" })
 
-  doc.setFontSize(11)
+  // Segunda línea: tipo, piso, contacto
+  doc.text(`Inquilino · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 22)
+
+  // Contacto en la misma línea si hay espacio
+  const contactoInfo = [apt.contactoCelular, apt.contactoEmail].filter(Boolean).join(" · ")
+  if (contactoInfo) {
+    doc.text(contactoInfo, pageWidth - 15, 22, { align: "right" })
+  }
+
+  let y = 32
+
+  // Sección combinada: Gastos y Estado de Cuenta lado a lado
+  doc.setDrawColor(226, 232, 240)
+  doc.line(15, y, pageWidth - 15, y)
+  y += 8
+
+  const halfWidth = (pageWidth - 40) / 2
+
+  // Columna izquierda: Gastos
+  doc.setFontSize(8)
+  doc.setTextColor(100, 116, 139)
+  doc.text("GASTOS MENSUALES", 15, y)
+
+  // Columna derecha: Estado de cuenta
+  doc.text("ESTADO DE CUENTA", 15 + halfWidth + 10, y)
+  y += 6
+
+  // Gastos en formato compacto
+  doc.setFontSize(9)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "normal")
+  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString()}`, 15, y)
+  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString()}`, 15, y + 5)
 
-  doc.text("Gastos Comunes", 20, y)
-  doc.text(`$ ${apt.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-  y += 10
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(147, 51, 234)
+  doc.text(`Total: $${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, 15, y + 12)
 
-  doc.text("Fondo de Reserva", 20, y)
-  doc.text(`$ ${apt.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-  y += 12
+  // Estado de cuenta compacto (cuadro más pequeño)
+  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
+  const estadoTexto = saldo > 0 ? "DEUDOR" : saldo < 0 ? "A FAVOR" : "AL DÍA"
 
-  // Total destacado
-  doc.setDrawColor(147, 51, 234)
-  doc.setLineWidth(0.5)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 10
+  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
+  doc.roundedRect(15 + halfWidth + 10, y - 2, halfWidth, 18, 2, 2, "F")
+
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(8)
+  doc.setFont("helvetica", "normal")
+  doc.text(estadoTexto, 15 + halfWidth + 10 + halfWidth / 2, y + 4, { align: "center" })
 
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
-  doc.setTextColor(147, 51, 234)
-  doc.text("TOTAL MENSUAL", 20, y)
-  doc.text(`$ ${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, pageWidth - 20, y, { align: "right" })
+  doc.text(`$${Math.abs(saldo).toLocaleString()}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
 
-  // Estado de Cuenta
-  y += 25
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.3)
-  doc.line(20, y, pageWidth - 20, y)
-  y += 15
-
-  doc.setFontSize(9)
-  doc.setTextColor(100, 116, 139)
-  doc.text("ESTADO DE CUENTA", 20, y)
-  y += 12
-
-  // Cuadro de estado de cuenta
-  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
-  const estadoTexto = saldo > 0 ? "SALDO DEUDOR" : saldo < 0 ? "SALDO A FAVOR" : "SIN SALDO PENDIENTE"
-
-  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
-  doc.roundedRect(20, y, pageWidth - 40, 30, 3, 3, "F")
-
-  doc.setTextColor(255, 255, 255)
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "normal")
-  doc.text(estadoTexto, pageWidth / 2, y + 10, { align: "center" })
-
-  doc.setFontSize(16)
-  doc.setFont("helvetica", "bold")
-  doc.text(`$ ${Math.abs(saldo).toLocaleString()}`, pageWidth / 2, y + 22, { align: "center" })
-
-  y += 45
+  y += 22
 
   // Sección de Transacciones
   if (transacciones && transacciones.length > 0) {
-    // Verificar si necesitamos nueva página
-    if (y > pageHeight - 80) {
-      doc.addPage()
-      y = 20
-    }
-
     doc.setDrawColor(226, 232, 240)
     doc.setLineWidth(0.3)
-    doc.line(20, y, pageWidth - 20, y)
-    y += 15
-
-    doc.setFontSize(9)
-    doc.setTextColor(100, 116, 139)
-    doc.text("DETALLE DE TRANSACCIONES", 20, y)
-    y += 12
-
-    // Header de tabla
-    doc.setFillColor(241, 245, 249)
-    doc.rect(20, y, pageWidth - 40, 8, "F")
+    doc.line(15, y, pageWidth - 15, y)
+    y += 6
 
     doc.setFontSize(8)
+    doc.setTextColor(100, 116, 139)
+    doc.setFont("helvetica", "normal")
+    doc.text("TRANSACCIONES", 15, y)
+    y += 5
+
+    // Header de tabla compacto
+    doc.setFillColor(248, 250, 252)
+    doc.rect(15, y, pageWidth - 30, 6, "F")
+
+    doc.setFontSize(7)
     doc.setFont("helvetica", "bold")
     doc.setTextColor(71, 85, 105)
-    y += 6
-    doc.text("Fecha", 25, y)
-    doc.text("Descripción", 55, y)
+    y += 4
+    doc.text("Fecha", 17, y)
+    doc.text("Descripción", 40, y)
     doc.text("Tipo", 130, y)
-    doc.text("Monto", pageWidth - 25, y, { align: "right" })
-    y += 6
+    doc.text("Monto", pageWidth - 17, y, { align: "right" })
+    y += 4
 
-    // Filas de transacciones
+    // Filas de transacciones más compactas
     doc.setFont("helvetica", "normal")
-    doc.setFontSize(8)
+    doc.setFontSize(7)
 
     const tipoLabels: Record<string, string> = {
       VENTA_CREDITO: "Cargo",
@@ -540,40 +450,40 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
     }
 
     for (const trans of transacciones) {
-      if (y > pageHeight - 20) {
+      if (y > pageHeight - 12) {
         doc.addPage()
-        y = 20
+        y = 12
 
-        // Repetir header
-        doc.setFillColor(241, 245, 249)
-        doc.rect(20, y, pageWidth - 40, 8, "F")
-        doc.setFontSize(8)
+        // Repetir header compacto
+        doc.setFillColor(248, 250, 252)
+        doc.rect(15, y, pageWidth - 30, 6, "F")
+        doc.setFontSize(7)
         doc.setFont("helvetica", "bold")
         doc.setTextColor(71, 85, 105)
-        y += 6
-        doc.text("Fecha", 25, y)
-        doc.text("Descripción", 55, y)
+        y += 4
+        doc.text("Fecha", 17, y)
+        doc.text("Descripción", 40, y)
         doc.text("Tipo", 130, y)
-        doc.text("Monto", pageWidth - 25, y, { align: "right" })
-        y += 6
+        doc.text("Monto", pageWidth - 17, y, { align: "right" })
+        y += 4
         doc.setFont("helvetica", "normal")
       }
 
       const fechaTrans = new Date(trans.fecha).toLocaleDateString("es-ES", {
         day: "2-digit",
-        month: "short",
+        month: "2-digit",
       })
 
       doc.setTextColor(71, 85, 105)
-      doc.text(fechaTrans, 25, y)
+      doc.text(fechaTrans, 17, y)
 
       // Descripción (truncar si es muy larga)
       let desc = trans.descripcion || "Sin descripción"
-      if (desc.length > 40) {
-        desc = desc.substring(0, 37) + "..."
+      if (desc.length > 50) {
+        desc = desc.substring(0, 47) + "..."
       }
       doc.setTextColor(30, 41, 59)
-      doc.text(desc, 55, y)
+      doc.text(desc, 40, y)
 
       // Tipo
       doc.setTextColor(100, 116, 139)
@@ -581,22 +491,22 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
 
       // Monto con color según tipo
       if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
-        doc.setTextColor(22, 163, 74) // verde
-        doc.text(`+$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+        doc.setTextColor(22, 163, 74)
+        doc.text(`+$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
       } else {
-        doc.setTextColor(220, 38, 38) // rojo
-        doc.text(`$ ${trans.monto.toLocaleString()}`, pageWidth - 25, y, { align: "right" })
+        doc.setTextColor(220, 38, 38)
+        doc.text(`$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
       }
 
-      y += 7
+      y += 5
     }
   }
 
-  // Footer
-  doc.setFontSize(8)
+  // Footer mínimo
+  doc.setFontSize(7)
   doc.setTextColor(180, 180, 180)
   doc.setFont("helvetica", "normal")
-  doc.text("EdificioApp", pageWidth / 2, pageHeight - 10, { align: "center" })
+  doc.text("EdificioApp", pageWidth / 2, pageHeight - 5, { align: "center" })
 
   doc.save(`apto-${grupo.numero}-inquilino.pdf`)
 }
