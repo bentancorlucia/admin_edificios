@@ -56,16 +56,15 @@ export function generateServiciosPDF(servicios: Servicio[], tiposServicio?: Tipo
   doc.setTextColor(...colors.white)
   doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text("Directorio de Servicios", margin, 14)
+  doc.text("Edificio Constituyente II", margin, 10)
 
-  doc.setFontSize(8)
+  doc.setFontSize(9)
   doc.setFont("helvetica", "normal")
-  const fechaGen = new Date().toLocaleDateString("es-ES", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  })
-  doc.text(`Generado: ${fechaGen}`, pageWidth - margin, 14, { align: "right" })
+  doc.text("Constituyente 2015 - Montevideo", margin, 18)
+
+  doc.setFontSize(11)
+  doc.setFont("helvetica", "bold")
+  doc.text("Directorio de Servicios", pageWidth - margin, 14, { align: "right" })
 
   let y = 35
 

@@ -58,23 +58,18 @@ export function generateApartamentoPDF(apt: Apartamento) {
 
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(24)
-  doc.text("EdificioApp", 20, 25)
+  doc.text("Edificio Constituyente II", 20, 22)
 
-  doc.setFontSize(10)
-  doc.text("Sistema de Gestión de Edificios", 20, 32)
+  doc.setFontSize(12)
+  doc.text("Constituyente 2015 - Montevideo", 20, 32)
 
   // Title
   doc.setTextColor(30, 41, 59)
   doc.setFontSize(18)
   doc.text(`Reporte Apartamento ${apt.numero}`, 20, 55)
 
-  // Date
-  doc.setFontSize(10)
-  doc.setTextColor(100, 116, 139)
-  doc.text(`Generado: ${new Date().toLocaleDateString("es-ES")}`, 20, 62)
-
   // Content
-  let y = 80
+  let y = 65
 
   doc.setFontSize(12)
   doc.setTextColor(30, 41, 59)
@@ -149,37 +144,43 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const apt = grupo.propietario
-  const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
   const nombreCompleto = apt.contactoNombre
     ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim()
     : "Sin registrar"
 
-  // Header compacto con barra de color
+  // Header con título del edificio
   doc.setFillColor(37, 99, 235)
-  doc.rect(0, 0, pageWidth, 5, "F")
+  doc.rect(0, 0, pageWidth, 22, "F")
 
-  // Título y fecha en la misma línea
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Edificio Constituyente II", 15, 10)
+
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "normal")
+  doc.text("Constituyente 2015 - Montevideo", 15, 17)
+
+  // Título del apartamento
   doc.setTextColor(37, 99, 235)
   doc.setFontSize(16)
   doc.setFont("helvetica", "bold")
-  doc.text(`Apto ${grupo.numero}`, 15, 15)
+  doc.text(`Apto ${grupo.numero}`, 15, 32)
 
+  // Segunda línea: tipo, piso, contacto
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
   doc.setFont("helvetica", "normal")
-  doc.text(fecha, pageWidth - 15, 15, { align: "right" })
-
-  // Segunda línea: tipo, piso, contacto
-  doc.text(`Propietario · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 22)
+  doc.text(`Propietario · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 39)
 
   // Contacto en la misma línea si hay espacio
   const contactoInfo = [apt.contactoCelular, apt.contactoEmail].filter(Boolean).join(" · ")
   if (contactoInfo) {
-    doc.text(contactoInfo, pageWidth - 15, 22, { align: "right" })
+    doc.text(contactoInfo, pageWidth - 15, 39, { align: "right" })
   }
 
-  let y = 32
+  let y = 49
 
   // Sección combinada: Gastos y Estado de Cuenta lado a lado
   doc.setDrawColor(226, 232, 240)
@@ -334,37 +335,43 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
   const pageWidth = doc.internal.pageSize.getWidth()
   const pageHeight = doc.internal.pageSize.getHeight()
   const apt = grupo.inquilino
-  const fecha = new Date().toLocaleDateString("es-ES", { day: "2-digit", month: "short", year: "numeric" })
   const saldo = saldos?.[apt.id] || 0
   const nombreCompleto = apt.contactoNombre
     ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim()
     : "Sin registrar"
 
-  // Header compacto con barra de color
+  // Header con título del edificio
   doc.setFillColor(147, 51, 234)
-  doc.rect(0, 0, pageWidth, 5, "F")
+  doc.rect(0, 0, pageWidth, 22, "F")
 
-  // Título y fecha en la misma línea
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Edificio Constituyente II", 15, 10)
+
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "normal")
+  doc.text("Constituyente 2015 - Montevideo", 15, 17)
+
+  // Título del apartamento
   doc.setTextColor(147, 51, 234)
   doc.setFontSize(16)
   doc.setFont("helvetica", "bold")
-  doc.text(`Apto ${grupo.numero}`, 15, 15)
+  doc.text(`Apto ${grupo.numero}`, 15, 32)
 
+  // Segunda línea: tipo, piso, contacto
   doc.setFontSize(9)
   doc.setTextColor(100, 116, 139)
   doc.setFont("helvetica", "normal")
-  doc.text(fecha, pageWidth - 15, 15, { align: "right" })
-
-  // Segunda línea: tipo, piso, contacto
-  doc.text(`Inquilino · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 22)
+  doc.text(`Inquilino · Piso ${grupo.piso || 'N/A'} · ${nombreCompleto}`, 15, 39)
 
   // Contacto en la misma línea si hay espacio
   const contactoInfo = [apt.contactoCelular, apt.contactoEmail].filter(Boolean).join(" · ")
   if (contactoInfo) {
-    doc.text(contactoInfo, pageWidth - 15, 22, { align: "right" })
+    doc.text(contactoInfo, pageWidth - 15, 39, { align: "right" })
   }
 
-  let y = 32
+  let y = 49
 
   // Sección combinada: Gastos y Estado de Cuenta lado a lado
   doc.setDrawColor(226, 232, 240)
@@ -542,29 +549,27 @@ type EstadoCuentaData = {
 export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
-  const fecha = new Date().toLocaleDateString("es-ES", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  })
 
   // Header
   doc.setFillColor(30, 64, 175) // blue-800
   doc.rect(0, 0, pageWidth, 45, "F")
 
   doc.setTextColor(255, 255, 255)
-  doc.setFontSize(22)
+  doc.setFontSize(18)
   doc.setFont("helvetica", "bold")
-  doc.text("Estado de Cuenta Bancario", 20, 22)
+  doc.text("Edificio Constituyente II", 20, 12)
 
   doc.setFontSize(11)
   doc.setFont("helvetica", "normal")
-  doc.text(`${data.cuenta.banco} - ${data.cuenta.tipoCuenta}`, 20, 32)
-  doc.text(`Cuenta: ${data.cuenta.numeroCuenta}`, 20, 40)
+  doc.text("Constituyente 2015 - Montevideo", 20, 20)
 
-  // Fecha generación
+  doc.setFontSize(14)
+  doc.setFont("helvetica", "bold")
+  doc.text("Estado de Cuenta Bancario", 20, 32)
+
   doc.setFontSize(10)
-  doc.text(fecha, pageWidth - 20, 22, { align: "right" })
+  doc.setFont("helvetica", "normal")
+  doc.text(`${data.cuenta.banco} - ${data.cuenta.tipoCuenta} · Cuenta: ${data.cuenta.numeroCuenta}`, 20, 40)
 
   let y = 60
 
@@ -811,20 +816,15 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
 
   doc.setTextColor(255, 255, 255)
   doc.setFontSize(24)
-  doc.text("EdificioApp", 20, 25)
+  doc.text("Edificio Constituyente II", 20, 22)
 
-  doc.setFontSize(10)
-  doc.text("Sistema de Gestión de Edificios", 20, 32)
+  doc.setFontSize(12)
+  doc.text("Constituyente 2015 - Montevideo", 20, 32)
 
   // Title
   doc.setTextColor(30, 41, 59)
   doc.setFontSize(18)
-  doc.text(titulo, 20, 55)
-
-  // Date
-  doc.setFontSize(10)
-  doc.setTextColor(100, 116, 139)
-  doc.text(`Generado: ${new Date().toLocaleDateString("es-ES")}`, 20, 62)
+  doc.text(titulo, 20, 52)
 
   // Summary
   const ingresos = transacciones
@@ -834,7 +834,7 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
     .filter((t) => t.tipo === "EGRESO")
     .reduce((acc, t) => acc + t.monto, 0)
 
-  let y = 80
+  let y = 65
 
   doc.setFontSize(12)
   doc.setTextColor(30, 41, 59)

@@ -28,25 +28,25 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   const formatCurrency = (val: number) =>
     `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-  // Header minimalista
-  doc.setFillColor(...colors.primary)
+  // Header minimalista - color celeste consistente con informes de apartamentos
+  doc.setFillColor(37, 99, 235) // blue-600
   doc.rect(0, 0, pageWidth, 28, "F")
 
   doc.setTextColor(...colors.white)
   doc.setFontSize(16)
   doc.setFont("helvetica", "bold")
-  doc.text("Informe Mensual de Cuenta Corriente", margin, 16)
+  doc.text("Edificio Constituyente II", margin, 12)
 
   doc.setFontSize(10)
   doc.setFont("helvetica", "normal")
-  const fechaGen = new Date().toLocaleDateString("es-ES", {
-    day: "2-digit",
-    month: "long",
-    year: "numeric",
-  })
-  doc.text(periodoLabel, pageWidth - margin, 12, { align: "right" })
-  doc.setFontSize(8)
-  doc.text(`Generado: ${fechaGen}`, pageWidth - margin, 20, { align: "right" })
+  doc.text("Constituyente 2015 - Montevideo", margin, 20)
+
+  doc.setFontSize(12)
+  doc.setFont("helvetica", "bold")
+  doc.text("Informe Mensual de Cuenta Corriente", pageWidth - margin, 12, { align: "right" })
+  doc.setFontSize(10)
+  doc.setFont("helvetica", "normal")
+  doc.text(periodoLabel, pageWidth - margin, 20, { align: "right" })
 
   let y = 40
 

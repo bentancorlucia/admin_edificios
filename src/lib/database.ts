@@ -217,6 +217,8 @@ export async function getDatabase(): Promise<Database> {
       try {
         console.log(`Intentando conectar a la base de datos (intento ${6 - retries}/5)...`);
         db = await Database.load('sqlite:database.db');
+        // Activar claves foráneas en cada conexión (SQLite las desactiva por defecto)
+        await db.execute('PRAGMA foreign_keys = ON');
         console.log('Conexión a la base de datos establecida correctamente');
         break;
       } catch (error) {
