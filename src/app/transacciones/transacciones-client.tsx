@@ -54,6 +54,7 @@ import {
   createReciboPago,
   updateTransaccion,
   updateReciboPago,
+  updateVentaCredito,
   deleteTransaccion,
   obtenerDeudasPorConcepto,
   calcularDistribucionPago,
@@ -146,6 +147,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [transaccionToDelete, setTransaccionToDelete] = useState<string | null>(null)
   const [infoBancoVinculado, setInfoBancoVinculado] = useState<InfoBancoVinculado | null>(null)
+  const [infoBancoVinculadoEdit, setInfoBancoVinculadoEdit] = useState<InfoBancoVinculado | null>(null)
 
   const [transaccionForm, setTransaccionForm] = useState({
     tipo: "INGRESO",
@@ -565,7 +567,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     })
   }, [filteredTransacciones])
 
-  const handleOpenEdit = useCallback((transaccion: Transaccion) => {
+  const handleOpenEdit = useCallback(async (transaccion: Transaccion) => {
     setEditingTransaccion(transaccion)
     // Extraer fecha en formato YYYY-MM-DD usando UTC para evitar problemas de zona horaria
     const d = typeof transaccion.fecha === 'string' ? new Date(transaccion.fecha) : transaccion.fecha
@@ -587,6 +589,11 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       clasificacionPago: (transaccion.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA") || "GASTO_COMUN",
       cuentaBancariaId: transaccion.cuentaBancariaId || "",
     })
+
+    // Obtener info del banco vinculado para mostrar aviso
+    const infoBanco = await getInfoBancoVinculadoTransaccion(transaccion.id)
+    setInfoBancoVinculadoEdit(infoBanco)
+
     setIsEditDialogOpen(true)
   }, [])
 
@@ -618,6 +625,14 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
           clasificacionPago: editForm.clasificacionPago,
           cuentaBancariaId: editForm.cuentaBancariaId || null,
         })
+      } else if (editForm.tipo === "VENTA_CREDITO") {
+        // Usar función específica para ventas a crédito que actualiza la descripción
+        updated = await updateVentaCredito(editingTransaccion.id, {
+          monto: parseFloat(editForm.monto),
+          apartamentoId: editForm.apartamentoId || undefined,
+          fecha: fechaCorrecta.toISOString(),
+          categoria: editForm.categoria as "GASTOS_COMUNES" | "FONDO_RESERVA" || undefined,
+        })
       } else {
         const data = {
           tipo: editForm.tipo as "INGRESO" | "EGRESO" | "VENTA_CREDITO" | "RECIBO_PAGO",
@@ -640,8 +655,18 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       setTransacciones((prev) =>
         prev.map((t) => (t.id === updated.id ? { ...updated, apartamento: aptData, cuentaBancariaId: editForm.cuentaBancariaId || null } as Transaccion : t))
       )
+
+      // Mostrar toast de confirmación
+      if (infoBancoVinculadoEdit?.tieneVinculo) {
+        toast({
+          title: "Transacción y movimiento bancario actualizados",
+          description: `Se sincronizaron los cambios con el movimiento en ${infoBancoVinculadoEdit.banco}.`,
+        })
+      }
+
       setIsEditDialogOpen(false)
       setEditingTransaccion(null)
+      setInfoBancoVinculadoEdit(null)
     } catch (error) {
       console.error("Error updating transaccion:", error)
     } finally {
@@ -1552,13 +1577,28 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       </AlertDialog>
 
       {/* Editar Transacción Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+      <Dialog open={isEditDialogOpen} onOpenChange={(open) => {
+          setIsEditDialogOpen(open)
+          if (!open) setInfoBancoVinculadoEdit(null)
+        }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
               {editForm.tipo === "RECIBO_PAGO" ? "Editar Recibo de Pago" : "Editar Transacción"}
             </DialogTitle>
           </DialogHeader>
+          {infoBancoVinculadoEdit?.tieneVinculo && (
+            <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+              <p className="text-amber-800 dark:text-amber-200 font-medium flex items-center gap-2 text-sm">
+                <Landmark className="h-4 w-4" />
+                Transacción vinculada a movimiento bancario
+              </p>
+              <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">
+                Los cambios en monto, fecha y referencia se sincronizarán automáticamente con el movimiento en{" "}
+                <strong>{infoBancoVinculadoEdit.banco}</strong> ({infoBancoVinculadoEdit.numeroCuenta}).
+              </p>
+            </div>
+          )}
           <form onSubmit={handleEditSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">

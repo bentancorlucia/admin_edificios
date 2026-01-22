@@ -565,6 +565,40 @@ export async function createVentaCredito(data: {
   });
 }
 
+// Actualizar venta a crédito con actualización automática de descripción
+export async function updateVentaCredito(
+  id: string,
+  data: {
+    monto?: number;
+    apartamentoId?: string;
+    fecha?: string;
+    categoria?: 'GASTOS_COMUNES' | 'FONDO_RESERVA';
+  }
+): Promise<Transaccion> {
+  const transaccion = await getTransaccionById(id);
+  if (!transaccion) {
+    throw new Error("Transacción no encontrada");
+  }
+
+  if (transaccion.tipo !== 'VENTA_CREDITO') {
+    throw new Error("Esta función solo aplica para ventas a crédito");
+  }
+
+  // Actualizar la transacción
+  const updateData: Record<string, unknown> = {};
+  if (data.monto !== undefined) updateData.monto = data.monto;
+  if (data.apartamentoId !== undefined) updateData.apartamentoId = data.apartamentoId;
+  if (data.fecha !== undefined) updateData.fecha = data.fecha;
+  if (data.categoria !== undefined) updateData.categoria = data.categoria;
+
+  // Actualizar descripción si cambia la categoría
+  if (data.categoria !== undefined) {
+    updateData.descripcion = data.categoria === 'GASTOS_COMUNES' ? 'Gastos Comunes' : 'Fondo de Reserva';
+  }
+
+  return await updateTransaccion(id, updateData);
+}
+
 // ============ CUENTAS BANCARIAS ============
 
 export interface CuentaBancaria {
@@ -878,6 +912,141 @@ export async function updateMovimientoBancario(id: string, data: Partial<Omit<Mo
 export async function deleteMovimientoBancario(id: string): Promise<void> {
   const database = await getDatabase();
   await database.execute('DELETE FROM MovimientoBancario WHERE id = ?', [id]);
+}
+
+// Información de transacción vinculada a un movimiento bancario
+export interface InfoTransaccionVinculada {
+  tieneVinculo: boolean;
+  transaccionId?: string;
+  tipo?: string;
+  apartamentoId?: string | null;
+  apartamentoNumero?: string;
+  monto?: number;
+}
+
+// Obtener información de la transacción vinculada a un movimiento bancario
+export async function getInfoTransaccionVinculadaMovimiento(movimientoId: string): Promise<InfoTransaccionVinculada> {
+  const movimiento = await getMovimientoBancarioById(movimientoId);
+  if (!movimiento || !movimiento.transaccionId) {
+    return { tieneVinculo: false };
+  }
+
+  const transaccion = await getTransaccionById(movimiento.transaccionId);
+  if (!transaccion) {
+    return { tieneVinculo: false };
+  }
+
+  let apartamentoNumero: string | undefined;
+  if (transaccion.apartamentoId) {
+    const apartamento = await getApartamentoById(transaccion.apartamentoId);
+    apartamentoNumero = apartamento?.numero;
+  }
+
+  return {
+    tieneVinculo: true,
+    transaccionId: transaccion.id,
+    tipo: transaccion.tipo,
+    apartamentoId: transaccion.apartamentoId,
+    apartamentoNumero,
+    monto: transaccion.monto,
+  };
+}
+
+// Actualizar movimiento bancario y su transacción vinculada (si existe)
+export async function updateMovimientoBancarioConTransaccion(
+  id: string,
+  data: Partial<Omit<MovimientoBancario, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<{ movimiento: MovimientoBancario; transaccionActualizada: boolean }> {
+  const movimiento = await getMovimientoBancarioById(id);
+  if (!movimiento) {
+    throw new Error("Movimiento bancario no encontrado");
+  }
+
+  // Actualizar el movimiento bancario
+  const movimientoActualizado = await updateMovimientoBancario(id, data);
+
+  let transaccionActualizada = false;
+
+  // Si tiene transacción vinculada, sincronizar los datos relevantes
+  if (movimiento.transaccionId) {
+    const transaccion = await getTransaccionById(movimiento.transaccionId);
+    if (transaccion) {
+      const updateTransaccionData: Record<string, unknown> = {};
+
+      // Sincronizar campos que deben coincidir
+      if (data.monto !== undefined) {
+        updateTransaccionData.monto = data.monto;
+      }
+      if (data.fecha !== undefined) {
+        updateTransaccionData.fecha = data.fecha;
+      }
+      if (data.referencia !== undefined) {
+        updateTransaccionData.referencia = data.referencia;
+      }
+      if (data.descripcion !== undefined) {
+        // Actualizar descripción/notas en la transacción
+        updateTransaccionData.descripcion = data.descripcion;
+      }
+
+      if (Object.keys(updateTransaccionData).length > 0) {
+        await updateTransaccion(movimiento.transaccionId, updateTransaccionData);
+        transaccionActualizada = true;
+
+        // Si es un RECIBO_PAGO y cambió el monto, recalcular créditos del apartamento
+        if (transaccion.tipo === 'RECIBO_PAGO' && data.monto !== undefined && transaccion.apartamentoId) {
+          await recalcularEstadoCreditosApartamento(transaccion.apartamentoId);
+        }
+      }
+    }
+  }
+
+  return { movimiento: movimientoActualizado, transaccionActualizada };
+}
+
+// Eliminar movimiento bancario y su transacción vinculada (si existe), recalculando deudas
+export async function deleteMovimientoBancarioConTransaccion(id: string): Promise<{
+  transaccionEliminada: boolean;
+  apartamentoRecalculado: string | null
+}> {
+  const movimiento = await getMovimientoBancarioById(id);
+  if (!movimiento) {
+    throw new Error("Movimiento bancario no encontrado");
+  }
+
+  let transaccionEliminada = false;
+  let apartamentoRecalculado: string | null = null;
+
+  // Si tiene transacción vinculada, eliminarla también
+  if (movimiento.transaccionId) {
+    const transaccion = await getTransaccionById(movimiento.transaccionId);
+    if (transaccion) {
+      // Guardar apartamentoId antes de eliminar
+      const apartamentoId = transaccion.apartamentoId;
+      const tipo = transaccion.tipo;
+
+      // Eliminar el movimiento bancario primero
+      const database = await getDatabase();
+      await database.execute('DELETE FROM MovimientoBancario WHERE id = ?', [id]);
+
+      // Eliminar la transacción
+      await database.execute('DELETE FROM Transaccion WHERE id = ?', [movimiento.transaccionId]);
+      transaccionEliminada = true;
+
+      // Recalcular créditos si era RECIBO_PAGO o VENTA_CREDITO
+      if ((tipo === 'RECIBO_PAGO' || tipo === 'VENTA_CREDITO') && apartamentoId) {
+        await recalcularEstadoCreditosApartamento(apartamentoId);
+        apartamentoRecalculado = apartamentoId;
+      }
+    } else {
+      // La transacción ya no existe, solo eliminar el movimiento
+      await deleteMovimientoBancario(id);
+    }
+  } else {
+    // No tiene transacción vinculada, eliminar solo el movimiento
+    await deleteMovimientoBancario(id);
+  }
+
+  return { transaccionEliminada, apartamentoRecalculado };
 }
 
 export async function conciliarMovimiento(id: string, conciliado: boolean): Promise<MovimientoBancario> {
@@ -1737,8 +1906,6 @@ export async function createReciboPago(data: {
     throw new Error("Apartamento no encontrado");
   }
 
-  const tipoLabel = apartamento.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
-
   // Calcular distribución automática si está habilitada
   let montoGC = data.montoGastoComun ?? 0;
   let montoFR = data.montoFondoReserva ?? 0;
@@ -1806,14 +1973,9 @@ export async function createReciboPago(data: {
     }
   }
 
-  // Generar descripción del recibo
-  const clasificacionLabels: Record<string, string> = {
-    GASTO_COMUN: 'Gasto Común',
-    FONDO_RESERVA: 'Fondo de Reserva',
-    MIXTO: 'Mixto',
-  };
-  const clasificacionLabel = clasificacionLabels[clasificacionFinal];
-  const descripcionRecibo = `Recibo de Pago (${clasificacionLabel}) - Apto ${apartamento.numero} (${tipoLabel})${data.referencia ? ` - Ref: ${data.referencia}` : ''}`;
+  const tipoOcupacionLabel = apartamento.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+  const clasificacionLabel = clasificacionFinal === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionFinal === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+  const descripcionRecibo = `Pago Apto ${apartamento.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`;
 
   const recibo = await createTransaccion({
     tipo: 'RECIBO_PAGO',
@@ -1890,37 +2052,63 @@ export async function updateReciboPago(
     updateData.montoFondoReserva = data.clasificacionPago === 'FONDO_RESERVA' ? (data.monto ?? transaccion.monto) : null;
   }
 
+  // Actualizar descripción de la transacción si cambia clasificación o apartamento
+  if (data.clasificacionPago !== undefined || data.apartamentoId !== undefined) {
+    const apartamentoIdParaDesc = data.apartamentoId ?? transaccion.apartamentoId;
+    const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
+    const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+    const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
+    const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+    updateData.descripcion = apartamentoParaDesc
+      ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
+      : 'Recibo de Pago';
+  }
+
   const updatedTransaccion = await updateTransaccion(id, updateData);
 
-  // Manejar el movimiento bancario si se cambió la cuenta
-  if (data.cuentaBancariaId !== undefined) {
-    const movimientoExistente = await getMovimientoBancarioByTransaccionId(id);
+  // Manejar el movimiento bancario
+  const movimientoExistente = await getMovimientoBancarioByTransaccionId(id);
 
+  if (data.cuentaBancariaId !== undefined) {
+    // Se está cambiando la cuenta bancaria
     if (data.cuentaBancariaId === null || data.cuentaBancariaId === '') {
       // Si la nueva cuenta es null/vacía, eliminar el movimiento existente
       if (movimientoExistente) {
         await deleteMovimientoBancario(movimientoExistente.id);
       }
     } else if (movimientoExistente) {
-      // Si ya existe un movimiento, actualizarlo con la nueva cuenta
-      await updateMovimientoBancario(movimientoExistente.id, {
+      // Si ya existe un movimiento, actualizarlo con la nueva cuenta y datos
+      const updateMovData: Record<string, unknown> = {
         cuentaBancariaId: data.cuentaBancariaId,
-        monto: data.monto ?? transaccion.monto,
-        fecha: data.fecha ?? transaccion.fecha,
-        referencia: data.referencia !== undefined ? data.referencia : transaccion.referencia,
-      });
+      };
+      if (data.monto !== undefined) updateMovData.monto = data.monto;
+      if (data.fecha !== undefined) updateMovData.fecha = data.fecha;
+      if (data.referencia !== undefined) updateMovData.referencia = data.referencia;
+
+      // Si cambió clasificación o apartamento, actualizar descripción y clasificación
+      if (data.clasificacionPago !== undefined || data.apartamentoId !== undefined) {
+        const apartamentoIdParaDesc = data.apartamentoId ?? transaccion.apartamentoId;
+        const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
+        const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+        const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
+        const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+        updateMovData.descripcion = apartamentoParaDesc
+          ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
+          : 'Recibo de Pago';
+      }
+
+      await updateMovimientoBancario(movimientoExistente.id, updateMovData);
     } else {
       // Si no existe movimiento, crear uno nuevo
-      const apartamento = await getApartamentoById(data.apartamentoId ?? transaccion.apartamentoId!);
-      const tipoLabel = apartamento?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
-      const clasificacion = data.clasificacionPago ?? transaccion.clasificacionPago;
-      const clasificacionLabels: Record<string, string> = {
-        GASTO_COMUN: 'Gasto Común',
-        FONDO_RESERVA: 'Fondo de Reserva',
-      };
-      const clasificacionLabel = clasificacionLabels[clasificacion || 'GASTO_COMUN'];
       const ref = data.referencia !== undefined ? data.referencia : transaccion.referencia;
-      const descripcionRecibo = `Recibo de Pago (${clasificacionLabel}) - Apto ${apartamento?.numero || ''} (${tipoLabel})${ref ? ` - Ref: ${ref}` : ''}`;
+      const apartamentoIdParaDesc = data.apartamentoId ?? transaccion.apartamentoId;
+      const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
+      const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+      const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
+      const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+      const descripcionRecibo = apartamentoParaDesc
+        ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
+        : 'Recibo de Pago';
 
       await createMovimientoBancario({
         tipo: 'INGRESO',
@@ -1936,6 +2124,29 @@ export async function updateReciboPago(
         conciliado: false,
         servicioId: null,
       });
+    }
+  } else if (movimientoExistente) {
+    // No se cambió la cuenta, pero hay movimiento existente - sincronizar otros campos
+    const updateMovData: Record<string, unknown> = {};
+    if (data.monto !== undefined) updateMovData.monto = data.monto;
+    if (data.fecha !== undefined) updateMovData.fecha = data.fecha;
+    if (data.referencia !== undefined) updateMovData.referencia = data.referencia;
+
+    // Si cambió clasificación o apartamento, actualizar descripción
+    if (data.clasificacionPago !== undefined || data.apartamentoId !== undefined) {
+      const apartamentoIdParaDesc = data.apartamentoId ?? transaccion.apartamentoId;
+      const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
+      const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+      const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
+      const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+      updateMovData.descripcion = apartamentoParaDesc
+        ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
+        : 'Recibo de Pago';
+    }
+
+    // Solo actualizar si hay campos para actualizar
+    if (Object.keys(updateMovData).length > 0) {
+      await updateMovimientoBancario(movimientoExistente.id, updateMovData);
     }
   }
 
@@ -1964,12 +2175,14 @@ export async function vincularReciboConIngreso(
   const apartamento = transaccion.apartamentoId
     ? await getApartamentoById(transaccion.apartamentoId)
     : null;
+  const tipoOcupacionLabel = apartamento?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
+  const clasificacionLabel = transaccion.clasificacionPago === 'GASTO_COMUN' ? 'Gastos Comunes' : transaccion.clasificacionPago === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
 
   const movimiento = await createMovimientoBancario({
     tipo: 'INGRESO',
     monto: transaccion.monto,
     fecha: transaccion.fecha,
-    descripcion: `Pago Apto ${apartamento?.numero || 'N/A'} - ${transaccion.descripcion || 'Recibo de pago'}`,
+    descripcion: `Pago Apto ${apartamento?.numero || 'N/A'} (${tipoOcupacionLabel}) - ${clasificacionLabel}`,
     referencia: transaccion.referencia,
     cuentaBancariaId,
     transaccionId,

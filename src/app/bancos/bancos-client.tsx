@@ -55,11 +55,13 @@ import {
   updateCuentaBancaria,
   deleteCuentaBancaria,
   createMovimientoBancario,
-  updateMovimientoBancario,
-  deleteMovimientoBancario,
+  updateMovimientoBancarioConTransaccion,
+  deleteMovimientoBancarioConTransaccion,
+  getInfoTransaccionVinculadaMovimiento,
   vincularReciboConIngreso,
   getEstadoCuenta,
   type EstadoCuentaData,
+  type InfoTransaccionVinculada,
 } from "@/lib/database"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { generateEstadoCuentaPDF } from "@/lib/pdf"
@@ -178,6 +180,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     fechaInicio: "",
     fechaFin: "",
   })
+  const [infoTransaccionVinculada, setInfoTransaccionVinculada] = useState<InfoTransaccionVinculada | null>(null)
 
   const filteredCuentas = cuentas.filter((cuenta) =>
     cuenta.banco.toLowerCase().includes(search.toLowerCase()) ||
@@ -379,9 +382,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setIsMovimientoDialogOpen(true)
   }
 
-  const openDeleteMovDialog = (cuenta: CuentaBancaria, mov: Movimiento) => {
+  const openDeleteMovDialog = async (cuenta: CuentaBancaria, mov: Movimiento) => {
     setSelectedCuenta(cuenta)
     setSelectedMovimiento(mov)
+
+    // Obtener info de transacción vinculada si existe
+    if (mov.transaccionId) {
+      const info = await getInfoTransaccionVinculadaMovimiento(mov.id)
+      setInfoTransaccionVinculada(info)
+    } else {
+      setInfoTransaccionVinculada(null)
+    }
+
     setIsDeleteMovDialogOpen(true)
   }
 
@@ -434,7 +446,19 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
       let result
       if (isEditMode && selectedMovimiento) {
-        result = await updateMovimientoBancario(selectedMovimiento.id, movimientoData)
+        // Usar la función que sincroniza con transacción vinculada
+        const { movimiento, transaccionActualizada } = await updateMovimientoBancarioConTransaccion(
+          selectedMovimiento.id,
+          movimientoData
+        )
+        result = movimiento
+
+        if (transaccionActualizada) {
+          toast({
+            title: "Movimiento y transacción actualizados",
+            description: "Se actualizó el movimiento bancario y la transacción vinculada.",
+          })
+        }
       } else {
         result = await createMovimientoBancario(movimientoData)
       }
@@ -508,7 +532,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setIsLoading(true)
 
     try {
-      await deleteMovimientoBancario(selectedMovimiento.id)
+      // Usar la función que elimina también la transacción vinculada y recalcula deudas
+      const { transaccionEliminada, apartamentoRecalculado } =
+        await deleteMovimientoBancarioConTransaccion(selectedMovimiento.id)
 
       setCuentas((prev) =>
         prev.map((c) =>
@@ -522,8 +548,20 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
             : c
         )
       )
+
+      // Mostrar toast con información de lo que se eliminó
+      if (transaccionEliminada) {
+        toast({
+          title: "Movimiento y transacción eliminados",
+          description: apartamentoRecalculado
+            ? "Se eliminaron ambos y se recalcularon las deudas del apartamento."
+            : "Se eliminó el movimiento bancario y la transacción vinculada.",
+        })
+      }
+
       setIsDeleteMovDialogOpen(false)
       setSelectedMovimiento(null)
+      setInfoTransaccionVinculada(null)
     } catch {
       alert("Error al eliminar el movimiento")
     } finally {
@@ -996,28 +1034,24 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                 {mov.tipo === "INGRESO" ? "+" : "-"}
                                 {formatCurrency(mov.monto)}
                               </span>
-                              {mov.tipo === "EGRESO" && (
-                                <>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => openEditMovimientoDialog(cuenta, mov)}
-                                    className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600"
-                                    title="Editar"
-                                  >
-                                    <Edit className="h-3 w-3" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    onClick={() => openDeleteMovDialog(cuenta, mov)}
-                                    className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
-                                    title="Eliminar"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </>
-                              )}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditMovimientoDialog(cuenta, mov)}
+                                className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600"
+                                title={`Editar ${mov.tipo === "INGRESO" ? "ingreso" : "egreso"}`}
+                              >
+                                <Edit className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openDeleteMovDialog(cuenta, mov)}
+                                className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
+                                title={`Eliminar ${mov.tipo === "INGRESO" ? "ingreso" : "egreso"}`}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
                             </div>
                           </div>
                         ))}
@@ -1244,7 +1278,14 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   })
                 }
                 required={tipoMovimiento === "INGRESO"}
+                disabled={isEditMode && !!selectedMovimiento?.transaccionId}
+                readOnly={isEditMode && !!selectedMovimiento?.transaccionId}
               />
+              {isEditMode && selectedMovimiento?.transaccionId && (
+                <p className="text-xs text-amber-600">
+                  Este movimiento está vinculado a una transacción. La descripción no se puede editar.
+                </p>
+              )}
             </div>
 
             {tipoMovimiento === "EGRESO" && (
@@ -1682,7 +1723,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                             {formatCurrency(mov.saldoAcumulado)}
                           </td>
                           <td className="px-4 py-2 text-center">
-                            {mov.tipo === "EGRESO" && movCompleto && (
+                            {movCompleto && (
                               <div className="flex items-center justify-center gap-1">
                                 <Button
                                   variant="ghost"
@@ -1692,7 +1733,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                     openEditMovimientoDialog(selectedCuenta, movCompleto)
                                   }}
                                   className="h-7 w-7 p-0 text-slate-400 hover:text-blue-600"
-                                  title="Editar egreso"
+                                  title={`Editar ${mov.tipo === "INGRESO" ? "ingreso" : "egreso"}`}
                                 >
                                   <Edit className="h-4 w-4" />
                                 </Button>
@@ -1704,14 +1745,11 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                     openDeleteMovDialog(selectedCuenta, movCompleto)
                                   }}
                                   className="h-7 w-7 p-0 text-slate-400 hover:text-red-600"
-                                  title="Eliminar egreso"
+                                  title={`Eliminar ${mov.tipo === "INGRESO" ? "ingreso" : "egreso"}`}
                                 >
                                   <Trash2 className="h-4 w-4" />
                                 </Button>
                               </div>
-                            )}
-                            {mov.tipo === "INGRESO" && (
-                              <span className="text-xs text-slate-400">-</span>
                             )}
                           </td>
                         </tr>
@@ -1761,14 +1799,52 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       {/* Delete Movimiento Confirmation */}
       <AlertDialog
         open={isDeleteMovDialogOpen}
-        onOpenChange={setIsDeleteMovDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteMovDialogOpen(open)
+          if (!open) setInfoTransaccionVinculada(null)
+        }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar movimiento?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará el movimiento{" "}
-              <strong>{selectedMovimiento?.descripcion}</strong>.
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Esta acción no se puede deshacer. Se eliminará el movimiento{" "}
+                  <strong>{selectedMovimiento?.descripcion}</strong>.
+                </p>
+                {infoTransaccionVinculada?.tieneVinculo && (
+                  <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-md p-3">
+                    <p className="text-amber-800 dark:text-amber-200 font-medium flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      Este movimiento está vinculado a una transacción
+                    </p>
+                    <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                      Se eliminará también la transacción de tipo{" "}
+                      <strong>
+                        {infoTransaccionVinculada.tipo === "RECIBO_PAGO"
+                          ? "Recibo de Pago"
+                          : infoTransaccionVinculada.tipo}
+                      </strong>
+                      {infoTransaccionVinculada.apartamentoNumero && (
+                        <>
+                          {" "}del apartamento{" "}
+                          <strong>{infoTransaccionVinculada.apartamentoNumero}</strong>
+                        </>
+                      )}
+                      {" "}por{" "}
+                      <strong>
+                        {formatCurrency(infoTransaccionVinculada.monto || 0)}
+                      </strong>.
+                    </p>
+                    {infoTransaccionVinculada.tipo === "RECIBO_PAGO" && (
+                      <p className="text-sm text-amber-700 dark:text-amber-300 mt-1">
+                        Las deudas del apartamento serán recalculadas automáticamente.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1777,7 +1853,11 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               onClick={handleDeleteMovimiento}
               className="bg-red-600 hover:bg-red-700"
             >
-              {isLoading ? "Eliminando..." : "Eliminar"}
+              {isLoading
+                ? "Eliminando..."
+                : infoTransaccionVinculada?.tieneVinculo
+                  ? "Eliminar ambos"
+                  : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
