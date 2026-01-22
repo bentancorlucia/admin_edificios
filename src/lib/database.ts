@@ -987,6 +987,10 @@ export async function updateMovimientoBancarioConTransaccion(
         // Actualizar descripción/notas en la transacción
         updateTransaccionData.descripcion = data.descripcion;
       }
+      if (data.clasificacion !== undefined) {
+        // Sincronizar clasificación a la transacción
+        updateTransaccionData.clasificacionPago = data.clasificacion;
+      }
 
       if (Object.keys(updateTransaccionData).length > 0) {
         await updateTransaccion(movimiento.transaccionId, updateTransaccionData);
@@ -2006,7 +2010,7 @@ export async function createReciboPago(data: {
       transaccionId: recibo.id,
       numeroDocumento: null,
       archivoUrl: null,
-      clasificacion: null,
+      clasificacion: clasificacionFinal === 'MIXTO' ? null : (clasificacionFinal || null),
       conciliado: false,
       servicioId: null,
     });
@@ -2096,6 +2100,10 @@ export async function updateReciboPago(
           ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
           : 'Recibo de Pago';
       }
+      // Sincronizar clasificación al movimiento
+      if (data.clasificacionPago !== undefined) {
+        updateMovData.clasificacion = data.clasificacionPago;
+      }
 
       await updateMovimientoBancario(movimientoExistente.id, updateMovData);
     } else {
@@ -2110,6 +2118,8 @@ export async function updateReciboPago(
         ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
         : 'Recibo de Pago';
 
+      // Determinar clasificación para el nuevo movimiento
+      const clasificacionNuevoMov = data.clasificacionPago ?? transaccion.clasificacionPago;
       await createMovimientoBancario({
         tipo: 'INGRESO',
         monto: data.monto ?? transaccion.monto,
@@ -2120,7 +2130,7 @@ export async function updateReciboPago(
         transaccionId: id,
         numeroDocumento: null,
         archivoUrl: null,
-        clasificacion: null,
+        clasificacion: clasificacionNuevoMov === 'MIXTO' ? null : (clasificacionNuevoMov || null),
         conciliado: false,
         servicioId: null,
       });
@@ -2142,6 +2152,10 @@ export async function updateReciboPago(
       updateMovData.descripcion = apartamentoParaDesc
         ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
         : 'Recibo de Pago';
+    }
+    // Sincronizar clasificación al movimiento
+    if (data.clasificacionPago !== undefined) {
+      updateMovData.clasificacion = data.clasificacionPago;
     }
 
     // Solo actualizar si hay campos para actualizar
@@ -2188,7 +2202,7 @@ export async function vincularReciboConIngreso(
     transaccionId,
     numeroDocumento: null,
     archivoUrl: null,
-    clasificacion: null,
+    clasificacion: transaccion.clasificacionPago === 'MIXTO' ? null : (transaccion.clasificacionPago || null),
     conciliado: false,
     servicioId: null,
   });
