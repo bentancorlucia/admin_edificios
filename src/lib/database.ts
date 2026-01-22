@@ -2470,10 +2470,14 @@ export interface DashboardData {
   inquilinosActivos: number;
   gastosPropietarios: number;
   gastosInquilinos: number;
+  recaudadoPropietarios: number;
+  recaudadoInquilinos: number;
   ingresos: number;
   egresos: number;
   balance: number;
   creditosPendientes: number;
+  recaudadoGastosComunes: number;
+  recaudadoFondoReserva: number;
   transaccionesRecientes: TransaccionConApartamento[];
   apartamentos: Apartamento[];
   saldos: Record<string, number>;
@@ -2501,11 +2505,46 @@ export async function getDashboardData(): Promise<DashboardData> {
            registros.some(r => r.tipoOcupacion === 'INQUILINO');
   }).length;
 
-  // Calcular gastos totales por tipo
+  // Calcular gastos totales por tipo (lo esperado)
   const gastosPropietarios = propietariosData.reduce((acc, a) =>
     acc + a.gastosComunes + a.fondoReserva, 0);
   const gastosInquilinos = inquilinosData.reduce((acc, a) =>
     acc + a.gastosComunes + a.fondoReserva, 0);
+
+  // Crear mapa de apartamentoId -> tipoOcupacion para buscar rápido
+  const apartamentoTipoMap = new Map<string, 'PROPIETARIO' | 'INQUILINO'>();
+  for (const apt of apartamentos) {
+    apartamentoTipoMap.set(apt.id, apt.tipoOcupacion);
+  }
+
+  // Filtrar recibos del mes actual
+  const ahora = new Date();
+  const mesActual = ahora.getMonth();
+  const anioActual = ahora.getFullYear();
+
+  const esDelMesActual = (fecha: string) => {
+    const fechaRecibo = new Date(fecha);
+    return fechaRecibo.getMonth() === mesActual && fechaRecibo.getFullYear() === anioActual;
+  };
+
+  // Calcular recaudado por tipo de ocupación (recibos de pago del mes actual)
+  const recibosDelMes = todasTransacciones.filter(
+    t => t.tipo === 'RECIBO_PAGO' && esDelMesActual(t.fecha)
+  );
+
+  const recibosConApartamentoDelMes = recibosDelMes.filter(t => t.apartamentoId);
+
+  let recaudadoPropietarios = 0;
+  let recaudadoInquilinos = 0;
+
+  for (const recibo of recibosConApartamentoDelMes) {
+    const tipoOcupacion = apartamentoTipoMap.get(recibo.apartamentoId!);
+    if (tipoOcupacion === 'PROPIETARIO') {
+      recaudadoPropietarios += recibo.monto;
+    } else if (tipoOcupacion === 'INQUILINO') {
+      recaudadoInquilinos += recibo.monto;
+    }
+  }
 
   // Calcular ingresos
   const ingresos = todasTransacciones
@@ -2520,6 +2559,30 @@ export async function getDashboardData(): Promise<DashboardData> {
     .filter(t => t.tipo === 'VENTA_CREDITO' && t.estadoCredito !== 'PAGADO')
     .reduce((acc, t) => acc + (t.monto - (t.montoPagado || 0)), 0);
 
+  // Calcular totales recaudados por tipo de pago (del mes actual)
+  let recaudadoGastosComunes = 0;
+  let recaudadoFondoReserva = 0;
+
+  for (const recibo of recibosDelMes) {
+    if (recibo.clasificacionPago === 'GASTO_COMUN') {
+      recaudadoGastosComunes += recibo.monto;
+    } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      recaudadoFondoReserva += recibo.monto;
+    } else {
+      // Clasificación MIXTO o tiene montos específicos
+      if (recibo.montoGastoComun) {
+        recaudadoGastosComunes += recibo.montoGastoComun;
+      }
+      if (recibo.montoFondoReserva) {
+        recaudadoFondoReserva += recibo.montoFondoReserva;
+      }
+      // Si no hay clasificación ni montos específicos, asumir gasto común
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+        recaudadoGastosComunes += recibo.monto;
+      }
+    }
+  }
+
   const balance = ingresos - egresos;
 
   return {
@@ -2531,10 +2594,14 @@ export async function getDashboardData(): Promise<DashboardData> {
     inquilinosActivos: inquilinosData.length,
     gastosPropietarios,
     gastosInquilinos,
+    recaudadoPropietarios,
+    recaudadoInquilinos,
     ingresos,
     egresos,
     balance,
     creditosPendientes,
+    recaudadoGastosComunes,
+    recaudadoFondoReserva,
     transaccionesRecientes,
     apartamentos,
     saldos,

@@ -191,30 +191,88 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Resumen de Gastos por Tipo */}
+      {/* Informe Mensual por Tipo */}
       <Card className="mb-6">
         <CardContent className="p-5">
-          <h2 className="text-sm font-semibold text-slate-700 mb-4">Gastos Mensuales por Tipo</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <h2 className="text-sm font-semibold text-slate-700 mb-4">Informe Mensual por Tipo</h2>
+
+          {/* Propietarios e Inquilinos - Esperado vs Recaudado */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             {/* Propietarios */}
             <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
-              <div className="flex justify-between items-start mb-2">
-                <p className="text-xs font-semibold text-blue-700">PROPIETARIOS ({data.propietarios})</p>
-                <span className="text-lg font-bold text-blue-700">{formatCurrency(data.gastosPropietarios)}</span>
+              <p className="text-xs font-semibold text-blue-700 mb-3">PROPIETARIOS ({data.propietarios})</p>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-600">Esperado</span>
+                  <span className="text-sm font-semibold text-slate-700">{formatCurrency(data.gastosPropietarios)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-600">Recaudado</span>
+                  <span className="text-sm font-semibold text-green-600">{formatCurrency(data.recaudadoPropietarios)}</span>
+                </div>
+                <div className="pt-2 border-t border-blue-200">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-medium text-slate-600">Pendiente</span>
+                    <span className={`text-sm font-bold ${data.gastosPropietarios - data.recaudadoPropietarios > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {formatCurrency(data.gastosPropietarios - data.recaudadoPropietarios)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Inquilinos */}
             <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
-              <div className="flex justify-between items-start mb-2">
-                <p className="text-xs font-semibold text-purple-700">INQUILINOS ({data.inquilinosRegistrados})</p>
-                <span className="text-lg font-bold text-purple-700">{formatCurrency(data.gastosInquilinos)}</span>
+              <p className="text-xs font-semibold text-purple-700 mb-3">INQUILINOS ({data.inquilinosRegistrados})</p>
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-600">Esperado</span>
+                  <span className="text-sm font-semibold text-slate-700">{formatCurrency(data.gastosInquilinos)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-xs text-slate-600">Recaudado</span>
+                  <span className="text-sm font-semibold text-green-600">{formatCurrency(data.recaudadoInquilinos)}</span>
+                </div>
+                <div className="pt-2 border-t border-purple-200">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-medium text-slate-600">Pendiente</span>
+                    <span className={`text-sm font-bold ${data.gastosInquilinos - data.recaudadoInquilinos > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {formatCurrency(data.gastosInquilinos - data.recaudadoInquilinos)}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-          <div className="mt-4 pt-4 border-t flex justify-between items-center">
-            <p className="text-sm text-slate-600">Total Gastos Mensuales</p>
-            <p className="text-xl font-bold text-slate-900">{formatCurrency(data.gastosPropietarios + data.gastosInquilinos)}</p>
+
+          {/* Totales Recaudados por Concepto */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Gastos Comunes Recaudados */}
+            <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+              <div className="flex justify-between items-start">
+                <p className="text-xs font-semibold text-green-700">RECAUDADO GASTOS COMUNES</p>
+                <span className="text-lg font-bold text-green-700">{formatCurrency(data.recaudadoGastosComunes)}</span>
+              </div>
+            </div>
+
+            {/* Fondo de Reserva Recaudado */}
+            <div className="p-4 bg-amber-50 rounded-lg border-l-4 border-amber-500">
+              <div className="flex justify-between items-start">
+                <p className="text-xs font-semibold text-amber-700">RECAUDADO FONDO DE RESERVA</p>
+                <span className="text-lg font-bold text-amber-700">{formatCurrency(data.recaudadoFondoReserva)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 pt-4 border-t grid grid-cols-2 gap-4">
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-slate-600">Total Esperado</p>
+              <p className="text-lg font-bold text-slate-900">{formatCurrency(data.gastosPropietarios + data.gastosInquilinos)}</p>
+            </div>
+            <div className="flex justify-between items-center">
+              <p className="text-sm text-slate-600">Total Recaudado</p>
+              <p className="text-lg font-bold text-green-600">{formatCurrency(data.recaudadoPropietarios + data.recaudadoInquilinos)}</p>
+            </div>
           </div>
         </CardContent>
       </Card>
