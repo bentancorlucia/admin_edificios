@@ -6,7 +6,7 @@ const tipoOcupacionLabels: Record<string, string> = {
   INQUILINO: "Inquilino",
 }
 
-// Paleta de colores minimalista
+// Paleta de colores
 const colors = {
   primary: [45, 55, 72] as [number, number, number],      // slate-700
   secondary: [100, 116, 139] as [number, number, number], // slate-500
@@ -16,6 +16,7 @@ const colors = {
   white: [255, 255, 255] as [number, number, number],
   positive: [22, 163, 74] as [number, number, number],    // green-600
   negative: [220, 38, 38] as [number, number, number],    // red-600
+  blue: [37, 99, 235] as [number, number, number],        // blue-600
 }
 
 export function generateInformePDF(data: InformeData, periodoLabel: string, piePagina?: string) {
@@ -28,35 +29,287 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   const formatCurrency = (val: number) =>
     `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
-  // Header minimalista - color celeste consistente con informes de apartamentos
-  doc.setFillColor(37, 99, 235) // blue-600
-  doc.rect(0, 0, pageWidth, 28, "F")
+  // Helper para agregar el header en cada página
+  const drawPageHeader = () => {
+    doc.setFillColor(...colors.blue)
+    doc.rect(0, 0, pageWidth, 28, "F")
 
-  doc.setTextColor(...colors.white)
-  doc.setFontSize(16)
-  doc.setFont("helvetica", "bold")
-  doc.text("Edificio Constituyente II", margin, 12)
+    doc.setTextColor(...colors.white)
+    doc.setFontSize(16)
+    doc.setFont("helvetica", "bold")
+    doc.text("Edificio Constituyente II", margin, 12)
 
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "normal")
-  doc.text("Constituyente 2015 - Montevideo", margin, 20)
+    doc.setFontSize(10)
+    doc.setFont("helvetica", "normal")
+    doc.text("Constituyente 2015 - Montevideo", margin, 20)
 
-  doc.setFontSize(12)
-  doc.setFont("helvetica", "bold")
-  doc.text("Informe Mensual de Cuenta Corriente", pageWidth - margin, 12, { align: "right" })
-  doc.setFontSize(10)
-  doc.setFont("helvetica", "normal")
-  doc.text(periodoLabel, pageWidth - margin, 20, { align: "right" })
+    doc.setFontSize(12)
+    doc.setFont("helvetica", "bold")
+    doc.text("Informe Mensual de Cuenta Corriente", pageWidth - margin, 12, { align: "right" })
+    doc.setFontSize(10)
+    doc.setFont("helvetica", "normal")
+    doc.text(periodoLabel, pageWidth - margin, 20, { align: "right" })
+  }
+
+  // Header de la primera página
+  drawPageHeader()
 
   let y = 40
 
-  // Sección: Resumen General
-  y = drawSectionTitle(doc, "Resumen General", margin, y)
-
-  // Tarjetas de resumen en línea
   const cardWidth = (pageWidth - margin * 2 - 16) / 5
   const cardHeight = 22
   const cardGap = 4
+  const availableWidth = pageWidth - margin * 2
+  const tableX = margin
+
+  // =====================================================
+  // 1. DESGLOSE POR APARTAMENTO (PRIMERO)
+  // =====================================================
+  y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
+
+  const tableHeaders = ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Saldo Actual"]
+  const colWidths = [1, 1, 1, 1, 1, 1, 1]
+  const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
+  const scaleFactor = availableWidth / totalColWidth
+  const scaledColWidths = colWidths.map(w => w * scaleFactor)
+  const tableWidth = availableWidth
+
+  // Header de tabla - AZUL
+  doc.setFillColor(...colors.blue)
+  doc.rect(tableX, y, tableWidth, 9, "F")
+
+  doc.setFontSize(7)
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(...colors.white)
+
+  let colX = tableX + 4
+  tableHeaders.forEach((header, i) => {
+    const align = i > 1 ? "right" : "left"
+    const textX = i === 6 ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
+    doc.text(header, textX, y + 6, { align })
+    colX += scaledColWidths[i]
+  })
+
+  y += 9
+
+  // Filas de datos
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(7)
+
+  for (let i = 0; i < data.apartamentos.length; i++) {
+    const apt = data.apartamentos[i]
+
+    if (y > pageHeight - 35) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+
+      // Repetir header de tabla - AZUL
+      doc.setFillColor(...colors.blue)
+      doc.rect(tableX, y, tableWidth, 9, "F")
+      doc.setFontSize(7)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(...colors.white)
+
+      colX = tableX + 4
+      tableHeaders.forEach((header, idx) => {
+        const align = idx > 1 ? "right" : "left"
+        const textX = idx === 6 ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
+        doc.text(header, textX, y + 6, { align })
+        colX += scaledColWidths[idx]
+      })
+      y += 9
+      doc.setFont("helvetica", "normal")
+    }
+
+    // Fondo alternado sutil
+    if (i % 2 === 0) {
+      doc.setFillColor(...colors.background)
+      doc.rect(tableX, y, tableWidth, 7, "F")
+    }
+
+    colX = tableX + 4
+    const rowY = y + 5
+
+    // Apto
+    doc.setTextColor(...colors.primary)
+    doc.setFont("helvetica", "bold")
+    doc.text(apt.numero, colX, rowY)
+    colX += scaledColWidths[0]
+
+    // Tipo
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(...colors.secondary)
+    doc.text(tipoOcupacionLabels[apt.tipoOcupacion], colX, rowY)
+    colX += scaledColWidths[1]
+
+    // Saldo Anterior
+    doc.setTextColor(apt.saldoAnterior > 0 ? colors.negative[0] : colors.primary[0],
+                     apt.saldoAnterior > 0 ? colors.negative[1] : colors.primary[1],
+                     apt.saldoAnterior > 0 ? colors.negative[2] : colors.primary[2])
+    doc.text(formatCurrency(apt.saldoAnterior), colX + scaledColWidths[2] - 8, rowY, { align: "right" })
+    colX += scaledColWidths[2]
+
+    // Pagos Mes
+    doc.setTextColor(...colors.positive)
+    doc.text(formatCurrency(apt.pagosMes), colX + scaledColWidths[3] - 8, rowY, { align: "right" })
+    colX += scaledColWidths[3]
+
+    // Gastos Comunes
+    doc.setTextColor(...colors.primary)
+    doc.text(formatCurrency(apt.gastosComunesMes), colX + scaledColWidths[4] - 8, rowY, { align: "right" })
+    colX += scaledColWidths[4]
+
+    // Fondo Reserva
+    doc.text(formatCurrency(apt.fondoReservaMes), colX + scaledColWidths[5] - 8, rowY, { align: "right" })
+    colX += scaledColWidths[5]
+
+    // Saldo Actual
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
+                     apt.saldoActual > 0 ? colors.negative[1] : colors.positive[1],
+                     apt.saldoActual > 0 ? colors.negative[2] : colors.positive[2])
+    doc.text(formatCurrency(apt.saldoActual), tableX + tableWidth - 8, rowY, { align: "right" })
+
+    y += 7
+  }
+
+  // Fila de totales
+  doc.setDrawColor(...colors.primary)
+  doc.line(tableX, y, tableX + tableWidth, y)
+  y += 1
+
+  doc.setFillColor(...colors.light)
+  doc.rect(tableX, y, tableWidth, 8, "F")
+
+  doc.setFont("helvetica", "bold")
+  doc.setFontSize(7)
+  doc.setTextColor(...colors.primary)
+
+  colX = tableX + 4
+  doc.text("TOTALES", colX, y + 5.5)
+  colX += scaledColWidths[0] + scaledColWidths[1]
+
+  doc.text(formatCurrency(data.totales.totalSaldoAnterior), colX + scaledColWidths[2] - 8, y + 5.5, { align: "right" })
+  colX += scaledColWidths[2]
+
+  doc.setTextColor(...colors.positive)
+  doc.text(formatCurrency(data.totales.totalPagosMes), colX + scaledColWidths[3] - 8, y + 5.5, { align: "right" })
+  colX += scaledColWidths[3]
+
+  doc.setTextColor(...colors.primary)
+  doc.text(formatCurrency(data.totales.totalGastosComunesMes), colX + scaledColWidths[4] - 8, y + 5.5, { align: "right" })
+  colX += scaledColWidths[4]
+
+  doc.text(formatCurrency(data.totales.totalFondoReservaMes), colX + scaledColWidths[5] - 8, y + 5.5, { align: "right" })
+  colX += scaledColWidths[5]
+
+  doc.setTextColor(data.totales.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
+                   data.totales.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
+                   data.totales.totalSaldoActual > 0 ? colors.negative[2] : colors.positive[2])
+  doc.text(formatCurrency(data.totales.totalSaldoActual), tableX + tableWidth - 8, y + 5.5, { align: "right" })
+
+  y += 16
+
+  // =====================================================
+  // 2. CUENTA BANCARIA PARA PAGO
+  // =====================================================
+  if (y > pageHeight - 40) {
+    doc.addPage("landscape")
+    drawPageHeader()
+    y = 40
+  }
+
+  // Recuadro con datos de cuenta bancaria
+  doc.setFillColor(239, 246, 255) // blue-50
+  doc.setDrawColor(...colors.blue)
+  doc.setLineWidth(0.5)
+  doc.roundedRect(margin, y, pageWidth - margin * 2, 28, 3, 3, "FD")
+  doc.setLineWidth(0.2)
+
+  y += 6
+  doc.setFontSize(9)
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(...colors.blue)
+  doc.text("Cuenta bancaria de pago:", pageWidth / 2, y, { align: "center" })
+
+  y += 6
+  doc.setFontSize(8)
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(...colors.primary)
+  doc.text("B.R.O.U. - Caja de Ahorro $ - N°. 00099991100-00004 - Mario Bentancor", pageWidth / 2, y, { align: "center" })
+
+  y += 5
+  doc.setFontSize(7)
+  doc.setFont("helvetica", "normal")
+  doc.setTextColor(...colors.secondary)
+  doc.text("Para transferencia desde otros bancos: 00099010900004  |  Concepto: OTROS", pageWidth / 2, y, { align: "center" })
+
+  y += 24
+
+  // =====================================================
+  // 3. AVISOS IMPORTANTES
+  // =====================================================
+  if (avisosActivos.length > 0) {
+    if (y > pageHeight - 50) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+    }
+
+    y = drawSectionTitle(doc, "Información", margin, y)
+
+    // Calcular altura total de los avisos
+    doc.setFontSize(8)
+    const lineHeight = 4.5
+    const avisoSpacing = 3
+    let avisosHeight = 10
+    for (const aviso of avisosActivos) {
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+      avisosHeight += lines.length * lineHeight + avisoSpacing
+    }
+
+    // Recuadro con fondo sutil
+    doc.setFillColor(...colors.background)
+    doc.setDrawColor(...colors.light)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
+    doc.setLineWidth(0.2)
+
+    y += 6
+
+    // Dibujar cada aviso con bullet simple
+    doc.setFontSize(8)
+    for (let i = 0; i < avisosActivos.length; i++) {
+      const aviso = avisosActivos[i]
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+
+      // Bullet simple (punto) - centrado verticalmente con la primera línea de texto
+      // El texto de 8pt tiene una altura aproximada de 2.8mm, el bullet debe estar a la mitad
+      doc.setFillColor(...colors.secondary)
+      doc.circle(margin + 6, y - 1, 1.2, "F")
+
+      // Texto del aviso
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(...colors.primary)
+      doc.text(lines, margin + 12, y)
+
+      y += lines.length * lineHeight + avisoSpacing
+    }
+
+    y += 16
+  }
+
+  // =====================================================
+  // 4. RESUMEN GENERAL
+  // =====================================================
+  if (y > pageHeight - 45) {
+    doc.addPage("landscape")
+    drawPageHeader()
+    y = 40
+  }
+
+  y = drawSectionTitle(doc, "Resumen General", margin, y)
 
   const summaryItems = [
     { label: "Saldo Anterior", value: data.totales.totalSaldoAnterior, type: "neutral" },
@@ -95,204 +348,17 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
 
   y += cardHeight + 16
 
-  // Sección: Desglose por Apartamento
-  y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
-
-  // Tabla de apartamentos - ajustada al ancho completo de la página
-  const tableHeaders = ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Saldo Actual"]
-  const availableWidth = pageWidth - margin * 2
-  const colWidths = [1, 1, 1, 1, 1, 1, 1] // Todas las columnas con el mismo ancho
-  const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
-  const scaleFactor = availableWidth / totalColWidth
-  const scaledColWidths = colWidths.map(w => w * scaleFactor)
-  const tableWidth = availableWidth
-  const tableX = margin
-
-  // Header de tabla
-  doc.setFillColor(...colors.primary)
-  doc.rect(tableX, y, tableWidth, 9, "F")
-
-  doc.setFontSize(7)
-  doc.setFont("helvetica", "bold")
-  doc.setTextColor(...colors.white)
-
-  let colX = tableX + 4
-  tableHeaders.forEach((header, i) => {
-    const align = i > 1 ? "right" : "left"
-    // Última columna alineada al borde derecho de la tabla
-    const textX = i === 6 ? tableX + tableWidth - 4 : (i > 1 ? colX + scaledColWidths[i] - 4 : colX)
-    doc.text(header, textX, y + 6, { align })
-    colX += scaledColWidths[i]
-  })
-
-  y += 9
-
-  // Filas de datos
-  doc.setFont("helvetica", "normal")
-  doc.setFontSize(7)
-
-  for (let i = 0; i < data.apartamentos.length; i++) {
-    const apt = data.apartamentos[i]
-
-    if (y > pageHeight - 35) {
-      doc.addPage("landscape")
-      y = 20
-
-      // Repetir header de tabla
-      doc.setFillColor(...colors.primary)
-      doc.rect(tableX, y, tableWidth, 9, "F")
-      doc.setFontSize(7)
-      doc.setFont("helvetica", "bold")
-      doc.setTextColor(...colors.white)
-
-      colX = tableX + 4
-      tableHeaders.forEach((header, idx) => {
-        const align = idx > 1 ? "right" : "left"
-        // Última columna alineada al borde derecho de la tabla
-        const textX = idx === 6 ? tableX + tableWidth - 4 : (idx > 1 ? colX + scaledColWidths[idx] - 4 : colX)
-        doc.text(header, textX, y + 6, { align })
-        colX += scaledColWidths[idx]
-      })
-      y += 9
-      doc.setFont("helvetica", "normal")
-    }
-
-    // Fondo alternado sutil
-    if (i % 2 === 0) {
-      doc.setFillColor(...colors.background)
-      doc.rect(tableX, y, tableWidth, 7, "F")
-    }
-
-    colX = tableX + 4
-    const rowY = y + 5
-
-    // Apto
-    doc.setTextColor(...colors.primary)
-    doc.setFont("helvetica", "bold")
-    doc.text(apt.numero, colX, rowY)
-    colX += scaledColWidths[0]
-
-    // Tipo
-    doc.setFont("helvetica", "normal")
-    doc.setTextColor(...colors.secondary)
-    doc.text(tipoOcupacionLabels[apt.tipoOcupacion], colX, rowY)
-    colX += scaledColWidths[1]
-
-    // Saldo Anterior
-    doc.setTextColor(apt.saldoAnterior > 0 ? colors.negative[0] : colors.primary[0],
-                     apt.saldoAnterior > 0 ? colors.negative[1] : colors.primary[1],
-                     apt.saldoAnterior > 0 ? colors.negative[2] : colors.primary[2])
-    doc.text(formatCurrency(apt.saldoAnterior), colX + scaledColWidths[2] - 4, rowY, { align: "right" })
-    colX += scaledColWidths[2]
-
-    // Pagos Mes
-    doc.setTextColor(...colors.positive)
-    doc.text(formatCurrency(apt.pagosMes), colX + scaledColWidths[3] - 4, rowY, { align: "right" })
-    colX += scaledColWidths[3]
-
-    // Gastos Comunes
-    doc.setTextColor(...colors.primary)
-    doc.text(formatCurrency(apt.gastosComunesMes), colX + scaledColWidths[4] - 4, rowY, { align: "right" })
-    colX += scaledColWidths[4]
-
-    // Fondo Reserva
-    doc.text(formatCurrency(apt.fondoReservaMes), colX + scaledColWidths[5] - 4, rowY, { align: "right" })
-    colX += scaledColWidths[5]
-
-    // Saldo Actual - alinear al borde derecho de la tabla
-    doc.setFont("helvetica", "bold")
-    doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
-                     apt.saldoActual > 0 ? colors.negative[1] : colors.positive[1],
-                     apt.saldoActual > 0 ? colors.negative[2] : colors.positive[2])
-    doc.text(formatCurrency(apt.saldoActual), tableX + tableWidth - 4, rowY, { align: "right" })
-
-    y += 7
-  }
-
-  // Fila de totales
-  doc.setDrawColor(...colors.primary)
-  doc.line(tableX, y, tableX + tableWidth, y)
-  y += 1
-
-  doc.setFillColor(...colors.light)
-  doc.rect(tableX, y, tableWidth, 8, "F")
-
-  doc.setFont("helvetica", "bold")
-  doc.setFontSize(7)
-  doc.setTextColor(...colors.primary)
-
-  colX = tableX + 4
-  doc.text("TOTALES", colX, y + 5.5)
-  colX += scaledColWidths[0] + scaledColWidths[1]
-
-  doc.text(formatCurrency(data.totales.totalSaldoAnterior), colX + scaledColWidths[2] - 4, y + 5.5, { align: "right" })
-  colX += scaledColWidths[2]
-
-  doc.setTextColor(...colors.positive)
-  doc.text(formatCurrency(data.totales.totalPagosMes), colX + scaledColWidths[3] - 4, y + 5.5, { align: "right" })
-  colX += scaledColWidths[3]
-
-  doc.setTextColor(...colors.primary)
-  doc.text(formatCurrency(data.totales.totalGastosComunesMes), colX + scaledColWidths[4] - 4, y + 5.5, { align: "right" })
-  colX += scaledColWidths[4]
-
-  doc.text(formatCurrency(data.totales.totalFondoReservaMes), colX + scaledColWidths[5] - 4, y + 5.5, { align: "right" })
-  colX += scaledColWidths[5]
-
-  doc.setTextColor(data.totales.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
-                   data.totales.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
-                   data.totales.totalSaldoActual > 0 ? colors.negative[2] : colors.positive[2])
-  doc.text(formatCurrency(data.totales.totalSaldoActual), tableX + tableWidth - 4, y + 5.5, { align: "right" })
-
-  y += 16
-
-  // Sección: Avisos (si hay)
-  if (avisosActivos.length > 0) {
-    if (y > pageHeight - 50) {
-      doc.addPage("landscape")
-      y = 20
-    }
-
-    y = drawSectionTitle(doc, "Avisos", margin, y)
-
-    doc.setDrawColor(...colors.light)
-    doc.setFillColor(...colors.background)
-
-    // Calcular altura
-    doc.setFontSize(8)
-    let avisosHeight = 8
-    for (const aviso of avisosActivos) {
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
-      avisosHeight += lines.length * 4 + 4
-    }
-
-    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
-    y += 6
-
-    doc.setTextColor(...colors.primary)
-    for (let i = 0; i < avisosActivos.length; i++) {
-      const aviso = avisosActivos[i]
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 25)
-
-      doc.setFont("helvetica", "normal")
-      doc.text(`${i + 1}.`, margin + 5, y)
-      doc.text(lines, margin + 14, y)
-
-      y += lines.length * 4 + 4
-    }
-
-    y += 8
-  }
-
-  // Sección: Resumen Bancario
+  // =====================================================
+  // 5. RESUMEN BANCARIO
+  // =====================================================
   if (y > pageHeight - 45) {
     doc.addPage("landscape")
-    y = 20
+    drawPageHeader()
+    y = 40
   }
 
   y = drawSectionTitle(doc, "Resumen Bancario", margin, y)
 
-  // Tarjetas de resumen bancario
   const bankItems = [
     { label: "Ingreso G. Comunes", value: data.resumenBancario.ingresoGastosComunes, type: "positive" },
     { label: "Ingreso F. Reserva", value: data.resumenBancario.ingresoFondoReserva, type: "positive" },
@@ -305,7 +371,8 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     const x = margin + index * (cardWidth + cardGap)
 
     if (item.type === "highlight") {
-      doc.setFillColor(...colors.primary)
+      // Saldo bancario en azul
+      doc.setFillColor(...colors.blue)
       doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "F")
 
       doc.setFontSize(7)
@@ -338,134 +405,37 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
 
   y += cardHeight + 16
 
-  // Sección: Detalle de Egresos
+  // =====================================================
+  // 6. DETALLE DE EGRESOS (Gastos Comunes primero, Fondo Reserva después)
+  // =====================================================
   if (data.detalleEgresos && data.detalleEgresos.length > 0) {
-    if (y > pageHeight - 50) {
-      doc.addPage("landscape")
-      y = 20
-    }
+    const egresosGastosComunes = data.detalleEgresos.filter(e => e.clasificacion === 'GASTO_COMUN')
+    const egresosFondoReserva = data.detalleEgresos.filter(e => e.clasificacion === 'FONDO_RESERVA')
 
-    y = drawSectionTitle(doc, "Detalle de Egresos", margin, y)
-
-    const egresoHeaders = ["Fecha", "Descripción", "Clasificación", "Banco", "Monto"]
-    const egresoColBase = [25, 120, 40, 40, 32]
-    const egresoTotalBase = egresoColBase.reduce((a, b) => a + b, 0)
-    const egresoScaleFactor = availableWidth / egresoTotalBase
-    const egresoColWidths = egresoColBase.map(w => w * egresoScaleFactor)
-    const egresoTableWidth = availableWidth
-
-    // Header
-    doc.setFillColor(...colors.primary)
-    doc.rect(tableX, y, egresoTableWidth, 9, "F")
-
-    doc.setFontSize(7)
-    doc.setFont("helvetica", "bold")
-    doc.setTextColor(...colors.white)
-
-    colX = tableX + 4
-    egresoHeaders.forEach((header, i) => {
-      const align = i === 4 ? "right" : "left"
-      const textX = i === 4 ? colX + egresoColWidths[i] - 4 : colX
-      doc.text(header, textX, y + 6, { align })
-      colX += egresoColWidths[i]
-    })
-
-    y += 9
-
-    const clasificacionLabels: Record<string, string> = {
-      GASTO_COMUN: "G. Común",
-      FONDO_RESERVA: "F. Reserva",
-      SIN_CLASIFICAR: "Sin clasificar",
-    }
-
-    let totalEgresos = 0
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(7)
-
-    for (let i = 0; i < data.detalleEgresos.length; i++) {
-      const egreso = data.detalleEgresos[i]
-
-      if (y > pageHeight - 25) {
+    // Tabla de Egresos por Gastos Comunes
+    if (egresosGastosComunes.length > 0) {
+      if (y > pageHeight - 50) {
         doc.addPage("landscape")
-        y = 20
-
-        // Repetir header
-        doc.setFillColor(...colors.primary)
-        doc.rect(tableX, y, egresoTableWidth, 9, "F")
-        doc.setFontSize(7)
-        doc.setFont("helvetica", "bold")
-        doc.setTextColor(...colors.white)
-
-        colX = tableX + 4
-        egresoHeaders.forEach((header, idx) => {
-          const align = idx === 4 ? "right" : "left"
-          const textX = idx === 4 ? colX + egresoColWidths[idx] - 4 : colX
-          doc.text(header, textX, y + 6, { align })
-          colX += egresoColWidths[idx]
-        })
-        y += 9
-        doc.setFont("helvetica", "normal")
+        drawPageHeader()
+        y = 40
       }
 
-      if (i % 2 === 0) {
-        doc.setFillColor(...colors.background)
-        doc.rect(tableX, y, egresoTableWidth, 7, "F")
-      }
-
-      colX = tableX + 4
-      const rowY = y + 5
-
-      // Fecha
-      doc.setTextColor(...colors.primary)
-      const fecha = new Date(egreso.fecha).toLocaleDateString("es-ES", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "2-digit",
-      })
-      doc.text(fecha, colX, rowY)
-      colX += egresoColWidths[0]
-
-      // Descripción (truncar si es necesario)
-      let descripcion = egreso.descripcion
-      const maxDescWidth = egresoColWidths[1] - 8
-      while (doc.getTextWidth(descripcion) > maxDescWidth && descripcion.length > 3) {
-        descripcion = descripcion.slice(0, -4) + "..."
-      }
-      doc.text(descripcion, colX, rowY)
-      colX += egresoColWidths[1]
-
-      // Clasificación
-      doc.setTextColor(...colors.secondary)
-      doc.text(clasificacionLabels[egreso.clasificacion] || egreso.clasificacion, colX, rowY)
-      colX += egresoColWidths[2]
-
-      // Banco
-      doc.text(egreso.banco || "N/A", colX, rowY)
-      colX += egresoColWidths[3]
-
-      // Monto
-      doc.setTextColor(...colors.negative)
-      doc.text(formatCurrency(egreso.monto), colX + egresoColWidths[4] - 4, rowY, { align: "right" })
-
-      totalEgresos += egreso.monto
-      y += 7
+      y = drawSectionTitle(doc, "Detalle de Egresos - Gastos Comunes", margin, y)
+      y = drawEgresosTable(doc, egresosGastosComunes, y, margin, availableWidth, pageHeight, drawPageHeader)
+      y += 16
     }
 
-    // Total de egresos
-    doc.setDrawColor(...colors.primary)
-    doc.line(tableX, y, tableX + egresoTableWidth, y)
-    y += 1
+    // Tabla de Egresos por Fondo de Reserva
+    if (egresosFondoReserva.length > 0) {
+      if (y > pageHeight - 50) {
+        doc.addPage("landscape")
+        drawPageHeader()
+        y = 40
+      }
 
-    doc.setFillColor(...colors.light)
-    doc.rect(tableX, y, egresoTableWidth, 8, "F")
-
-    doc.setFont("helvetica", "bold")
-    doc.setTextColor(...colors.primary)
-    doc.text("TOTAL EGRESOS", tableX + 4, y + 5.5)
-
-    doc.setTextColor(...colors.negative)
-    doc.text(formatCurrency(totalEgresos), tableX + egresoTableWidth - 4, y + 5.5, { align: "right" })
+      y = drawSectionTitle(doc, "Detalle de Egresos - Fondo de Reserva", margin, y)
+      y = drawEgresosTable(doc, egresosFondoReserva, y, margin, availableWidth, pageHeight, drawPageHeader)
+    }
   }
 
   // Footer
@@ -504,4 +474,159 @@ function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): numb
   doc.setLineWidth(0.2)
 
   return y + 10
+}
+
+interface DetalleEgresoItem {
+  fecha: string
+  servicio: string
+  descripcion: string
+  clasificacion: string
+  monto: number
+  banco: string
+}
+
+function drawEgresosTable(
+  doc: jsPDF,
+  egresos: DetalleEgresoItem[],
+  startY: number,
+  margin: number,
+  availableWidth: number,
+  pageHeight: number,
+  drawPageHeader?: () => void
+): number {
+  let y = startY
+  const tableX = margin
+
+  // Headers con columna de servicio
+  const egresoHeaders = ["Fecha", "Servicio", "Descripción", "Banco", "Monto"]
+  const egresoColBase = [22, 35, 100, 35, 30]
+  const egresoTotalBase = egresoColBase.reduce((a, b) => a + b, 0)
+  const egresoScaleFactor = availableWidth / egresoTotalBase
+  const egresoColWidths = egresoColBase.map(w => w * egresoScaleFactor)
+  const egresoTableWidth = availableWidth
+
+  // Header - AZUL
+  doc.setFillColor(...colors.blue)
+  doc.rect(tableX, y, egresoTableWidth, 9, "F")
+
+  doc.setFontSize(7)
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(...colors.white)
+
+  let colX = tableX + 4
+  egresoHeaders.forEach((header, i) => {
+    const align = i === 4 ? "right" : "left"
+    const textX = i === 4 ? tableX + egresoTableWidth - 8 : colX
+    doc.text(header, textX, y + 6, { align })
+    colX += egresoColWidths[i]
+  })
+
+  y += 9
+
+  let totalEgresos = 0
+
+  doc.setFont("helvetica", "normal")
+  doc.setFontSize(7)
+
+  for (let i = 0; i < egresos.length; i++) {
+    const egreso = egresos[i]
+
+    if (y > pageHeight - 25) {
+      doc.addPage("landscape")
+      if (drawPageHeader) {
+        drawPageHeader()
+        y = 40
+      } else {
+        y = 20
+      }
+
+      // Repetir header - AZUL
+      doc.setFillColor(...colors.blue)
+      doc.rect(tableX, y, egresoTableWidth, 9, "F")
+      doc.setFontSize(7)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(...colors.white)
+
+      colX = tableX + 4
+      egresoHeaders.forEach((header, idx) => {
+        const align = idx === 4 ? "right" : "left"
+        const textX = idx === 4 ? tableX + egresoTableWidth - 8 : colX
+        doc.text(header, textX, y + 6, { align })
+        colX += egresoColWidths[idx]
+      })
+      y += 9
+      doc.setFont("helvetica", "normal")
+    }
+
+    if (i % 2 === 0) {
+      doc.setFillColor(...colors.background)
+      doc.rect(tableX, y, egresoTableWidth, 7, "F")
+    }
+
+    colX = tableX + 4
+    const rowY = y + 5
+
+    // Fecha
+    doc.setTextColor(...colors.primary)
+    const fecha = new Date(egreso.fecha).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "2-digit",
+    })
+    doc.text(fecha, colX, rowY)
+    colX += egresoColWidths[0]
+
+    // Servicio
+    let servicio = egreso.servicio || "-"
+    const maxServWidth = egresoColWidths[1] - 4
+    while (doc.getTextWidth(servicio) > maxServWidth && servicio.length > 3) {
+      servicio = servicio.slice(0, -4) + "..."
+    }
+    doc.setTextColor(...colors.secondary)
+    doc.text(servicio, colX, rowY)
+    colX += egresoColWidths[1]
+
+    // Descripción (truncar si es necesario)
+    let descripcion = egreso.descripcion
+    const maxDescWidth = egresoColWidths[2] - 4
+    while (doc.getTextWidth(descripcion) > maxDescWidth && descripcion.length > 3) {
+      descripcion = descripcion.slice(0, -4) + "..."
+    }
+    doc.setTextColor(...colors.primary)
+    doc.text(descripcion, colX, rowY)
+    colX += egresoColWidths[2]
+
+    // Banco
+    doc.setTextColor(...colors.secondary)
+    doc.text(egreso.banco || "N/A", colX, rowY)
+    colX += egresoColWidths[3]
+
+    // Monto - con margen
+    doc.setTextColor(...colors.negative)
+    doc.text(formatCurrency(egreso.monto), tableX + egresoTableWidth - 8, rowY, { align: "right" })
+
+    totalEgresos += egreso.monto
+    y += 7
+  }
+
+  // Total de egresos
+  doc.setDrawColor(...colors.primary)
+  doc.line(tableX, y, tableX + egresoTableWidth, y)
+  y += 1
+
+  doc.setFillColor(...colors.light)
+  doc.rect(tableX, y, egresoTableWidth, 8, "F")
+
+  doc.setFont("helvetica", "bold")
+  doc.setTextColor(...colors.primary)
+  doc.text("TOTAL", tableX + 4, y + 5.5)
+
+  doc.setTextColor(...colors.negative)
+  doc.text(formatCurrency(totalEgresos), tableX + egresoTableWidth - 8, y + 5.5, { align: "right" })
+
+  return y + 8
+}
+
+function formatCurrency(val: number): string {
+  return `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }

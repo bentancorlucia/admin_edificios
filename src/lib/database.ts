@@ -1593,7 +1593,27 @@ export async function updateAvisoInforme(id: string, data: { texto?: string; act
 
 export async function deleteAvisoInforme(id: string): Promise<void> {
   const database = await getDatabase();
+
+  // Obtener el aviso a eliminar para conocer su mes/anio
+  const aviso = await getAvisoInformeById(id);
+  if (!aviso) return;
+
+  // Eliminar el aviso
   await database.execute('DELETE FROM AvisoInforme WHERE id = ?', [id]);
+
+  // Recalcular el orden de los avisos restantes para ese mes/año
+  const avisosRestantes = await getAvisosInforme(aviso.mes, aviso.anio);
+  if (avisosRestantes.length > 0) {
+    const now = getCurrentTimestamp();
+    await Promise.all(
+      avisosRestantes.map((a, index) =>
+        database.execute(
+          'UPDATE AvisoInforme SET orden = ?, updatedAt = ? WHERE id = ?',
+          [index, now, a.id]
+        )
+      )
+    );
+  }
 }
 
 export async function reorderAvisosInforme(avisos: { id: string; orden: number }[]): Promise<void> {
@@ -2334,6 +2354,7 @@ export interface ResumenBancario {
 
 export interface DetalleEgreso {
   fecha: string;
+  servicio: string;
   descripcion: string;
   clasificacion: string;
   monto: number;
@@ -2494,6 +2515,7 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
 
       detalleEgresos.push({
         fecha: mov.fecha,
+        servicio: mov.servicio?.nombre || '',
         descripcion: mov.descripcion || 'Sin descripción',
         clasificacion: mov.clasificacion || 'SIN_CLASIFICAR',
         monto: mov.monto,
