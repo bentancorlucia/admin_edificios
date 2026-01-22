@@ -467,8 +467,8 @@ export async function deleteTransaccion(id: string): Promise<void> {
   const tipo = transaccion?.tipo;
 
   try {
-    // Primero, desvincular movimientos bancarios relacionados (set NULL en lugar de DELETE)
-    await database.execute('UPDATE MovimientoBancario SET transaccionId = NULL WHERE transaccionId = ?', [id]);
+    // Eliminar movimientos bancarios relacionados (en lugar de solo desvincular)
+    await database.execute('DELETE FROM MovimientoBancario WHERE transaccionId = ?', [id]);
 
     // Eliminar la transacción
     await database.execute('DELETE FROM Transaccion WHERE id = ?', [id]);
@@ -806,6 +806,29 @@ export async function getMovimientoBancarioByTransaccionId(transaccionId: string
   );
   if (!result[0]) return null;
   return { ...result[0], conciliado: Boolean(result[0].conciliado) };
+}
+
+// Obtener información del banco vinculado a una transacción (para mostrar en diálogos de confirmación)
+export interface InfoBancoVinculado {
+  tieneVinculo: boolean;
+  banco?: string;
+  numeroCuenta?: string;
+  monto?: number;
+}
+
+export async function getInfoBancoVinculadoTransaccion(transaccionId: string): Promise<InfoBancoVinculado> {
+  const movimiento = await getMovimientoBancarioByTransaccionId(transaccionId);
+  if (!movimiento) {
+    return { tieneVinculo: false };
+  }
+
+  const cuenta = await getCuentaBancariaById(movimiento.cuentaBancariaId);
+  return {
+    tieneVinculo: true,
+    banco: cuenta?.banco,
+    numeroCuenta: cuenta?.numeroCuenta,
+    monto: movimiento.monto,
+  };
 }
 
 export async function createMovimientoBancario(data: Omit<MovimientoBancario, 'id' | 'createdAt' | 'updatedAt'>): Promise<MovimientoBancario> {

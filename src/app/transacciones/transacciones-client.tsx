@@ -44,6 +44,8 @@ import {
   X,
   Building,
   Star,
+  Landmark,
+  AlertTriangle,
 } from "lucide-react"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import {
@@ -55,9 +57,11 @@ import {
   deleteTransaccion,
   obtenerDeudasPorConcepto,
   calcularDistribucionPago,
+  getInfoBancoVinculadoTransaccion,
   type Transaccion as DBTransaccion,
   type DeudasPorConcepto,
   type DistribucionPago,
+  type InfoBancoVinculado,
 } from "@/lib/database"
 import { generateTransaccionesPDF } from "@/lib/pdf"
 import { toast } from "@/hooks/use-toast"
@@ -141,6 +145,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const [isLoading, setIsLoading] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [transaccionToDelete, setTransaccionToDelete] = useState<string | null>(null)
+  const [infoBancoVinculado, setInfoBancoVinculado] = useState<InfoBancoVinculado | null>(null)
 
   const [transaccionForm, setTransaccionForm] = useState({
     tipo: "INGRESO",
@@ -644,8 +649,11 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     }
   }
 
-  const handleDeleteClick = (id: string) => {
+  const handleDeleteClick = async (id: string) => {
     setTransaccionToDelete(id)
+    // Verificar si tiene banco vinculado antes de mostrar el diálogo
+    const infoBanco = await getInfoBancoVinculadoTransaccion(id)
+    setInfoBancoVinculado(infoBanco)
     setIsDeleteDialogOpen(true)
   }
 
@@ -658,7 +666,9 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       setTransacciones((prev) => prev.filter((t) => t.id !== transaccionToDelete))
       toast({
         title: "Transacción eliminada",
-        description: "La transacción se eliminó correctamente",
+        description: infoBancoVinculado?.tieneVinculo
+          ? "La transacción y su movimiento bancario se eliminaron correctamente"
+          : "La transacción se eliminó correctamente",
         variant: "success",
       })
     } catch (error) {
@@ -672,6 +682,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       setIsLoading(false)
       setIsDeleteDialogOpen(false)
       setTransaccionToDelete(null)
+      setInfoBancoVinculado(null)
     }
   }
 
@@ -1486,16 +1497,47 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       </Dialog>
 
       {/* Confirmar Eliminación Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+        setIsDeleteDialogOpen(open)
+        if (!open) {
+          setTransaccionToDelete(null)
+          setInfoBancoVinculado(null)
+        }
+      }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>¿Eliminar transacción?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta acción no se puede deshacer. La transacción será eliminada permanentemente.
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>Esta acción no se puede deshacer. La transacción será eliminada permanentemente.</p>
+
+                {infoBancoVinculado?.tieneVinculo && (
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800">
+                        Esta transacción está vinculada a una cuenta bancaria
+                      </p>
+                      <div className="mt-1.5 flex items-center gap-2 text-amber-700">
+                        <Landmark className="h-4 w-4" />
+                        <span>
+                          {infoBancoVinculado.banco} - ****{infoBancoVinculado.numeroCuenta?.slice(-4)}
+                        </span>
+                      </div>
+                      <p className="mt-1.5 text-amber-600">
+                        El movimiento bancario asociado también será eliminado.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setTransaccionToDelete(null)}>
+            <AlertDialogCancel onClick={() => {
+              setTransaccionToDelete(null)
+              setInfoBancoVinculado(null)
+            }}>
               Cancelar
             </AlertDialogCancel>
             <AlertDialogAction
@@ -1503,7 +1545,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
               className="bg-red-600 hover:bg-red-700"
               disabled={isLoading}
             >
-              {isLoading ? "Eliminando..." : "Eliminar"}
+              {isLoading ? "Eliminando..." : infoBancoVinculado?.tieneVinculo ? "Eliminar ambos" : "Eliminar"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
