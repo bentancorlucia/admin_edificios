@@ -698,6 +698,64 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     })
   }
 
+  const handleExportCSV = () => {
+    if (!estadoCuenta || !selectedCuenta) return
+
+    // Aplicar los mismos filtros que se muestran en la tabla
+    const tipoFiltro = estadoCuentaFiltro.tipo
+    const clasificacionFiltro = estadoCuentaFiltro.clasificacion
+    const movimientosFiltrados = estadoCuenta.movimientos.filter((mov) => {
+      const movFull = selectedCuenta.movimientos.find(m => m.id === mov.id)
+      if (tipoFiltro === "INGRESO" || tipoFiltro === "EGRESO") {
+        if (mov.tipo !== tipoFiltro) return false
+      }
+      if (clasificacionFiltro === "GASTO_COMUN" || clasificacionFiltro === "FONDO_RESERVA") {
+        if (mov.clasificacion !== clasificacionFiltro) return false
+      }
+      if (estadoCuentaFiltro.busqueda) {
+        const searchLower = estadoCuentaFiltro.busqueda.toLowerCase()
+        const matchDescripcion = mov.descripcion.toLowerCase().includes(searchLower)
+        const matchReferencia = mov.referencia?.toLowerCase().includes(searchLower)
+        const matchDocumento = movFull?.numeroDocumento?.toLowerCase().includes(searchLower)
+        if (!matchDescripcion && !matchReferencia && !matchDocumento) return false
+      }
+      return true
+    })
+
+    // Crear contenido CSV
+    const headers = ["Fecha", "Descripción", "Referencia", "Tipo", "Clasificación", "Ingreso", "Egreso", "Saldo"]
+    const rows = movimientosFiltrados.map((mov) => {
+      const movCompleto = selectedCuenta.movimientos.find(m => m.id === mov.id)
+      return [
+        formatDate(new Date(mov.fecha)),
+        `"${mov.descripcion.replace(/"/g, '""')}"`,
+        mov.referencia || movCompleto?.numeroDocumento || "",
+        mov.tipo,
+        mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : mov.clasificacion === "FONDO_RESERVA" ? "Fondo Reserva" : "",
+        mov.tipo === "INGRESO" ? mov.monto.toFixed(2) : "",
+        mov.tipo === "EGRESO" ? mov.monto.toFixed(2) : "",
+        mov.saldoAcumulado.toFixed(2),
+      ].join(",")
+    })
+
+    const csvContent = [headers.join(","), ...rows].join("\n")
+    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `movimientos_${estadoCuenta.cuenta.banco}_${new Date().toISOString().split("T")[0]}.csv`
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "CSV descargado",
+      description: `${movimientosFiltrados.length} movimientos exportados correctamente`,
+      variant: "success",
+    })
+  }
+
   return (
     <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
       {/* Header con gradiente */}
@@ -1610,36 +1668,6 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
           </DialogHeader>
           {estadoCuenta && selectedCuenta && (
             <div className="flex-1 overflow-hidden flex flex-col space-y-4 pt-4">
-              {/* Info Cuenta y Exportar */}
-              <div className="flex-shrink-0 flex items-center justify-between p-4 bg-gradient-to-r from-slate-50 to-slate-100 rounded-xl border border-slate-200">
-                <div className="flex items-center gap-3">
-                  <div className="h-12 w-12 rounded-xl bg-white shadow-sm flex items-center justify-center border border-slate-200">
-                    <Landmark className="h-6 w-6 text-emerald-600" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-slate-900">
-                      {estadoCuenta.cuenta.banco}
-                    </h3>
-                    <p className="text-sm text-slate-500">
-                      {estadoCuenta.cuenta.tipoCuenta} - {estadoCuenta.cuenta.numeroCuenta}
-                    </p>
-                    {estadoCuenta.cuenta.titular && (
-                      <p className="text-xs text-slate-400">
-                        Titular: {estadoCuenta.cuenta.titular}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={handleExportEstadoCuenta}
-                  className="bg-white hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Exportar PDF
-                </Button>
-              </div>
-
               {/* Filtros Avanzados */}
               <div className="flex-shrink-0 p-4 bg-white rounded-xl border border-slate-200 space-y-4">
                 <div className="flex items-center gap-2 mb-2">
@@ -1771,74 +1799,16 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 </div>
               </div>
 
-              {/* Resumen */}
-              <div className="flex-shrink-0 grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Card className="p-4 bg-gradient-to-br from-slate-50 to-slate-100 border-slate-200">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-slate-200 flex items-center justify-center">
-                      <Wallet className="h-5 w-5 text-slate-600" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 font-medium">Saldo Inicial</p>
-                      <p className="text-lg font-bold text-slate-700">
-                        {formatCurrency(estadoCuenta.resumen.saldoInicial)}
-                      </p>
-                    </div>
-                  </div>
-                </Card>
-                <Card className="p-4 bg-gradient-to-br from-green-50 to-emerald-50 border-green-200">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-green-200 flex items-center justify-center">
-                      <TrendingUp className="h-5 w-5 text-green-700" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-green-600 font-medium">Total Ingresos</p>
-                      <p className="text-lg font-bold text-green-700">
-                        +{formatCurrency(estadoCuenta.resumen.totalIngresos)}
-                      </p>
-                    </div>
-                  </div>
-                </Card>
-                <Card className="p-4 bg-gradient-to-br from-red-50 to-orange-50 border-red-200">
-                  <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-lg bg-red-200 flex items-center justify-center">
-                      <TrendingDown className="h-5 w-5 text-red-700" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-red-600 font-medium">Total Egresos</p>
-                      <p className="text-lg font-bold text-red-700">
-                        -{formatCurrency(estadoCuenta.resumen.totalEgresos)}
-                      </p>
-                    </div>
-                  </div>
-                </Card>
-                <Card className={`p-4 ${
-                  estadoCuenta.resumen.saldoFinal >= 0
-                    ? "bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200"
-                    : "bg-gradient-to-br from-orange-50 to-amber-50 border-orange-200"
-                }`}>
-                  <div className="flex items-center gap-3">
-                    <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${
-                      estadoCuenta.resumen.saldoFinal >= 0 ? "bg-blue-200" : "bg-orange-200"
-                    }`}>
-                      <Landmark className={`h-5 w-5 ${
-                        estadoCuenta.resumen.saldoFinal >= 0 ? "text-blue-700" : "text-orange-700"
-                      }`} />
-                    </div>
-                    <div>
-                      <p className={`text-xs font-medium ${
-                        estadoCuenta.resumen.saldoFinal >= 0 ? "text-blue-600" : "text-orange-600"
-                      }`}>
-                        Saldo Final
-                      </p>
-                      <p className={`text-lg font-bold ${
-                        estadoCuenta.resumen.saldoFinal >= 0 ? "text-blue-700" : "text-orange-700"
-                      }`}>
-                        {formatCurrency(estadoCuenta.resumen.saldoFinal)}
-                      </p>
-                    </div>
-                  </div>
-                </Card>
+              {/* Botón Exportar CSV */}
+              <div className="flex-shrink-0 flex justify-end">
+                <Button
+                  variant="outline"
+                  onClick={handleExportCSV}
+                  className="bg-white hover:bg-slate-50"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Exportar CSV
+                </Button>
               </div>
 
               {/* Tabla de Movimientos con scroll */}
