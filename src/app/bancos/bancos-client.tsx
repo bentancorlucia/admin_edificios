@@ -996,24 +996,28 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                 {mov.tipo === "INGRESO" ? "+" : "-"}
                                 {formatCurrency(mov.monto)}
                               </span>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openEditMovimientoDialog(cuenta, mov)}
-                                className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600"
-                                title="Editar"
-                              >
-                                <Edit className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openDeleteMovDialog(cuenta, mov)}
-                                className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
-                                title="Eliminar"
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
+                              {mov.tipo === "EGRESO" && (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openEditMovimientoDialog(cuenta, mov)}
+                                    className="h-6 w-6 p-0 text-slate-400 hover:text-blue-600"
+                                    title="Editar"
+                                  >
+                                    <Edit className="h-3 w-3" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => openDeleteMovDialog(cuenta, mov)}
+                                    className="h-6 w-6 p-0 text-slate-400 hover:text-red-600"
+                                    title="Eliminar"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </Button>
+                                </>
+                              )}
                             </div>
                           </div>
                         ))}
