@@ -374,9 +374,15 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setSelectedMovimiento(mov)
     setTipoMovimiento(mov.tipo)
     setIsEditMode(true)
+    // Extraer fecha usando UTC para evitar problemas de zona horaria
+    const d = new Date(mov.fecha)
+    const year = d.getUTCFullYear()
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0')
+    const day = String(d.getUTCDate()).padStart(2, '0')
+    const fechaStr = `${year}-${month}-${day}`
     setMovimientoForm({
       monto: mov.monto,
-      fecha: new Date(mov.fecha).toISOString().split("T")[0],
+      fecha: fechaStr,
       descripcion: mov.descripcion,
       referencia: mov.referencia || "",
       numeroDocumento: mov.numeroDocumento || "",
@@ -436,10 +442,19 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         }
       }
 
+      // Crear fecha sin problemas de zona horaria (usar mediodía UTC)
+      const fechaParts = movimientoForm.fecha.split('-')
+      const fechaCorrecta = new Date(Date.UTC(
+        parseInt(fechaParts[0]),
+        parseInt(fechaParts[1]) - 1,
+        parseInt(fechaParts[2]),
+        12, 0, 0
+      ))
+
       const movimientoData = {
         tipo: tipoMovimiento,
         monto: movimientoForm.monto,
-        fecha: movimientoForm.fecha,
+        fecha: fechaCorrecta.toISOString(),
         descripcion: descripcion,
         referencia: movimientoForm.referencia || null,
         numeroDocumento: movimientoForm.numeroDocumento || null,

@@ -56,6 +56,7 @@ import {
   type InformeAcumuladoData,
   getInformeData,
   getInformeAcumulado,
+  getInformeCombinado,
   createAvisoInforme,
   updateAvisoInforme,
   deleteAvisoInforme,
@@ -63,7 +64,7 @@ import {
   updatePiePaginaInforme,
 } from "@/lib/database"
 import { Input } from "@/components/ui/input"
-import { generateInformePDF } from "@/lib/informe-pdf"
+import { generateInformePDF, generateInformeCombinado } from "@/lib/informe-pdf"
 import { generateInformeExcel } from "@/lib/informe-excel"
 import { toast } from "@/hooks/use-toast"
 
@@ -352,6 +353,30 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
     })
   }, [data, mesLabel])
 
+  const handleExportPDFCombinado = useCallback(async () => {
+    try {
+      const dataCombinada = await getInformeCombinado(mes, anio)
+      // Usar avisos del estado local
+      const dataConAvisosActualizados = {
+        ...dataCombinada,
+        avisos: avisos,
+      }
+      generateInformeCombinado(dataConAvisosActualizados, piePagina)
+      toast({
+        title: "PDF Combinado descargado",
+        description: `Informe combinado ${dataCombinada.mesAnterior.label} + ${dataCombinada.mesCorriente.label}`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error generando PDF combinado:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo generar el PDF combinado",
+        variant: "destructive",
+      })
+    }
+  }, [mes, anio, avisos, piePagina])
+
   return (
     <div className="space-y-6 p-6">
       {/* Header con navegación de fecha */}
@@ -429,6 +454,16 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
           >
             <FileText className="h-4 w-4" />
             PDF
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPDFCombinado}
+            disabled={isPending}
+            className="gap-2"
+          >
+            <FileText className="h-4 w-4" />
+            PDF Comb.
           </Button>
           <Button
             variant="outline"
@@ -731,7 +766,7 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
                             </TableCell>
                           </TableRow>
                         ))}
-                        <TableRow className="bg-slate-900 text-white font-semibold">
+                        <TableRow className="bg-slate-900 text-white font-semibold hover:bg-slate-800">
                           <TableCell colSpan={2}>TOTALES</TableCell>
                           <TableCell className="text-right">
                             {formatCurrency(data.totales.totalSaldoAnterior)}

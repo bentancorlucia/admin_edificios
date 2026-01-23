@@ -2376,6 +2376,47 @@ export interface InformeData {
   avisos: AvisoInforme[];
 }
 
+// Interfaces para informe combinado (mes anterior + mes corriente)
+export interface InformeApartamentoCombinado {
+  apartamentoId: string;
+  numero: string;
+  piso: number | null;
+  tipoOcupacion: 'PROPIETARIO' | 'INQUILINO';
+  contactoNombre: string | null;
+  contactoApellido: string | null;
+  contactoCelular: string | null;
+  pagosMesAnterior: number;
+  saldoMesAnterior: number;
+  gastosComunesMesCorriente: number;
+  fondoReservaMesCorriente: number;
+  saldoActual: number;
+}
+
+export interface InformeCombinado {
+  mesCorriente: { mes: number; anio: number; label: string };
+  mesAnterior: { mes: number; anio: number; label: string };
+  apartamentos: InformeApartamentoCombinado[];
+  datosAnterior: {
+    resumenBancario: ResumenBancario;
+    detalleEgresos: DetalleEgreso[];
+    totales: {
+      totalSaldoAnterior: number;
+      totalPagosMes: number;
+      totalGastosComunesMes: number;
+      totalFondoReservaMes: number;
+      totalSaldoActual: number;
+    };
+  };
+  totalesCombinados: {
+    totalPagosMesAnterior: number;
+    totalSaldoMesAnterior: number;
+    totalGastosComunesMesCorriente: number;
+    totalFondoReservaMesCorriente: number;
+    totalSaldoActual: number;
+  };
+  avisos: AvisoInforme[];
+}
+
 export async function getInformeData(mes: number, anio: number): Promise<InformeData> {
   const fechaInicio = new Date(anio, mes - 1, 1);
   const fechaFin = new Date(anio, mes, 0, 23, 59, 59, 999);
@@ -2565,6 +2606,288 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
     },
     detalleEgresos,
     totales,
+    avisos,
+  };
+}
+
+const MESES_LABELS = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+
+export async function getInformeCombinado(
+  mesCorriente: number,
+  anioCorriente: number
+): Promise<InformeCombinado> {
+  // Calcular mes anterior
+  let mesAnterior = mesCorriente - 1;
+  let anioAnterior = anioCorriente;
+  if (mesAnterior < 1) {
+    mesAnterior = 12;
+    anioAnterior = anioCorriente - 1;
+  }
+
+  // Definir rangos de fechas
+  const fechaInicioAnterior = new Date(anioAnterior, mesAnterior - 1, 1);
+  const fechaFinAnterior = new Date(anioAnterior, mesAnterior, 0, 23, 59, 59, 999);
+  const fechaInicioCorriente = new Date(anioCorriente, mesCorriente - 1, 1);
+  const fechaFinCorriente = new Date(anioCorriente, mesCorriente, 0, 23, 59, 59, 999);
+
+  // Obtener datos base
+  const [apartamentos, todasTransacciones, movimientosBancarios, cuentasBancarias, avisos] =
+    await Promise.all([
+      getApartamentos(),
+      getTransacciones(),
+      getMovimientosBancariosCompletos(),
+      getCuentasBancariasConMovimientos(),
+      getAvisosInforme(mesCorriente, anioCorriente)
+    ]);
+
+  const apartamentosCombinados: InformeApartamentoCombinado[] = [];
+
+  for (const apt of apartamentos) {
+    const transaccionesApt = todasTransacciones.filter(t => t.apartamentoId === apt.id);
+
+    // 1. Calcular saldo AL INICIO del mes anterior (antes del mes anterior)
+    const transaccionesAntesDelMesAnterior = transaccionesApt.filter(
+      t => new Date(t.fecha) < fechaInicioAnterior
+    );
+
+    let saldoAntesDelMesAnterior = 0;
+    for (const t of transaccionesAntesDelMesAnterior) {
+      if (t.tipo === 'VENTA_CREDITO') {
+        saldoAntesDelMesAnterior += t.monto;
+      } else if (t.tipo === 'RECIBO_PAGO') {
+        saldoAntesDelMesAnterior -= t.monto;
+      }
+    }
+
+    // 2. Pagos del mes ANTERIOR
+    const pagosMesAnterior = transaccionesApt
+      .filter(t =>
+        t.tipo === 'RECIBO_PAGO' &&
+        new Date(t.fecha) >= fechaInicioAnterior &&
+        new Date(t.fecha) <= fechaFinAnterior
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    // 3. Ventas/Deudas del mes ANTERIOR
+    const gcMesAnterior = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'GASTOS_COMUNES' &&
+        new Date(t.fecha) >= fechaInicioAnterior &&
+        new Date(t.fecha) <= fechaFinAnterior
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    const frMesAnterior = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'FONDO_RESERVA' &&
+        new Date(t.fecha) >= fechaInicioAnterior &&
+        new Date(t.fecha) <= fechaFinAnterior
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    // 4. Saldo al FINAL del mes anterior
+    const saldoMesAnterior = saldoAntesDelMesAnterior + gcMesAnterior + frMesAnterior - pagosMesAnterior;
+
+    // 5. Ventas/Deudas del mes CORRIENTE
+    const gastosComunesMesCorriente = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'GASTOS_COMUNES' &&
+        new Date(t.fecha) >= fechaInicioCorriente &&
+        new Date(t.fecha) <= fechaFinCorriente
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    const fondoReservaMesCorriente = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'FONDO_RESERVA' &&
+        new Date(t.fecha) >= fechaInicioCorriente &&
+        new Date(t.fecha) <= fechaFinCorriente
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    // 6. Saldo actual = Saldo mes anterior + ventas mes corriente
+    const saldoActual = saldoMesAnterior + gastosComunesMesCorriente + fondoReservaMesCorriente;
+
+    apartamentosCombinados.push({
+      apartamentoId: apt.id,
+      numero: apt.numero,
+      piso: apt.piso,
+      tipoOcupacion: apt.tipoOcupacion,
+      contactoNombre: apt.contactoNombre,
+      contactoApellido: apt.contactoApellido,
+      contactoCelular: apt.contactoCelular,
+      pagosMesAnterior,
+      saldoMesAnterior,
+      gastosComunesMesCorriente,
+      fondoReservaMesCorriente,
+      saldoActual,
+    });
+  }
+
+  // Ordenar apartamentos
+  apartamentosCombinados.sort((a, b) => {
+    const numA = a.numero.localeCompare(b.numero, undefined, { numeric: true });
+    if (numA !== 0) return numA;
+    return a.tipoOcupacion.localeCompare(b.tipoOcupacion);
+  });
+
+  // Calcular datos del mes ANTERIOR para las secciones adicionales
+  const movimientosDelMesAnterior = movimientosBancarios.filter(m => {
+    const fecha = new Date(m.fecha);
+    return fecha >= fechaInicioAnterior && fecha <= fechaFinAnterior;
+  });
+
+  // Ingresos del mes anterior por categoría
+  const recibosDelMesAnterior = todasTransacciones.filter(t =>
+    t.tipo === 'RECIBO_PAGO' &&
+    new Date(t.fecha) >= fechaInicioAnterior &&
+    new Date(t.fecha) <= fechaFinAnterior
+  );
+
+  let ingresoGastosComunesAnterior = 0;
+  let ingresoFondoReservaAnterior = 0;
+
+  for (const recibo of recibosDelMesAnterior) {
+    const tieneMovimiento = movimientosBancarios.some(m => m.transaccionId === recibo.id);
+    if (!tieneMovimiento) continue;
+
+    if (recibo.clasificacionPago === 'GASTO_COMUN') {
+      ingresoGastosComunesAnterior += recibo.monto;
+    } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      ingresoFondoReservaAnterior += recibo.monto;
+    } else {
+      if (recibo.montoGastoComun) {
+        ingresoGastosComunesAnterior += recibo.montoGastoComun;
+      }
+      if (recibo.montoFondoReserva) {
+        ingresoFondoReservaAnterior += recibo.montoFondoReserva;
+      }
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+        ingresoGastosComunesAnterior += recibo.monto;
+      }
+    }
+  }
+
+  // Egresos del mes anterior por clasificación
+  let egresoGastosComunesAnterior = 0;
+  let egresoFondoReservaAnterior = 0;
+  const detalleEgresosAnterior: DetalleEgreso[] = [];
+
+  for (const mov of movimientosDelMesAnterior) {
+    if (mov.tipo === 'EGRESO') {
+      if (mov.clasificacion === 'GASTO_COMUN') {
+        egresoGastosComunesAnterior += mov.monto;
+      } else if (mov.clasificacion === 'FONDO_RESERVA') {
+        egresoFondoReservaAnterior += mov.monto;
+      }
+
+      detalleEgresosAnterior.push({
+        fecha: mov.fecha,
+        servicio: mov.servicio?.nombre || '',
+        descripcion: mov.descripcion || 'Sin descripción',
+        clasificacion: mov.clasificacion || 'SIN_CLASIFICAR',
+        monto: mov.monto,
+        banco: mov.cuentaBancaria?.banco || 'N/A',
+      });
+    }
+  }
+
+  // Calcular saldo bancario total al final del mes anterior
+  let saldoBancarioTotalAnterior = 0;
+  for (const cuenta of cuentasBancarias) {
+    if (!cuenta.activa) continue;
+    let saldo = cuenta.saldoInicial;
+    for (const mov of cuenta.movimientos) {
+      if (new Date(mov.fecha) <= fechaFinAnterior) {
+        if (mov.tipo === 'INGRESO') {
+          saldo += mov.monto;
+        } else {
+          saldo -= mov.monto;
+        }
+      }
+    }
+    saldoBancarioTotalAnterior += saldo;
+  }
+
+  // Calcular totales del mes anterior
+  const totalSaldoAnteriorDelMesAnterior = apartamentosCombinados.reduce((s, a) => {
+    // Recalcular saldo anterior del mes anterior para cada apto
+    const transApt = todasTransacciones.filter(t => t.apartamentoId === a.apartamentoId);
+    const transAntesMesAnt = transApt.filter(t => new Date(t.fecha) < fechaInicioAnterior);
+    let saldoAnt = 0;
+    for (const t of transAntesMesAnt) {
+      if (t.tipo === 'VENTA_CREDITO') saldoAnt += t.monto;
+      else if (t.tipo === 'RECIBO_PAGO') saldoAnt -= t.monto;
+    }
+    return s + saldoAnt;
+  }, 0);
+
+  const totalPagosMesAnterior = apartamentosCombinados.reduce((s, a) => s + a.pagosMesAnterior, 0);
+
+  const totalGcMesAnterior = todasTransacciones
+    .filter(t =>
+      t.tipo === 'VENTA_CREDITO' &&
+      t.categoria === 'GASTOS_COMUNES' &&
+      new Date(t.fecha) >= fechaInicioAnterior &&
+      new Date(t.fecha) <= fechaFinAnterior
+    )
+    .reduce((sum, t) => sum + t.monto, 0);
+
+  const totalFrMesAnterior = todasTransacciones
+    .filter(t =>
+      t.tipo === 'VENTA_CREDITO' &&
+      t.categoria === 'FONDO_RESERVA' &&
+      new Date(t.fecha) >= fechaInicioAnterior &&
+      new Date(t.fecha) <= fechaFinAnterior
+    )
+    .reduce((sum, t) => sum + t.monto, 0);
+
+  const totalSaldoActualMesAnterior = totalSaldoAnteriorDelMesAnterior + totalGcMesAnterior + totalFrMesAnterior - totalPagosMesAnterior;
+
+  // Ordenar egresos por fecha
+  detalleEgresosAnterior.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+
+  return {
+    mesCorriente: {
+      mes: mesCorriente,
+      anio: anioCorriente,
+      label: `${MESES_LABELS[mesCorriente - 1]} ${anioCorriente}`
+    },
+    mesAnterior: {
+      mes: mesAnterior,
+      anio: anioAnterior,
+      label: `${MESES_LABELS[mesAnterior - 1]} ${anioAnterior}`
+    },
+    apartamentos: apartamentosCombinados,
+    datosAnterior: {
+      resumenBancario: {
+        ingresoGastosComunes: ingresoGastosComunesAnterior,
+        ingresoFondoReserva: ingresoFondoReservaAnterior,
+        egresoGastosComunes: egresoGastosComunesAnterior,
+        egresoFondoReserva: egresoFondoReservaAnterior,
+        saldoBancarioTotal: saldoBancarioTotalAnterior,
+      },
+      detalleEgresos: detalleEgresosAnterior,
+      totales: {
+        totalSaldoAnterior: totalSaldoAnteriorDelMesAnterior,
+        totalPagosMes: totalPagosMesAnterior,
+        totalGastosComunesMes: totalGcMesAnterior,
+        totalFondoReservaMes: totalFrMesAnterior,
+        totalSaldoActual: totalSaldoActualMesAnterior,
+      },
+    },
+    totalesCombinados: {
+      totalPagosMesAnterior: apartamentosCombinados.reduce((s, a) => s + a.pagosMesAnterior, 0),
+      totalSaldoMesAnterior: apartamentosCombinados.reduce((s, a) => s + a.saldoMesAnterior, 0),
+      totalGastosComunesMesCorriente: apartamentosCombinados.reduce((s, a) => s + a.gastosComunesMesCorriente, 0),
+      totalFondoReservaMesCorriente: apartamentosCombinados.reduce((s, a) => s + a.fondoReservaMesCorriente, 0),
+      totalSaldoActual: apartamentosCombinados.reduce((s, a) => s + a.saldoActual, 0),
+    },
     avisos,
   };
 }
