@@ -144,10 +144,20 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
 
   const handleWhatsApp = (apt: Apartamento) => {
     if (!apt.contactoCelular) return
+    const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
     const mensaje = encodeURIComponent(
-      `Hola, le escribo desde la administración del edificio respecto al apartamento ${apt.numero}.`
+      `Hola${contacto ? ` ${contacto}` : ''}, le escribo desde la administración del edificio respecto al apartamento ${apt.numero}.`
     )
     window.open(`https://wa.me/${apt.contactoCelular.replace(/\D/g, "")}?text=${mensaje}`, "_blank")
+  }
+
+  const handleSendGmail = (apt: Apartamento) => {
+    if (!apt.contactoEmail) return
+    const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
+    const subject = `Administración del Edificio - Apartamento ${apt.numero}`
+    const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al apartamento ${apt.numero}.\n\nSaludos cordiales.`
+    const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(apt.contactoEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    window.open(url, '_blank')
   }
 
   // Si no hay apartamentos, mostrar mensaje
@@ -321,16 +331,30 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
                 <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="font-semibold text-blue-700 text-xs uppercase tracking-wide">Propietario</h4>
-                    {selectedGrupo.propietario.contactoCelular && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-green-600"
-                        onClick={() => handleWhatsApp(selectedGrupo.propietario!)}
-                      >
-                        <MessageCircle className="h-3 w-3" />
-                      </Button>
-                    )}
+                    <div className="flex gap-1">
+                      {selectedGrupo.propietario.contactoCelular && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-green-600"
+                          onClick={() => handleWhatsApp(selectedGrupo.propietario!)}
+                          title="WhatsApp"
+                        >
+                          <MessageCircle className="h-3 w-3" />
+                        </Button>
+                      )}
+                      {selectedGrupo.propietario.contactoEmail && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-red-500"
+                          onClick={() => handleSendGmail(selectedGrupo.propietario!)}
+                          title="Gmail"
+                        >
+                          <Mail className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Contacto */}
@@ -404,16 +428,30 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
                 <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
                   <div className="flex items-center justify-between mb-3">
                     <h4 className="font-semibold text-purple-700 text-xs uppercase tracking-wide">Inquilino</h4>
-                    {selectedGrupo.inquilino.contactoCelular && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 px-2 text-green-600"
-                        onClick={() => handleWhatsApp(selectedGrupo.inquilino!)}
-                      >
-                        <MessageCircle className="h-3 w-3" />
-                      </Button>
-                    )}
+                    <div className="flex gap-1">
+                      {selectedGrupo.inquilino.contactoCelular && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-green-600"
+                          onClick={() => handleWhatsApp(selectedGrupo.inquilino!)}
+                          title="WhatsApp"
+                        >
+                          <MessageCircle className="h-3 w-3" />
+                        </Button>
+                      )}
+                      {selectedGrupo.inquilino.contactoEmail && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-red-500"
+                          onClick={() => handleSendGmail(selectedGrupo.inquilino!)}
+                          title="Gmail"
+                        >
+                          <Mail className="h-3 w-3" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Contacto */}

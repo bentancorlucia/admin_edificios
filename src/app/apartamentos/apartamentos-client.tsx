@@ -32,7 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2 } from "lucide-react"
+import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { formatCurrency } from "@/lib/utils"
 import {
@@ -321,11 +321,26 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   const handleShareWhatsAppGrupo = useCallback((grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
+    if (!apt.contactoCelular) return
     const totalMensual = apt.gastosComunes + apt.fondoReserva
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
     const tipoLabel = tipo === 'propietario' ? 'Propietario' : 'Inquilino'
-    const message = `Apartamento ${grupo.numero} - ${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nContacto: ${contacto}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
-    const url = `https://wa.me/?text=${encodeURIComponent(message)}`
+    const message = `Hola ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
+    const celular = apt.contactoCelular.replace(/\D/g, '')
+    const url = `https://wa.me/${celular}?text=${encodeURIComponent(message)}`
+    window.open(url, '_blank')
+  }, [])
+
+  const handleSendGmailGrupo = useCallback((grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
+    const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
+    if (!apt) return
+    if (!apt.contactoEmail) return
+    const totalMensual = apt.gastosComunes + apt.fondoReserva
+    const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
+    const tipoLabel = tipo === 'propietario' ? 'Propietario' : 'Inquilino'
+    const subject = `Administración del Edificio - Apartamento ${grupo.numero}`
+    const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}\n\nSaludos cordiales.`
+    const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(apt.contactoEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
     window.open(url, '_blank')
   }, [])
 
@@ -515,9 +530,16 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-100" onClick={() => handleGeneratePropietarioPDF(grupo)} title="PDF">
                             <FileText className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')} title="WhatsApp">
-                            <Share2 className="h-3.5 w-3.5" />
-                          </Button>
+                          {grupo.propietario?.contactoCelular && (
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')} title="WhatsApp">
+                              <Share2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {grupo.propietario?.contactoEmail && (
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'propietario')} title="Gmail">
+                              <Mail className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.propietario!)} title="Editar">
                             <Edit className="h-3.5 w-3.5" />
                           </Button>
@@ -563,9 +585,16 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-purple-600 hover:bg-purple-100" onClick={() => handleGenerateInquilinoPDF(grupo)} title="PDF">
                             <FileText className="h-3.5 w-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')} title="WhatsApp">
-                            <Share2 className="h-3.5 w-3.5" />
-                          </Button>
+                          {grupo.inquilino?.contactoCelular && (
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')} title="WhatsApp">
+                              <Share2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {grupo.inquilino?.contactoEmail && (
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'inquilino')} title="Gmail">
+                              <Mail className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.inquilino!)} title="Editar">
                             <Edit className="h-3.5 w-3.5" />
                           </Button>

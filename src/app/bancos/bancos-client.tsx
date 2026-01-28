@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -66,6 +66,10 @@ import {
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { generateEstadoCuentaPDF } from "@/lib/pdf"
 import { toast } from "@/hooks/use-toast"
+import { open as openDialog } from "@tauri-apps/plugin-dialog"
+import { copyFile, exists, mkdir, BaseDirectory } from "@tauri-apps/plugin-fs"
+import { open as openFile } from "@tauri-apps/plugin-shell"
+import { appDataDir, join } from "@tauri-apps/api/path"
 
 type TipoMovimiento = "INGRESO" | "EGRESO"
 type ClasificacionEgreso = "GASTO_COMUN" | "FONDO_RESERVA"
@@ -173,7 +177,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     servicioId: "",
     archivoUrl: "",
   })
-  const [archivoFile, setArchivoFile] = useState<File | null>(null)
+  const [archivoFile, setArchivoFile] = useState<string | null>(null)  // Ruta del archivo seleccionado
   const [uploadingFile, setUploadingFile] = useState(false)
 
   const [estadoCuentaFiltro, setEstadoCuentaFiltro] = useState({
@@ -234,28 +238,86 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setArchivoFile(null)
   }
 
-  // Subir archivo via API route
-  const uploadFile = async (file: File): Promise<string | null> => {
-    const formData = new FormData()
-    formData.append("file", file)
+  // Estado para la ruta del directorio de archivos
+  const [archivosDir, setArchivosDir] = useState<string>("")
 
+  // Inicializar el directorio de archivos al montar el componente
+  useEffect(() => {
+    const initArchivosDir = async () => {
+      try {
+        const dataDir = await appDataDir()
+        const dir = await join(dataDir, "archivos")
+        setArchivosDir(dir)
+
+        // Crear el directorio si no existe
+        const dirExists = await exists("archivos", { baseDir: BaseDirectory.AppData })
+        if (!dirExists) {
+          await mkdir("archivos", { baseDir: BaseDirectory.AppData, recursive: true })
+        }
+      } catch (error) {
+        console.error("Error inicializando directorio de archivos:", error)
+      }
+    }
+    initArchivosDir()
+  }, [])
+
+  // Seleccionar archivo usando el diálogo nativo de Tauri
+  const selectFile = async (): Promise<string | null> => {
     try {
-      const response = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
+      const selected = await openDialog({
+        multiple: false,
+        filters: [
+          {
+            name: "Documentos",
+            extensions: ["pdf", "jpg", "jpeg", "png", "doc", "docx"]
+          }
+        ]
       })
 
-      if (!response.ok) {
-        const error = await response.json()
-        console.error("Error uploading file:", error)
-        return null
+      if (selected && typeof selected === "string") {
+        return selected
       }
-
-      const data = await response.json()
-      return data.url
-    } catch (error) {
-      console.error("Error uploading file:", error)
       return null
+    } catch (error) {
+      console.error("Error seleccionando archivo:", error)
+      return null
+    }
+  }
+
+  // Copiar archivo al directorio de la aplicación
+  const uploadFile = async (sourcePath: string): Promise<string | null> => {
+    try {
+      // Extraer el nombre del archivo de la ruta
+      const fileName = sourcePath.split(/[/\\]/).pop() || "archivo"
+
+      // Generar nombre único con timestamp
+      const timestamp = Date.now()
+      const uniqueFileName = `${timestamp}_${fileName}`
+      const relativePath = `archivos/${uniqueFileName}`
+
+      // Copiar el archivo al directorio de datos de la app
+      await copyFile(sourcePath, relativePath, { toPathBaseDir: BaseDirectory.AppData })
+
+      // Retornar la ruta completa del archivo copiado
+      const destPath = await join(archivosDir, uniqueFileName)
+      return destPath
+    } catch (error) {
+      console.error("Error copiando archivo:", error)
+      return null
+    }
+  }
+
+  // Abrir archivo con la aplicación predeterminada del sistema
+  const handleOpenFile = async (filePath: string) => {
+    try {
+      await openFile(filePath)
+    } catch (error) {
+      console.error("Error abriendo archivo:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo abrir el archivo",
+        variant: "destructive",
+      })
     }
   }
 
@@ -1121,15 +1183,14 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                         </Badge>
                                       )}
                                       {mov.archivoUrl && (
-                                        <a
-                                          href={mov.archivoUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded"
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenFile(mov.archivoUrl!)}
+                                          className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded cursor-pointer"
                                           title="Ver archivo adjunto"
                                         >
                                           <Paperclip className="h-3 w-3" />
-                                        </a>
+                                        </button>
                                       )}
                                     </div>
                                   </div>
@@ -1460,24 +1521,27 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="archivo">Archivo Adjunto</Label>
+                  <Label>Archivo Adjunto</Label>
                   {/* Mostrar archivo existente en modo edición */}
                   {isEditMode && movimientoForm.archivoUrl && !archivoFile && (
                     <div className="flex items-center justify-between p-2 bg-blue-50 border border-blue-200 rounded-lg">
                       <div className="flex items-center gap-2">
                         <Paperclip className="h-4 w-4 text-blue-600" />
-                        <span className="text-sm text-blue-700">Archivo adjunto actual</span>
+                        <span className="text-sm text-blue-700 truncate max-w-[200px]">
+                          {movimientoForm.archivoUrl.split(/[/\\]/).pop()}
+                        </span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <a
-                          href={movimientoForm.archivoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 hover:text-blue-800 p-1"
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleOpenFile(movimientoForm.archivoUrl)}
+                          className="h-6 w-6 p-0 text-blue-600 hover:text-blue-800"
                           title="Ver archivo"
                         >
                           <ExternalLink className="h-4 w-4" />
-                        </a>
+                        </Button>
                         <Button
                           type="button"
                           variant="ghost"
@@ -1492,18 +1556,20 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     </div>
                   )}
                   <div className="flex items-center gap-2">
-                    <Input
-                      id="archivo"
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0]
-                        if (file) {
-                          setArchivoFile(file)
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={async () => {
+                        const filePath = await selectFile()
+                        if (filePath) {
+                          setArchivoFile(filePath)
                         }
                       }}
-                      className="flex-1"
-                    />
+                    >
+                      <Upload className="h-4 w-4 mr-2" />
+                      Seleccionar archivo
+                    </Button>
                     {archivoFile && (
                       <Button
                         type="button"
@@ -1518,7 +1584,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   {archivoFile && (
                     <p className="text-xs text-slate-500 flex items-center gap-1">
                       <Upload className="h-3 w-3" />
-                      Nuevo archivo: {archivoFile.name}
+                      Nuevo archivo: {archivoFile.split(/[/\\]/).pop()}
                     </p>
                   )}
                 </div>
@@ -1958,14 +2024,13 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                                             </Badge>
                                           )}
                                           {movCompleto?.archivoUrl && (
-                                            <a
-                                              href={movCompleto.archivoUrl}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              className="inline-flex items-center text-xs text-blue-500 hover:text-blue-700"
+                                            <button
+                                              type="button"
+                                              onClick={() => handleOpenFile(movCompleto.archivoUrl!)}
+                                              className="inline-flex items-center text-xs text-blue-500 hover:text-blue-700 cursor-pointer"
                                             >
                                               <Paperclip className="h-3 w-3" />
-                                            </a>
+                                            </button>
                                           )}
                                         </div>
                                       </div>

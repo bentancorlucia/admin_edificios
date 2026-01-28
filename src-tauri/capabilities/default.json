@@ -27,7 +27,13 @@
     "fs:allow-applocaldata-write-recursive",
     "fs:allow-exists",
     "fs:allow-mkdir",
+    "fs:allow-copy-file",
+    "fs:allow-read",
+    "fs:allow-write",
     "dialog:default",
-    "process:default"
+    "dialog:allow-open",
+    "process:default",
+    "shell:default",
+    "shell:allow-open"
   ]
 }

@@ -2361,10 +2361,20 @@ export interface DetalleEgreso {
   banco: string;
 }
 
+export interface SaldoCuentaBancaria {
+  id: string;
+  banco: string;
+  tipoCuenta: string;
+  numeroCuenta: string;
+  titular: string | null;
+  saldo: number;
+}
+
 export interface InformeData {
   fecha: string;
   apartamentos: InformeApartamentoData[];
   resumenBancario: ResumenBancario;
+  saldosPorCuenta: SaldoCuentaBancaria[];
   detalleEgresos: DetalleEgreso[];
   totales: {
     totalSaldoAnterior: number;
@@ -2398,6 +2408,7 @@ export interface InformeCombinado {
   apartamentos: InformeApartamentoCombinado[];
   datosAnterior: {
     resumenBancario: ResumenBancario;
+    saldosPorCuenta: SaldoCuentaBancaria[];
     detalleEgresos: DetalleEgreso[];
     totales: {
       totalSaldoAnterior: number;
@@ -2565,8 +2576,9 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
     }
   }
 
-  // Calcular saldo bancario total
+  // Calcular saldo bancario total y saldos por cuenta
   let saldoBancarioTotal = 0;
+  const saldosPorCuenta: SaldoCuentaBancaria[] = [];
   for (const cuenta of cuentasBancarias) {
     if (!cuenta.activa) continue;
     let saldo = cuenta.saldoInicial;
@@ -2580,6 +2592,14 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
       }
     }
     saldoBancarioTotal += saldo;
+    saldosPorCuenta.push({
+      id: cuenta.id,
+      banco: cuenta.banco,
+      tipoCuenta: cuenta.tipoCuenta,
+      numeroCuenta: cuenta.numeroCuenta,
+      titular: cuenta.titular,
+      saldo,
+    });
   }
 
   // Calcular totales
@@ -2604,6 +2624,7 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
       egresoFondoReserva,
       saldoBancarioTotal,
     },
+    saldosPorCuenta,
     detalleEgresos,
     totales,
     avisos,
@@ -2797,8 +2818,9 @@ export async function getInformeCombinado(
     }
   }
 
-  // Calcular saldo bancario total al final del mes anterior
+  // Calcular saldo bancario total y saldos por cuenta al final del mes anterior
   let saldoBancarioTotalAnterior = 0;
+  const saldosPorCuentaAnterior: SaldoCuentaBancaria[] = [];
   for (const cuenta of cuentasBancarias) {
     if (!cuenta.activa) continue;
     let saldo = cuenta.saldoInicial;
@@ -2812,6 +2834,14 @@ export async function getInformeCombinado(
       }
     }
     saldoBancarioTotalAnterior += saldo;
+    saldosPorCuentaAnterior.push({
+      id: cuenta.id,
+      banco: cuenta.banco,
+      tipoCuenta: cuenta.tipoCuenta,
+      numeroCuenta: cuenta.numeroCuenta,
+      titular: cuenta.titular,
+      saldo,
+    });
   }
 
   // Calcular totales del mes anterior
@@ -2872,6 +2902,7 @@ export async function getInformeCombinado(
         egresoFondoReserva: egresoFondoReservaAnterior,
         saldoBancarioTotal: saldoBancarioTotalAnterior,
       },
+      saldosPorCuenta: saldosPorCuentaAnterior,
       detalleEgresos: detalleEgresosAnterior,
       totales: {
         totalSaldoAnterior: totalSaldoAnteriorDelMesAnterior,
@@ -2974,23 +3005,26 @@ export async function getInformeAcumulado(
   const totalRecibos = recibosGastosComunes + recibosFondoReserva;
   const totalEgresos = egresosGastosComunes + egresosFondoReserva;
 
+  // Redondear a 2 decimales para evitar errores de punto flotante
+  const roundTo2 = (n: number) => Math.round(n * 100) / 100;
+
   return {
     fechaInicio: fechaInicio.toISOString(),
     fechaFin: fechaFin.toISOString(),
     recibos: {
-      gastosComunes: recibosGastosComunes,
-      fondoReserva: recibosFondoReserva,
-      total: totalRecibos,
+      gastosComunes: roundTo2(recibosGastosComunes),
+      fondoReserva: roundTo2(recibosFondoReserva),
+      total: roundTo2(totalRecibos),
     },
     egresos: {
-      gastosComunes: egresosGastosComunes,
-      fondoReserva: egresosFondoReserva,
-      total: totalEgresos,
+      gastosComunes: roundTo2(egresosGastosComunes),
+      fondoReserva: roundTo2(egresosFondoReserva),
+      total: roundTo2(totalEgresos),
     },
     balance: {
-      gastosComunes: recibosGastosComunes - egresosGastosComunes,
-      fondoReserva: recibosFondoReserva - egresosFondoReserva,
-      total: totalRecibos - totalEgresos,
+      gastosComunes: roundTo2(recibosGastosComunes - egresosGastosComunes),
+      fondoReserva: roundTo2(recibosFondoReserva - egresosFondoReserva),
+      total: roundTo2(totalRecibos - totalEgresos),
     },
   };
 }
@@ -3200,5 +3234,139 @@ export async function getDashboardData(): Promise<DashboardData> {
     transaccionesRecientes,
     apartamentos,
     saldos,
+  };
+}
+
+// ==================== ANÁLISIS DE EGRESOS ====================
+
+export interface AnalisisEgresoItem {
+  servicioId: string | null;
+  servicioNombre: string;
+  servicioColor: string;
+  cantidad: number;
+  montoTotal: number;
+  detalles: {
+    id: string;
+    fecha: string;
+    descripcion: string;
+    monto: number;
+    clasificacion: string;
+    banco: string;
+  }[];
+}
+
+export interface AnalisisData {
+  mes: number;
+  anio: number;
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS';
+  servicioFiltro: string | null;
+  items: AnalisisEgresoItem[];
+  totales: {
+    cantidadTotal: number;
+    montoTotal: number;
+    montoGastoComun: number;
+    montoFondoReserva: number;
+  };
+}
+
+export async function getAnalisisData(
+  mes: number,
+  anio: number,
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS' = 'AMBOS',
+  servicioId: string | null = null
+): Promise<AnalisisData> {
+  const fechaInicio = new Date(anio, mes - 1, 1);
+  const fechaFin = new Date(anio, mes, 0, 23, 59, 59, 999);
+
+  // Obtener movimientos bancarios, servicios y tipos de servicio
+  const [movimientos, servicios, tiposServicio] = await Promise.all([
+    getMovimientosBancariosCompletos(),
+    getServicios(),
+    getTiposServicioActivos()
+  ]);
+
+  // Crear mapas para buscar servicios y tipos de servicio
+  const serviciosMap = new Map(servicios.map(s => [s.id, s]));
+  const tiposServicioMap = new Map(tiposServicio.map(t => [t.id, t]));
+
+  // Filtrar egresos del mes
+  let egresosDelMes = movimientos.filter(m => {
+    const fecha = new Date(m.fecha);
+    return m.tipo === 'EGRESO' &&
+           fecha >= fechaInicio &&
+           fecha <= fechaFin;
+  });
+
+  // Filtrar por clasificación
+  if (clasificacion !== 'AMBOS') {
+    egresosDelMes = egresosDelMes.filter(m => m.clasificacion === clasificacion);
+  }
+
+  // Filtrar por servicio si se especifica
+  if (servicioId) {
+    egresosDelMes = egresosDelMes.filter(m => m.servicioId === servicioId);
+  }
+
+  // Agrupar por servicio
+  const agrupado = new Map<string | null, AnalisisEgresoItem>();
+
+  for (const egreso of egresosDelMes) {
+    const key = egreso.servicioId || 'SIN_SERVICIO';
+
+    if (!agrupado.has(key)) {
+      // Obtener el servicio y su tipo para conseguir el color
+      const servicio = egreso.servicioId ? serviciosMap.get(egreso.servicioId) : null;
+      const tipoServicio = servicio ? tiposServicioMap.get(servicio.tipo) : null;
+
+      agrupado.set(key, {
+        servicioId: egreso.servicioId,
+        servicioNombre: egreso.servicio?.nombre || 'Sin servicio asignado',
+        servicioColor: tipoServicio?.color || 'default',
+        cantidad: 0,
+        montoTotal: 0,
+        detalles: [],
+      });
+    }
+
+    const item = agrupado.get(key)!;
+    item.cantidad++;
+    item.montoTotal += egreso.monto;
+    item.detalles.push({
+      id: egreso.id,
+      fecha: egreso.fecha,
+      descripcion: egreso.descripcion || 'Sin descripción',
+      monto: egreso.monto,
+      clasificacion: egreso.clasificacion || 'SIN_CLASIFICAR',
+      banco: egreso.cuentaBancaria?.banco || 'N/A',
+    });
+  }
+
+  // Ordenar detalles por fecha dentro de cada grupo
+  Array.from(agrupado.values()).forEach(item => {
+    item.detalles.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+  });
+
+  // Convertir a array y ordenar por monto total descendente
+  const items = Array.from(agrupado.values()).sort((a, b) => b.montoTotal - a.montoTotal);
+
+  // Calcular totales
+  const totales = {
+    cantidadTotal: egresosDelMes.length,
+    montoTotal: egresosDelMes.reduce((sum, e) => sum + e.monto, 0),
+    montoGastoComun: egresosDelMes
+      .filter(e => e.clasificacion === 'GASTO_COMUN')
+      .reduce((sum, e) => sum + e.monto, 0),
+    montoFondoReserva: egresosDelMes
+      .filter(e => e.clasificacion === 'FONDO_RESERVA')
+      .reduce((sum, e) => sum + e.monto, 0),
+  };
+
+  return {
+    mes,
+    anio,
+    clasificacion,
+    servicioFiltro: servicioId,
+    items,
+    totales,
   };
 }

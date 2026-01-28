@@ -1,5 +1,5 @@
 import jsPDF from "jspdf"
-import { type InformeData, type InformeCombinado } from "@/lib/database"
+import { type InformeData, type InformeCombinado, type SaldoCuentaBancaria } from "@/lib/database"
 
 const tipoOcupacionLabels: Record<string, string> = {
   PROPIETARIO: "Propietario",
@@ -45,7 +45,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
 
     doc.setFontSize(12)
     doc.setFont("helvetica", "bold")
-    doc.text("Informe Mensual de Cuenta Corriente", pageWidth - margin, 12, { align: "right" })
+    doc.text("Detalle Gastos Comunes", pageWidth - margin, 12, { align: "right" })
     doc.setFontSize(10)
     doc.setFont("helvetica", "normal")
     doc.text(periodoLabel, pageWidth - margin, 20, { align: "right" })
@@ -403,7 +403,16 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     }
   })
 
-  y += cardHeight + 16
+  y += cardHeight + 8
+
+  // =====================================================
+  // 5b. SALDO POR CUENTA BANCARIA
+  // =====================================================
+  if (data.saldosPorCuenta && data.saldosPorCuenta.length > 0) {
+    y = drawSaldosPorCuenta(doc, data.saldosPorCuenta, y, margin, availableWidth, formatCurrency)
+  }
+
+  y += 8
 
   // =====================================================
   // 6. DETALLE DE EGRESOS (Gastos Comunes primero, Fondo Reserva después)
@@ -451,12 +460,12 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     doc.setFontSize(7)
     doc.setTextColor(...colors.muted)
     doc.setFont("helvetica", "normal")
-    const footerText = piePagina || "Informe Mensual de Cuenta Corriente"
+    const footerText = piePagina || "Detalle Gastos Comunes"
     doc.text(footerText, margin, pageHeight - 8)
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" })
   }
 
-  const fileName = `informe-mensual-${periodoLabel.toLowerCase().replace(/\s/g, "-")}.pdf`
+  const fileName = `detalle-gastos-comunes-${periodoLabel.toLowerCase().replace(/\s/g, "-")}.pdf`
   doc.save(fileName)
 }
 
@@ -474,6 +483,75 @@ function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): numb
   doc.setLineWidth(0.2)
 
   return y + 10
+}
+
+function drawSaldosPorCuenta(
+  doc: jsPDF,
+  cuentas: SaldoCuentaBancaria[],
+  y: number,
+  margin: number,
+  availableWidth: number,
+  formatCurrency: (val: number) => string
+): number {
+  if (cuentas.length === 0) return y
+
+  // Subtítulo
+  doc.setFontSize(7)
+  doc.setTextColor(...colors.secondary)
+  doc.setFont("helvetica", "normal")
+  doc.text("SALDO POR CUENTA BANCARIA", margin, y)
+  y += 6
+
+  // Calcular ancho de cada tarjeta según cantidad de cuentas
+  const cardGap = 4
+  const maxCardsPerRow = Math.min(cuentas.length, 3)
+  const cardWidth = (availableWidth - (maxCardsPerRow - 1) * cardGap) / maxCardsPerRow
+  const cardHeight = 20
+
+  cuentas.forEach((cuenta, index) => {
+    const col = index % maxCardsPerRow
+    const row = Math.floor(index / maxCardsPerRow)
+    const x = margin + col * (cardWidth + cardGap)
+    const cardY = y + row * (cardHeight + 3)
+
+    // Fondo de tarjeta
+    doc.setFillColor(...colors.background)
+    doc.setDrawColor(...colors.light)
+    doc.roundedRect(x, cardY, cardWidth, cardHeight, 2, 2, "FD")
+
+    // Banco y tipo
+    doc.setFontSize(7)
+    doc.setTextColor(...colors.primary)
+    doc.setFont("helvetica", "bold")
+    doc.text(cuenta.banco, x + 4, cardY + 6)
+
+    // Número de cuenta
+    doc.setFontSize(6)
+    doc.setTextColor(...colors.secondary)
+    doc.setFont("helvetica", "normal")
+    const cuentaInfo = `${cuenta.tipoCuenta} · ${cuenta.numeroCuenta}`
+    doc.text(cuentaInfo, x + 4, cardY + 11)
+
+    // Titular si existe
+    if (cuenta.titular) {
+      doc.setFontSize(5)
+      doc.setTextColor(...colors.muted)
+      const titularTruncado = cuenta.titular.length > 30 ? cuenta.titular.substring(0, 27) + "..." : cuenta.titular
+      doc.text(titularTruncado, x + 4, cardY + 15)
+    }
+
+    // Saldo alineado a la derecha
+    doc.setFontSize(9)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(cuenta.saldo >= 0 ? colors.primary[0] : colors.negative[0],
+                     cuenta.saldo >= 0 ? colors.primary[1] : colors.negative[1],
+                     cuenta.saldo >= 0 ? colors.primary[2] : colors.negative[2])
+    doc.text(formatCurrency(cuenta.saldo), x + cardWidth - 4, cardY + 12, { align: "right" })
+  })
+
+  // Calcular altura total usada
+  const totalRows = Math.ceil(cuentas.length / maxCardsPerRow)
+  return y + totalRows * (cardHeight + 3)
 }
 
 interface DetalleEgresoItem {
@@ -658,7 +736,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
 
     doc.setFontSize(12)
     doc.setFont("helvetica", "bold")
-    doc.text("Informe Combinado de Cuenta Corriente", pageWidth - margin, 12, { align: "right" })
+    doc.text("Informe Gastos Comunes", pageWidth - margin, 12, { align: "right" })
     doc.setFontSize(10)
     doc.setFont("helvetica", "normal")
     doc.text(`${data.mesCorriente.label}`, pageWidth - margin, 20, { align: "right" })
@@ -1011,7 +1089,16 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
     }
   })
 
-  y += cardHeight + 16
+  y += cardHeight + 8
+
+  // =====================================================
+  // 5b. SALDO POR CUENTA BANCARIA DEL MES ANTERIOR
+  // =====================================================
+  if (data.datosAnterior.saldosPorCuenta && data.datosAnterior.saldosPorCuenta.length > 0) {
+    y = drawSaldosPorCuenta(doc, data.datosAnterior.saldosPorCuenta, y, margin, availableWidth, formatCurrencyLocal)
+  }
+
+  y += 8
 
   // =====================================================
   // 6. DETALLE DE EGRESOS DEL MES ANTERIOR
@@ -1057,11 +1144,11 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
     doc.setFontSize(7)
     doc.setTextColor(...colors.muted)
     doc.setFont("helvetica", "normal")
-    const footerText = piePagina || "Informe Combinado de Cuenta Corriente"
+    const footerText = piePagina || "Informe Gastos Comunes"
     doc.text(footerText, margin, pageHeight - 8)
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" })
   }
 
-  const fileName = `informe-combinado-${data.mesCorriente.label.toLowerCase().replace(/\s/g, "-")}.pdf`
+  const fileName = `informe-gastos-comunes-${data.mesCorriente.label.toLowerCase().replace(/\s/g, "-")}.pdf`
   doc.save(fileName)
 }

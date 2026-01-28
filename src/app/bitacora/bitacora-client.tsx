@@ -107,6 +107,25 @@ const situacionColors: Record<SituacionRegistro, string> = {
 }
 
 function formatDate(date: Date | string): string {
+  // Si es string en formato YYYY-MM-DD, parsearlo manualmente para evitar problemas de zona horaria
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [year, month, day] = date.split('-').map(Number)
+    return new Date(year, month - 1, day).toLocaleDateString('es-ES', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+  // Si es ISO string con T, extraer solo la parte de fecha
+  if (typeof date === 'string' && date.includes('T')) {
+    const datePart = date.split('T')[0]
+    const [year, month, day] = datePart.split('-').map(Number)
+    return new Date(year, month - 1, day).toLocaleDateString('es-ES', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
   return new Date(date).toLocaleDateString('es-ES', {
     year: 'numeric',
     month: 'short',

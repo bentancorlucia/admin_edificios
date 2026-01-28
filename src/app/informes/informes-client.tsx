@@ -683,6 +683,44 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
                     </p>
                   </div>
                 </div>
+
+                {/* Saldos por Cuenta Bancaria */}
+                {data.saldosPorCuenta && data.saldosPorCuenta.length > 0 && (
+                  <div className="mt-4 pt-4 border-t border-slate-200">
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">
+                      Saldo por Cuenta Bancaria
+                    </p>
+                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      {data.saldosPorCuenta.map((cuenta) => (
+                        <div
+                          key={cuenta.id}
+                          className="rounded-lg border border-slate-200 bg-slate-50 p-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-medium text-slate-900 truncate">
+                                {cuenta.banco}
+                              </p>
+                              <p className="text-xs text-slate-500">
+                                {cuenta.tipoCuenta} · {cuenta.numeroCuenta}
+                              </p>
+                              {cuenta.titular && (
+                                <p className="text-xs text-slate-400 truncate">
+                                  {cuenta.titular}
+                                </p>
+                              )}
+                            </div>
+                            <div className="ml-3 text-right">
+                              <p className={`text-lg font-bold ${cuenta.saldo >= 0 ? "text-slate-900" : "text-red-600"}`}>
+                                {formatCurrency(cuenta.saldo)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

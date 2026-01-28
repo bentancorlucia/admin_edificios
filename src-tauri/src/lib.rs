@@ -175,6 +175,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             // Crear el directorio de datos de la aplicación si no existe
             let app_data_dir = app.path().app_data_dir().expect("No se pudo obtener el directorio de datos de la app");
