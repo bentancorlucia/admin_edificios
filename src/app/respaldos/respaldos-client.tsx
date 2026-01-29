@@ -22,6 +22,7 @@ import {
   checkGoogleDriveStatus,
   backupToGoogleDrive,
   backupToCustomPath,
+  verifyCustomPath,
   getBackupHistory,
   diagnosticGoogleDrivePaths,
   type DriveStatus,
@@ -39,6 +40,8 @@ export function RespaldosClient() {
   const [useCustomPath, setUseCustomPath] = useState(false)
   const [diagnosticPaths, setDiagnosticPaths] = useState<{ path: string; exists: boolean }[]>([])
   const [showDiagnostic, setShowDiagnostic] = useState(false)
+  const [pathError, setPathError] = useState<string | null>(null)
+  const [verifying, setVerifying] = useState(false)
 
   const checkStatus = async () => {
     setLoading(true)
@@ -106,11 +109,27 @@ export function RespaldosClient() {
     }
   }
 
-  const handleSaveCustomPath = () => {
-    if (customPath) {
-      localStorage.setItem('backup_custom_path', customPath)
-      setUseCustomPath(true)
-      checkStatus()
+  const handleSaveCustomPath = async () => {
+    if (!customPath) return
+
+    setVerifying(true)
+    setPathError(null)
+
+    try {
+      const result = await verifyCustomPath(customPath)
+      if (result.valid) {
+        localStorage.setItem('backup_custom_path', result.normalizedPath)
+        setCustomPath(result.normalizedPath)
+        setUseCustomPath(true)
+        setPathError(null)
+        checkStatus()
+      } else {
+        setPathError(result.error || 'Ruta inválida')
+      }
+    } catch (error) {
+      setPathError(`Error: ${String(error)}`)
+    } finally {
+      setVerifying(false)
     }
   }
 
@@ -271,15 +290,31 @@ export function RespaldosClient() {
                 </p>
                 <div className="flex gap-2">
                   <Input
-                    placeholder="Ej: H:\Mi unidad o G:\My Drive"
+                    placeholder="Ej: H:\Mi unidad o H:/Mi unidad"
                     value={customPath}
-                    onChange={(e) => setCustomPath(e.target.value)}
+                    onChange={(e) => {
+                      setCustomPath(e.target.value)
+                      setPathError(null)
+                    }}
                     className="flex-1"
                   />
-                  <Button onClick={handleSaveCustomPath} disabled={!customPath}>
-                    Guardar
+                  <Button onClick={handleSaveCustomPath} disabled={!customPath || verifying}>
+                    {verifying ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Verificar y Guardar'
+                    )}
                   </Button>
                 </div>
+                {pathError && (
+                  <Alert variant="destructive" className="mt-2">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>{pathError}</AlertDescription>
+                  </Alert>
+                )}
+                <p className="text-xs text-slate-500 mt-1">
+                  Tip: Puedes usar / o \ en la ruta. Ejemplo: H:/Mi unidad
+                </p>
                 {useCustomPath && customPath && (
                   <div className="flex items-center justify-between bg-green-100 p-2 rounded">
                     <span className="text-sm text-green-800">

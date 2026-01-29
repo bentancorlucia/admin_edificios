@@ -186,18 +186,50 @@ export async function diagnosticGoogleDrivePaths(): Promise<{ path: string; exis
   return results
 }
 
+// Normalizar ruta para Windows (acepta / o \)
+function normalizePath(path: string): string {
+  // En Windows, convertir forward slashes a backslashes
+  return path.replace(/\//g, '\\').replace(/\\+/g, '\\')
+}
+
+// Verificar si una ruta personalizada es válida
+export async function verifyCustomPath(customPath: string): Promise<{ valid: boolean; normalizedPath: string; error?: string }> {
+  try {
+    const normalized = normalizePath(customPath.trim())
+    const pathExists = await exists(normalized)
+    if (!pathExists) {
+      return {
+        valid: false,
+        normalizedPath: normalized,
+        error: `La ruta no existe: ${normalized}`
+      }
+    }
+    return { valid: true, normalizedPath: normalized }
+  } catch (error) {
+    return {
+      valid: false,
+      normalizedPath: customPath,
+      error: `Error verificando ruta: ${String(error)}`
+    }
+  }
+}
+
 // Función para respaldar a una ruta personalizada
 export async function backupToCustomPath(customPath: string): Promise<BackupResult> {
   try {
-    if (!(await exists(customPath))) {
+    const normalized = normalizePath(customPath.trim())
+
+    const verification = await verifyCustomPath(normalized)
+    if (!verification.valid) {
       return {
         success: false,
-        error: `La ruta no existe: ${customPath}`
+        error: verification.error || `La ruta no existe: ${normalized}`
       }
     }
-    return await createBackup(customPath)
+
+    return await createBackup(normalized)
   } catch (error) {
-    return { success: false, error: String(error) }
+    return { success: false, error: `Error al respaldar: ${String(error)}` }
   }
 }
 

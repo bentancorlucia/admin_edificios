@@ -237,7 +237,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   doc.setFontSize(8)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(...colors.primary)
-  doc.text("B.R.O.U. - Caja de Ahorro $ - N°. 00099991100-00004 - Mario Bentancor", pageWidth / 2, y, { align: "center" })
+  doc.text("B.R.O.U. - Caja de Ahorro $ - N°. 000990109-00004 - Mario Bentancor", pageWidth / 2, y, { align: "center" })
 
   y += 5
   doc.setFontSize(7)
@@ -409,7 +409,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   // 5b. SALDO POR CUENTA BANCARIA
   // =====================================================
   if (data.saldosPorCuenta && data.saldosPorCuenta.length > 0) {
-    y = drawSaldosPorCuenta(doc, data.saldosPorCuenta, y, margin, availableWidth, formatCurrency)
+    y = drawSaldosPorCuenta(doc, data.saldosPorCuenta, y, margin, availableWidth, formatCurrency, pageHeight)
   }
 
   y += 8
@@ -491,9 +491,24 @@ function drawSaldosPorCuenta(
   y: number,
   margin: number,
   availableWidth: number,
-  formatCurrency: (val: number) => string
+  formatCurrency: (val: number) => string,
+  pageHeight?: number
 ): number {
   if (cuentas.length === 0) return y
+
+  // Calcular altura necesaria para las tarjetas
+  const cardGap = 4
+  const maxCardsPerRow = Math.min(cuentas.length, 3)
+  const cardWidth = (availableWidth - (maxCardsPerRow - 1) * cardGap) / maxCardsPerRow
+  const cardHeight = 20
+  const totalRows = Math.ceil(cuentas.length / maxCardsPerRow)
+  const totalHeight = 6 + totalRows * (cardHeight + 3) // subtítulo + tarjetas
+
+  // Verificar si hay espacio suficiente, si no, agregar nueva página
+  if (pageHeight && y + totalHeight > pageHeight - 20) {
+    doc.addPage("landscape")
+    y = 25
+  }
 
   // Subtítulo
   doc.setFontSize(7)
@@ -501,12 +516,6 @@ function drawSaldosPorCuenta(
   doc.setFont("helvetica", "normal")
   doc.text("SALDO POR CUENTA BANCARIA", margin, y)
   y += 6
-
-  // Calcular ancho de cada tarjeta según cantidad de cuentas
-  const cardGap = 4
-  const maxCardsPerRow = Math.min(cuentas.length, 3)
-  const cardWidth = (availableWidth - (maxCardsPerRow - 1) * cardGap) / maxCardsPerRow
-  const cardHeight = 20
 
   cuentas.forEach((cuenta, index) => {
     const col = index % maxCardsPerRow
@@ -549,8 +558,7 @@ function drawSaldosPorCuenta(
     doc.text(formatCurrency(cuenta.saldo), x + cardWidth - 4, cardY + 12, { align: "right" })
   })
 
-  // Calcular altura total usada
-  const totalRows = Math.ceil(cuentas.length / maxCardsPerRow)
+  // Retornar posición Y después de las tarjetas
   return y + totalRows * (cardHeight + 3)
 }
 
@@ -930,7 +938,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   doc.setFontSize(8)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(...colors.primary)
-  doc.text("B.R.O.U. - Caja de Ahorro $ - N°. 00099991100-00004 - Mario Bentancor", pageWidth / 2, y, { align: "center" })
+  doc.text("B.R.O.U. - Caja de Ahorro $ - N°. 000990109-00004 - Mario Bentancor", pageWidth / 2, y, { align: "center" })
 
   y += 5
   doc.setFontSize(7)
@@ -1095,7 +1103,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   // 5b. SALDO POR CUENTA BANCARIA DEL MES ANTERIOR
   // =====================================================
   if (data.datosAnterior.saldosPorCuenta && data.datosAnterior.saldosPorCuenta.length > 0) {
-    y = drawSaldosPorCuenta(doc, data.datosAnterior.saldosPorCuenta, y, margin, availableWidth, formatCurrencyLocal)
+    y = drawSaldosPorCuenta(doc, data.datosAnterior.saldosPorCuenta, y, margin, availableWidth, formatCurrencyLocal, pageHeight)
   }
 
   y += 8
