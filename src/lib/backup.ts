@@ -13,6 +13,7 @@ export interface DriveStatus {
   detected: boolean
   path?: string
   backupFolder?: string
+  checkedPaths?: { path: string; exists: boolean }[]
 }
 
 export async function getDatabasePath(): Promise<string> {
@@ -50,8 +51,41 @@ export async function detectGoogleDrivePath(): Promise<string | null> {
   const home = await homeDir()
 
   if (os === 'windows') {
-    const paths = ['Google Drive\\Mi unidad', 'Google Drive']
-    for (const p of paths) {
+    // Google Drive Desktop puede montarse como unidad virtual (G:\, H:\, etc.)
+    // Buscar en todas las letras de unidad comunes
+    const driveLetters = ['G', 'H', 'D', 'E', 'F', 'I', 'J', 'K', 'L']
+    for (const letter of driveLetters) {
+      // Probar variantes de nombres (español e inglés)
+      const variants = [
+        `${letter}:\\Mi unidad`,
+        `${letter}:\\My Drive`,
+        `${letter}:\\`
+      ]
+      for (const variant of variants) {
+        try {
+          if (await exists(variant)) {
+            // Verificar que es Google Drive buscando archivo .desktop.ini o estructura típica
+            const desktopIni = `${variant}\\.shortcut-targets-by-id`
+            const isGoogleDrive = await exists(desktopIni) || await exists(`${variant}\\..\\Shared drives`)
+            if (isGoogleDrive || variant.includes('Mi unidad') || variant.includes('My Drive')) {
+              return variant
+            }
+          }
+        } catch {
+          // Continuar si la unidad no existe
+        }
+      }
+    }
+
+    // También buscar en las rutas tradicionales del home
+    const homePaths = [
+      'Google Drive\\Mi unidad',
+      'Google Drive\\My Drive',
+      'Google Drive',
+      'GoogleDrive\\Mi unidad',
+      'GoogleDrive\\My Drive'
+    ]
+    for (const p of homePaths) {
       const fullPath = await join(home, p)
       if (await exists(fullPath)) return fullPath
     }
@@ -98,6 +132,72 @@ export async function checkGoogleDriveStatus(): Promise<DriveStatus> {
     detected: true,
     path: drivePath,
     backupFolder: backupFolder || undefined
+  }
+}
+
+// Función de diagnóstico para ver qué rutas se están verificando
+export async function diagnosticGoogleDrivePaths(): Promise<{ path: string; exists: boolean }[]> {
+  const os = platform()
+  const home = await homeDir()
+  const results: { path: string; exists: boolean }[] = []
+
+  if (os === 'windows') {
+    // Verificar unidades virtuales
+    const driveLetters = ['G', 'H', 'D', 'E', 'F', 'I', 'J', 'K', 'L']
+    for (const letter of driveLetters) {
+      const variants = [
+        `${letter}:\\Mi unidad`,
+        `${letter}:\\My Drive`
+      ]
+      for (const variant of variants) {
+        try {
+          const pathExists = await exists(variant)
+          results.push({ path: variant, exists: pathExists })
+        } catch {
+          results.push({ path: variant, exists: false })
+        }
+      }
+    }
+
+    // Verificar rutas en home
+    const homePaths = [
+      'Google Drive\\Mi unidad',
+      'Google Drive\\My Drive',
+      'Google Drive',
+      'GoogleDrive\\Mi unidad',
+      'GoogleDrive\\My Drive'
+    ]
+    for (const p of homePaths) {
+      const fullPath = await join(home, p)
+      try {
+        const pathExists = await exists(fullPath)
+        results.push({ path: fullPath, exists: pathExists })
+      } catch {
+        results.push({ path: fullPath, exists: false })
+      }
+    }
+  }
+
+  if (os === 'macos') {
+    const cloudStorage = await join(home, 'Library/CloudStorage')
+    results.push({ path: cloudStorage, exists: await exists(cloudStorage) })
+  }
+
+  return results
+}
+
+// Función para respaldar a una ruta personalizada
+export async function backupToCustomPath(customPath: string): Promise<BackupResult> {
+  try {
+    if (!(await exists(customPath))) {
+      return {
+        success: false,
+        error: `La ruta no existe: ${customPath}`
+      }
+    }
+    return await createBackup(customPath)
+  } catch (error) {
+    return { success: false, error: String(error) }
   }
 }
 

@@ -16,10 +16,14 @@ import {
   Clock,
   FolderSync
 } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   checkGoogleDriveStatus,
   backupToGoogleDrive,
+  backupToCustomPath,
   getBackupHistory,
+  diagnosticGoogleDrivePaths,
   type DriveStatus,
   type BackupResult
 } from "@/lib/backup"
@@ -31,6 +35,10 @@ export function RespaldosClient() {
   const [lastBackup, setLastBackup] = useState<string | null>(null)
   const [backupResult, setBackupResult] = useState<BackupResult | null>(null)
   const [backupHistory, setBackupHistory] = useState<{ name: string; date: Date }[]>([])
+  const [customPath, setCustomPath] = useState<string>("")
+  const [useCustomPath, setUseCustomPath] = useState(false)
+  const [diagnosticPaths, setDiagnosticPaths] = useState<{ path: string; exists: boolean }[]>([])
+  const [showDiagnostic, setShowDiagnostic] = useState(false)
 
   const checkStatus = async () => {
     setLoading(true)
@@ -38,12 +46,26 @@ export function RespaldosClient() {
       const status = await checkGoogleDriveStatus()
       setDriveStatus(status)
 
-      if (status.backupFolder) {
-        const history = await getBackupHistory(status.backupFolder)
+      // Si no se detectó y hay ruta personalizada guardada, usarla
+      const savedPath = localStorage.getItem('backup_custom_path')
+      if (savedPath) {
+        setCustomPath(savedPath)
+        setUseCustomPath(true)
+      }
+
+      const folderToCheck = useCustomPath && customPath ? customPath : status.backupFolder
+      if (folderToCheck) {
+        const history = await getBackupHistory(folderToCheck)
         setBackupHistory(history)
         if (history.length > 0) {
           setLastBackup(history[0].date.toLocaleString('es-ES'))
         }
+      }
+
+      // Si no se detectó, obtener diagnóstico
+      if (!status.detected) {
+        const paths = await diagnosticGoogleDrivePaths()
+        setDiagnosticPaths(paths)
       }
     } catch (error) {
       console.error('Error checking drive status:', error)
@@ -53,6 +75,12 @@ export function RespaldosClient() {
   }
 
   useEffect(() => {
+    // Cargar ruta personalizada guardada
+    const savedPath = localStorage.getItem('backup_custom_path')
+    if (savedPath) {
+      setCustomPath(savedPath)
+      setUseCustomPath(true)
+    }
     checkStatus()
   }, [])
 
@@ -60,7 +88,12 @@ export function RespaldosClient() {
     setBacking(true)
     setBackupResult(null)
     try {
-      const result = await backupToGoogleDrive()
+      let result: BackupResult
+      if (useCustomPath && customPath) {
+        result = await backupToCustomPath(customPath)
+      } else {
+        result = await backupToGoogleDrive()
+      }
       setBackupResult(result)
       if (result.success && result.timestamp) {
         setLastBackup(result.timestamp)
@@ -71,6 +104,21 @@ export function RespaldosClient() {
     } finally {
       setBacking(false)
     }
+  }
+
+  const handleSaveCustomPath = () => {
+    if (customPath) {
+      localStorage.setItem('backup_custom_path', customPath)
+      setUseCustomPath(true)
+      checkStatus()
+    }
+  }
+
+  const handleClearCustomPath = () => {
+    localStorage.removeItem('backup_custom_path')
+    setCustomPath("")
+    setUseCustomPath(false)
+    checkStatus()
   }
 
   if (loading) {
@@ -114,15 +162,44 @@ export function RespaldosClient() {
           </div>
         </CardHeader>
         <CardContent>
-          {driveStatus?.detected ? (
+          {driveStatus?.detected || (useCustomPath && customPath) ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 p-3 rounded-lg">
                 <FolderSync className="h-4 w-4" />
                 <span className="font-medium">Carpeta de respaldos:</span>
                 <code className="text-xs bg-slate-200 px-2 py-0.5 rounded">
-                  {driveStatus.backupFolder}
+                  {useCustomPath && customPath ? customPath : driveStatus?.backupFolder}
                 </code>
+                {useCustomPath && (
+                  <Badge variant="secondary" className="text-xs">Personalizada</Badge>
+                )}
               </div>
+
+              {/* Opción para cambiar ruta */}
+              <details className="text-sm">
+                <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
+                  Cambiar carpeta de respaldo (multicuentas)
+                </summary>
+                <div className="mt-2 p-3 bg-blue-50 rounded-lg space-y-2">
+                  <Label className="text-xs">Ruta personalizada:</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Ej: H:\Mi unidad"
+                      value={customPath}
+                      onChange={(e) => setCustomPath(e.target.value)}
+                      className="flex-1 text-sm"
+                    />
+                    <Button size="sm" onClick={handleSaveCustomPath} disabled={!customPath}>
+                      Usar
+                    </Button>
+                    {useCustomPath && (
+                      <Button size="sm" variant="ghost" onClick={handleClearCustomPath}>
+                        Auto
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </details>
 
               {lastBackup && (
                 <div className="flex items-center gap-2 text-sm text-slate-600">
@@ -177,14 +254,108 @@ export function RespaldosClient() {
             <div className="space-y-4">
               <Alert>
                 <AlertCircle className="h-4 w-4" />
-                <AlertTitle>Google Drive Desktop no detectado</AlertTitle>
+                <AlertTitle>Google Drive Desktop no detectado automáticamente</AlertTitle>
                 <AlertDescription>
-                  Para usar respaldos automáticos, instala Google Drive Desktop en tu computadora.
+                  Puedes ingresar la ruta manualmente o instalar Google Drive Desktop.
                 </AlertDescription>
               </Alert>
 
+              {/* Ruta personalizada */}
+              <div className="bg-blue-50 p-4 rounded-lg space-y-3 border border-blue-200">
+                <h4 className="font-medium flex items-center gap-2">
+                  <FolderSync className="h-4 w-4" />
+                  Configurar ruta manualmente
+                </h4>
+                <p className="text-sm text-slate-600">
+                  Si tienes Google Drive en una unidad diferente (ej: H:\Mi unidad), ingrésala aquí:
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Ej: H:\Mi unidad o G:\My Drive"
+                    value={customPath}
+                    onChange={(e) => setCustomPath(e.target.value)}
+                    className="flex-1"
+                  />
+                  <Button onClick={handleSaveCustomPath} disabled={!customPath}>
+                    Guardar
+                  </Button>
+                </div>
+                {useCustomPath && customPath && (
+                  <div className="flex items-center justify-between bg-green-100 p-2 rounded">
+                    <span className="text-sm text-green-800">
+                      Usando ruta: <code className="font-mono">{customPath}</code>
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={handleClearCustomPath}>
+                      Limpiar
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón de respaldar si hay ruta personalizada */}
+              {useCustomPath && customPath && (
+                <div className="space-y-3">
+                  {backupResult && (
+                    <Alert variant={backupResult.success ? 'default' : 'destructive'}>
+                      {backupResult.success ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <AlertCircle className="h-4 w-4" />
+                      )}
+                      <AlertTitle>
+                        {backupResult.success ? 'Respaldo exitoso' : 'Error al respaldar'}
+                      </AlertTitle>
+                      <AlertDescription>
+                        {backupResult.success
+                          ? `Archivo guardado en la ruta personalizada.`
+                          : backupResult.error}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                  <Button
+                    onClick={handleBackup}
+                    disabled={backing}
+                    className="w-full"
+                  >
+                    {backing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Respaldando...
+                      </>
+                    ) : (
+                      <>
+                        <HardDrive className="mr-2 h-4 w-4" />
+                        Respaldar Ahora
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              {/* Diagnóstico */}
+              <div className="border-t pt-4">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowDiagnostic(!showDiagnostic)}
+                  className="text-slate-500"
+                >
+                  {showDiagnostic ? 'Ocultar' : 'Mostrar'} rutas verificadas
+                </Button>
+                {showDiagnostic && diagnosticPaths.length > 0 && (
+                  <div className="mt-2 bg-slate-100 p-3 rounded text-xs font-mono max-h-48 overflow-y-auto">
+                    {diagnosticPaths.map((p, i) => (
+                      <div key={i} className={`flex items-center gap-2 ${p.exists ? 'text-green-600' : 'text-slate-400'}`}>
+                        <span>{p.exists ? '✓' : '✗'}</span>
+                        <span>{p.path}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="bg-slate-50 p-4 rounded-lg space-y-3">
-                <h4 className="font-medium">Pasos para configurar:</h4>
+                <h4 className="font-medium">¿No tienes Google Drive Desktop?</h4>
                 <ol className="list-decimal list-inside space-y-2 text-sm text-slate-600">
                   <li>Descarga e instala Google Drive Desktop</li>
                   <li>Inicia sesión con tu cuenta de Google</li>
