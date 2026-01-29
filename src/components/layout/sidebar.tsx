@@ -13,6 +13,7 @@ import {
   FileBarChart,
   ClipboardList,
   PieChart,
+  HardDrive,
 } from "lucide-react"
 
 const navigation = [
@@ -24,6 +25,7 @@ const navigation = [
   { name: "Bitácora", href: "/bitacora", icon: ClipboardList },
   { name: "Informes", href: "/informes", icon: FileBarChart },
   { name: "Análisis", href: "/analisis", icon: PieChart },
+  { name: "Respaldos", href: "/respaldos", icon: HardDrive },
 ]
 
 export function Sidebar() {
