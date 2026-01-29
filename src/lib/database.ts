@@ -3370,3 +3370,315 @@ export async function getAnalisisData(
     totales,
   };
 }
+
+// Obtener análisis de egresos por rango de fechas
+export interface AnalisisDataRango {
+  fechaInicio: string;
+  fechaFin: string;
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS';
+  servicioFiltro: string | null;
+  items: AnalisisEgresoItem[];
+  totales: {
+    cantidadTotal: number;
+    montoTotal: number;
+    montoGastoComun: number;
+    montoFondoReserva: number;
+  };
+}
+
+export async function getAnalisisDataPorRango(
+  fechaInicioStr: string,
+  fechaFinStr: string,
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS' = 'AMBOS',
+  servicioId: string | null = null
+): Promise<AnalisisDataRango> {
+  const fechaInicio = new Date(fechaInicioStr);
+  fechaInicio.setHours(0, 0, 0, 0);
+  const fechaFin = new Date(fechaFinStr);
+  fechaFin.setHours(23, 59, 59, 999);
+
+  const [movimientos, servicios, tiposServicio] = await Promise.all([
+    getMovimientosBancariosCompletos(),
+    getServicios(),
+    getTiposServicioActivos()
+  ]);
+
+  const serviciosMap = new Map(servicios.map(s => [s.id, s]));
+  const tiposServicioMap = new Map(tiposServicio.map(t => [t.id, t]));
+
+  let egresosDelPeriodo = movimientos.filter(m => {
+    const fecha = new Date(m.fecha);
+    return m.tipo === 'EGRESO' &&
+           fecha >= fechaInicio &&
+           fecha <= fechaFin;
+  });
+
+  if (clasificacion !== 'AMBOS') {
+    egresosDelPeriodo = egresosDelPeriodo.filter(m => m.clasificacion === clasificacion);
+  }
+
+  if (servicioId) {
+    egresosDelPeriodo = egresosDelPeriodo.filter(m => m.servicioId === servicioId);
+  }
+
+  const agrupado = new Map<string | null, AnalisisEgresoItem>();
+
+  for (const egreso of egresosDelPeriodo) {
+    const key = egreso.servicioId || 'SIN_SERVICIO';
+
+    if (!agrupado.has(key)) {
+      const servicio = egreso.servicioId ? serviciosMap.get(egreso.servicioId) : null;
+      const tipoServicio = servicio ? tiposServicioMap.get(servicio.tipo) : null;
+
+      agrupado.set(key, {
+        servicioId: egreso.servicioId,
+        servicioNombre: egreso.servicio?.nombre || 'Sin servicio asignado',
+        servicioColor: tipoServicio?.color || 'default',
+        cantidad: 0,
+        montoTotal: 0,
+        detalles: [],
+      });
+    }
+
+    const item = agrupado.get(key)!;
+    item.cantidad++;
+    item.montoTotal += egreso.monto;
+    item.detalles.push({
+      id: egreso.id,
+      fecha: egreso.fecha,
+      descripcion: egreso.descripcion || 'Sin descripción',
+      monto: egreso.monto,
+      clasificacion: egreso.clasificacion || 'SIN_CLASIFICAR',
+      banco: egreso.cuentaBancaria?.banco || 'N/A',
+    });
+  }
+
+  Array.from(agrupado.values()).forEach(item => {
+    item.detalles.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+  });
+
+  const items = Array.from(agrupado.values()).sort((a, b) => b.montoTotal - a.montoTotal);
+
+  const totales = {
+    cantidadTotal: egresosDelPeriodo.length,
+    montoTotal: egresosDelPeriodo.reduce((sum, e) => sum + e.monto, 0),
+    montoGastoComun: egresosDelPeriodo
+      .filter(e => e.clasificacion === 'GASTO_COMUN')
+      .reduce((sum, e) => sum + e.monto, 0),
+    montoFondoReserva: egresosDelPeriodo
+      .filter(e => e.clasificacion === 'FONDO_RESERVA')
+      .reduce((sum, e) => sum + e.monto, 0),
+  };
+
+  return {
+    fechaInicio: fechaInicioStr,
+    fechaFin: fechaFinStr,
+    clasificacion,
+    servicioFiltro: servicioId,
+    items,
+    totales,
+  };
+}
+
+// Obtener servicios que tienen actividad (egresos) en un período
+export async function getServiciosConActividad(
+  fechaInicioStr: string,
+  fechaFinStr: string
+): Promise<TipoServicio[]> {
+  const fechaInicio = new Date(fechaInicioStr);
+  fechaInicio.setHours(0, 0, 0, 0);
+  const fechaFin = new Date(fechaFinStr);
+  fechaFin.setHours(23, 59, 59, 999);
+
+  const [movimientos, servicios, tiposServicio] = await Promise.all([
+    getMovimientosBancariosCompletos(),
+    getServicios(),
+    getTiposServicioActivos()
+  ]);
+
+  // Filtrar egresos del período
+  const egresosDelPeriodo = movimientos.filter(m => {
+    const fecha = new Date(m.fecha);
+    return m.tipo === 'EGRESO' &&
+           fecha >= fechaInicio &&
+           fecha <= fechaFin;
+  });
+
+  // Obtener IDs únicos de servicios con actividad
+  const serviciosConActividad = new Set<string>();
+  for (const egreso of egresosDelPeriodo) {
+    if (egreso.servicioId) {
+      const servicio = servicios.find(s => s.id === egreso.servicioId);
+      if (servicio) {
+        serviciosConActividad.add(servicio.tipo);
+      }
+    }
+  }
+
+  // Filtrar tipos de servicio que tienen actividad
+  return tiposServicio.filter(t => serviciosConActividad.has(t.id));
+}
+
+// Interfaz para el reporte detallado por servicio y mes
+export interface AnalisisPorServicioMesItem {
+  mes: number;
+  anio: number;
+  mesLabel: string;
+  monto: number;
+  cantidad: number;
+}
+
+export interface AnalisisPorServicioMes {
+  servicioId: string;
+  servicioNombre: string;
+  servicioColor: string;
+  fechaInicio: string;
+  fechaFin: string;
+  meses: AnalisisPorServicioMesItem[];
+  total: number;
+  cantidadTotal: number;
+}
+
+export interface AnalisisDetalladoServicios {
+  fechaInicio: string;
+  fechaFin: string;
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS';
+  servicios: AnalisisPorServicioMes[];
+  totalesPorMes: AnalisisPorServicioMesItem[];
+  totalGeneral: number;
+}
+
+const mesesNombres = [
+  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
+
+export async function getAnalisisDetalladoPorServicioMes(
+  fechaInicioStr: string,
+  fechaFinStr: string,
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS' = 'AMBOS'
+): Promise<AnalisisDetalladoServicios> {
+  const fechaInicio = new Date(fechaInicioStr);
+  fechaInicio.setHours(0, 0, 0, 0);
+  const fechaFin = new Date(fechaFinStr);
+  fechaFin.setHours(23, 59, 59, 999);
+
+  const [movimientos, servicios, tiposServicio] = await Promise.all([
+    getMovimientosBancariosCompletos(),
+    getServicios(),
+    getTiposServicioActivos()
+  ]);
+
+  const serviciosMap = new Map(servicios.map(s => [s.id, s]));
+  const tiposServicioMap = new Map(tiposServicio.map(t => [t.id, t]));
+
+  // Filtrar egresos del período
+  let egresosDelPeriodo = movimientos.filter(m => {
+    const fecha = new Date(m.fecha);
+    return m.tipo === 'EGRESO' &&
+           fecha >= fechaInicio &&
+           fecha <= fechaFin;
+  });
+
+  if (clasificacion !== 'AMBOS') {
+    egresosDelPeriodo = egresosDelPeriodo.filter(m => m.clasificacion === clasificacion);
+  }
+
+  // Generar lista de meses en el rango
+  const mesesEnRango: { mes: number; anio: number; label: string }[] = [];
+  const current = new Date(fechaInicio.getFullYear(), fechaInicio.getMonth(), 1);
+  const end = new Date(fechaFin.getFullYear(), fechaFin.getMonth(), 1);
+
+  while (current <= end) {
+    mesesEnRango.push({
+      mes: current.getMonth() + 1,
+      anio: current.getFullYear(),
+      label: `${mesesNombres[current.getMonth()]} ${current.getFullYear()}`
+    });
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  // Agrupar por servicio y mes
+  const porServicio = new Map<string, Map<string, { monto: number; cantidad: number }>>();
+
+  for (const egreso of egresosDelPeriodo) {
+    const fecha = new Date(egreso.fecha);
+    const mesKey = `${fecha.getMonth() + 1}-${fecha.getFullYear()}`;
+    const servicioKey = egreso.servicioId || 'SIN_SERVICIO';
+
+    if (!porServicio.has(servicioKey)) {
+      porServicio.set(servicioKey, new Map());
+    }
+
+    const mesesServicio = porServicio.get(servicioKey)!;
+    if (!mesesServicio.has(mesKey)) {
+      mesesServicio.set(mesKey, { monto: 0, cantidad: 0 });
+    }
+
+    const datos = mesesServicio.get(mesKey)!;
+    datos.monto += egreso.monto;
+    datos.cantidad++;
+  }
+
+  // Construir resultado por servicio
+  const serviciosResult: AnalisisPorServicioMes[] = [];
+
+  for (const [servicioKey, mesesData] of Array.from(porServicio.entries())) {
+    const servicio = servicioKey !== 'SIN_SERVICIO' ? serviciosMap.get(servicioKey) : null;
+    const tipoServicio = servicio ? tiposServicioMap.get(servicio.tipo) : null;
+
+    const meses: AnalisisPorServicioMesItem[] = mesesEnRango.map(m => {
+      const key = `${m.mes}-${m.anio}`;
+      const datos = mesesData.get(key) || { monto: 0, cantidad: 0 };
+      return {
+        mes: m.mes,
+        anio: m.anio,
+        mesLabel: m.label,
+        monto: datos.monto,
+        cantidad: datos.cantidad
+      };
+    });
+
+    serviciosResult.push({
+      servicioId: servicioKey === 'SIN_SERVICIO' ? '' : servicioKey,
+      servicioNombre: servicio?.nombre || 'Sin servicio asignado',
+      servicioColor: tipoServicio?.color || 'default',
+      fechaInicio: fechaInicioStr,
+      fechaFin: fechaFinStr,
+      meses,
+      total: meses.reduce((sum, m) => sum + m.monto, 0),
+      cantidadTotal: meses.reduce((sum, m) => sum + m.cantidad, 0)
+    });
+  }
+
+  // Ordenar por total descendente
+  serviciosResult.sort((a, b) => b.total - a.total);
+
+  // Calcular totales por mes
+  const totalesPorMes: AnalisisPorServicioMesItem[] = mesesEnRango.map(m => {
+    const totalMes = serviciosResult.reduce((sum, s) => {
+      const mesDatos = s.meses.find(md => md.mes === m.mes && md.anio === m.anio);
+      return sum + (mesDatos?.monto || 0);
+    }, 0);
+    const cantidadMes = serviciosResult.reduce((sum, s) => {
+      const mesDatos = s.meses.find(md => md.mes === m.mes && md.anio === m.anio);
+      return sum + (mesDatos?.cantidad || 0);
+    }, 0);
+    return {
+      mes: m.mes,
+      anio: m.anio,
+      mesLabel: m.label,
+      monto: totalMes,
+      cantidad: cantidadMes
+    };
+  });
+
+  return {
+    fechaInicio: fechaInicioStr,
+    fechaFin: fechaFinStr,
+    clasificacion,
+    servicios: serviciosResult,
+    totalesPorMes,
+    totalGeneral: egresosDelPeriodo.reduce((sum, e) => sum + e.monto, 0)
+  };
+}

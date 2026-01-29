@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { open } from "@tauri-apps/plugin-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -328,11 +329,11 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
     setIsDeleteTipoDialogOpen(true)
   }
 
-  const handleWhatsApp = (srv: Servicio) => {
+  const handleWhatsApp = async (srv: Servicio) => {
     if (!srv.celular) return
     const message = `Hola ${srv.nombre}, me comunico del edificio.`
     const url = `https://wa.me/${srv.celular.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`
-    window.open(url, '_blank')
+    await open(url)
   }
 
   return (

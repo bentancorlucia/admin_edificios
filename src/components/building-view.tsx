@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useMemo } from "react"
+import { open } from "@tauri-apps/plugin-shell"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -142,22 +143,22 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
     return max
   }, [pisos])
 
-  const handleWhatsApp = (apt: Apartamento) => {
+  const handleWhatsApp = async (apt: Apartamento) => {
     if (!apt.contactoCelular) return
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
     const mensaje = encodeURIComponent(
       `Hola${contacto ? ` ${contacto}` : ''}, le escribo desde la administración del edificio respecto al apartamento ${apt.numero}.`
     )
-    window.open(`https://wa.me/${apt.contactoCelular.replace(/\D/g, "")}?text=${mensaje}`, "_blank")
+    await open(`https://wa.me/${apt.contactoCelular.replace(/\D/g, "")}?text=${mensaje}`)
   }
 
-  const handleSendGmail = (apt: Apartamento) => {
+  const handleSendGmail = async (apt: Apartamento) => {
     if (!apt.contactoEmail) return
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
     const subject = `Administración del Edificio - Apartamento ${apt.numero}`
     const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al apartamento ${apt.numero}.\n\nSaludos cordiales.`
     const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(apt.contactoEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-    window.open(url, '_blank')
+    await open(url)
   }
 
   // Si no hay apartamentos, mostrar mensaje

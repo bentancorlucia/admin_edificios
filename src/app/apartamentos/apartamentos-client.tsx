@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import { open } from "@tauri-apps/plugin-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -310,15 +311,15 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     }
   }, [saldos])
 
-  const handleShareWhatsApp = useCallback((apt: Apartamento) => {
+  const handleShareWhatsApp = useCallback(async (apt: Apartamento) => {
     const totalMensual = apt.gastosComunes + apt.fondoReserva
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
     const message = `Apartamento ${apt.numero}\nPiso: ${apt.piso || 'N/A'}\nTipo: ${tipoOcupacionLabels[apt.tipoOcupacion]}\nContacto: ${contacto}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
     const url = `https://wa.me/?text=${encodeURIComponent(message)}`
-    window.open(url, '_blank')
+    await open(url)
   }, [])
 
-  const handleShareWhatsAppGrupo = useCallback((grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
+  const handleShareWhatsAppGrupo = useCallback(async (grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
     if (!apt.contactoCelular) return
@@ -328,10 +329,10 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     const message = `Hola ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
     const celular = apt.contactoCelular.replace(/\D/g, '')
     const url = `https://wa.me/${celular}?text=${encodeURIComponent(message)}`
-    window.open(url, '_blank')
+    await open(url)
   }, [])
 
-  const handleSendGmailGrupo = useCallback((grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
+  const handleSendGmailGrupo = useCallback(async (grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
     if (!apt.contactoEmail) return
@@ -341,7 +342,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     const subject = `Administración del Edificio - Apartamento ${grupo.numero}`
     const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}\n\nSaludos cordiales.`
     const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(apt.contactoEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-    window.open(url, '_blank')
+    await open(url)
   }, [])
 
   const handleExport = useCallback(() => {
