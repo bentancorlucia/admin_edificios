@@ -19,7 +19,7 @@ const colors = {
   blue: [37, 99, 235] as [number, number, number],        // blue-600
 }
 
-export function generateInformePDF(data: InformeData, periodoLabel: string, piePagina?: string) {
+export function generateInformePDF(data: InformeData, periodoLabel: string, piePagina?: string, avisoFinal?: string) {
   const avisosActivos = (data.avisos || []).filter((a) => a.activo)
   const doc = new jsPDF("landscape")
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -248,60 +248,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   y += 24
 
   // =====================================================
-  // 3. AVISOS IMPORTANTES
-  // =====================================================
-  if (avisosActivos.length > 0) {
-    if (y > pageHeight - 50) {
-      doc.addPage("landscape")
-      drawPageHeader()
-      y = 40
-    }
-
-    y = drawSectionTitle(doc, "Información", margin, y)
-
-    // Calcular altura total de los avisos
-    doc.setFontSize(8)
-    const lineHeight = 4.5
-    const avisoSpacing = 3
-    let avisosHeight = 10
-    for (const aviso of avisosActivos) {
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
-      avisosHeight += lines.length * lineHeight + avisoSpacing
-    }
-
-    // Recuadro con fondo sutil
-    doc.setFillColor(...colors.background)
-    doc.setDrawColor(...colors.light)
-    doc.setLineWidth(0.3)
-    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
-    doc.setLineWidth(0.2)
-
-    y += 6
-
-    // Dibujar cada aviso con bullet simple
-    doc.setFontSize(8)
-    for (let i = 0; i < avisosActivos.length; i++) {
-      const aviso = avisosActivos[i]
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
-
-      // Bullet simple (punto) - centrado verticalmente con la primera línea de texto
-      // El texto de 8pt tiene una altura aproximada de 2.8mm, el bullet debe estar a la mitad
-      doc.setFillColor(...colors.secondary)
-      doc.circle(margin + 6, y - 1, 1.2, "F")
-
-      // Texto del aviso
-      doc.setFont("helvetica", "normal")
-      doc.setTextColor(...colors.primary)
-      doc.text(lines, margin + 12, y)
-
-      y += lines.length * lineHeight + avisoSpacing
-    }
-
-    y += 16
-  }
-
-  // =====================================================
-  // 4. RESUMEN GENERAL
+  // 3. RESUMEN GENERAL
   // =====================================================
   if (y > pageHeight - 45) {
     doc.addPage("landscape")
@@ -415,7 +362,57 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   y += 8
 
   // =====================================================
-  // 6. DETALLE DE EGRESOS (Gastos Comunes primero, Fondo Reserva después)
+  // 6. AVISOS IMPORTANTES
+  // =====================================================
+  if (avisosActivos.length > 0) {
+    if (y > pageHeight - 50) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+    }
+
+    y = drawSectionTitle(doc, "Información", margin, y)
+
+    // Calcular altura total de los avisos
+    doc.setFontSize(8)
+    const lineHeight = 4.5
+    const avisoSpacing = 3
+    let avisosHeight = 10
+    for (const aviso of avisosActivos) {
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+      avisosHeight += lines.length * lineHeight + avisoSpacing
+    }
+
+    // Recuadro con fondo sutil
+    doc.setFillColor(...colors.background)
+    doc.setDrawColor(...colors.light)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
+    doc.setLineWidth(0.2)
+
+    y += 6
+
+    // Dibujar cada aviso con bullet simple
+    doc.setFontSize(8)
+    for (let i = 0; i < avisosActivos.length; i++) {
+      const aviso = avisosActivos[i]
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+
+      doc.setFillColor(...colors.secondary)
+      doc.circle(margin + 6, y - 1, 1.2, "F")
+
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(...colors.primary)
+      doc.text(lines, margin + 12, y)
+
+      y += lines.length * lineHeight + avisoSpacing
+    }
+
+    y += 16
+  }
+
+  // =====================================================
+  // 7. DETALLE DE EGRESOS (Gastos Comunes primero, Fondo Reserva después)
   // =====================================================
   if (data.detalleEgresos && data.detalleEgresos.length > 0) {
     const egresosGastosComunes = data.detalleEgresos.filter(e => e.clasificacion === 'GASTO_COMUN')
@@ -445,6 +442,39 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
       y = drawSectionTitle(doc, "Detalle de Egresos - Fondo de Reserva", margin, y)
       y = drawEgresosTable(doc, egresosFondoReserva, y, margin, availableWidth, pageHeight, drawPageHeader)
     }
+  }
+
+  // =====================================================
+  // 8. NOTA FINAL (Aviso Final)
+  // =====================================================
+  if (avisoFinal && avisoFinal.trim()) {
+    if (y > pageHeight - 50) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+    }
+
+    y += 8
+    y = drawSectionTitle(doc, "Nota", margin, y)
+
+    // Calcular altura del aviso final
+    doc.setFontSize(8)
+    const lines = doc.splitTextToSize(avisoFinal.trim(), pageWidth - margin * 2 - 16)
+    const avisoHeight = lines.length * 4.5 + 12
+
+    // Recuadro con fondo azul claro
+    doc.setFillColor(239, 246, 255) // blue-50
+    doc.setDrawColor(...colors.blue)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, pageWidth - margin * 2, avisoHeight, 2, 2, "FD")
+    doc.setLineWidth(0.2)
+
+    y += 6
+
+    // Texto del aviso final
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(...colors.primary)
+    doc.text(lines, margin + 8, y)
   }
 
   // Footer
@@ -718,7 +748,7 @@ function formatCurrency(val: number): string {
   return `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
-export function generateInformeCombinado(data: InformeCombinado, piePagina?: string) {
+export function generateInformeCombinado(data: InformeCombinado, piePagina?: string, avisoFinal?: string) {
   const avisosActivos = (data.avisos || []).filter((a) => a.activo)
   const doc = new jsPDF("landscape")
   const pageWidth = doc.internal.pageSize.getWidth()
@@ -949,57 +979,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   y += 24
 
   // =====================================================
-  // 3. AVISOS IMPORTANTES
-  // =====================================================
-  if (avisosActivos.length > 0) {
-    if (y > pageHeight - 50) {
-      doc.addPage("landscape")
-      drawPageHeader()
-      y = 40
-    }
-
-    y = drawSectionTitle(doc, "Información", margin, y)
-
-    // Calcular altura total de los avisos
-    doc.setFontSize(8)
-    const lineHeight = 4.5
-    const avisoSpacing = 3
-    let avisosHeight = 10
-    for (const aviso of avisosActivos) {
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
-      avisosHeight += lines.length * lineHeight + avisoSpacing
-    }
-
-    // Recuadro con fondo sutil
-    doc.setFillColor(...colors.background)
-    doc.setDrawColor(...colors.light)
-    doc.setLineWidth(0.3)
-    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
-    doc.setLineWidth(0.2)
-
-    y += 6
-
-    // Dibujar cada aviso con bullet simple
-    doc.setFontSize(8)
-    for (let i = 0; i < avisosActivos.length; i++) {
-      const aviso = avisosActivos[i]
-      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
-
-      doc.setFillColor(...colors.secondary)
-      doc.circle(margin + 6, y - 1, 1.2, "F")
-
-      doc.setFont("helvetica", "normal")
-      doc.setTextColor(...colors.primary)
-      doc.text(lines, margin + 12, y)
-
-      y += lines.length * lineHeight + avisoSpacing
-    }
-
-    y += 16
-  }
-
-  // =====================================================
-  // 4. RESUMEN GENERAL DEL MES ANTERIOR
+  // 3. RESUMEN GENERAL DEL MES ANTERIOR
   // =====================================================
   if (y > pageHeight - 45) {
     doc.addPage("landscape")
@@ -1109,7 +1089,57 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   y += 8
 
   // =====================================================
-  // 6. DETALLE DE EGRESOS DEL MES ANTERIOR
+  // 6. AVISOS IMPORTANTES
+  // =====================================================
+  if (avisosActivos.length > 0) {
+    if (y > pageHeight - 50) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+    }
+
+    y = drawSectionTitle(doc, "Información", margin, y)
+
+    // Calcular altura total de los avisos
+    doc.setFontSize(8)
+    const lineHeight = 4.5
+    const avisoSpacing = 3
+    let avisosHeight = 10
+    for (const aviso of avisosActivos) {
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+      avisosHeight += lines.length * lineHeight + avisoSpacing
+    }
+
+    // Recuadro con fondo sutil
+    doc.setFillColor(...colors.background)
+    doc.setDrawColor(...colors.light)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, pageWidth - margin * 2, avisosHeight, 2, 2, "FD")
+    doc.setLineWidth(0.2)
+
+    y += 6
+
+    // Dibujar cada aviso con bullet simple
+    doc.setFontSize(8)
+    for (let i = 0; i < avisosActivos.length; i++) {
+      const aviso = avisosActivos[i]
+      const lines = doc.splitTextToSize(aviso.texto, pageWidth - margin * 2 - 20)
+
+      doc.setFillColor(...colors.secondary)
+      doc.circle(margin + 6, y - 1, 1.2, "F")
+
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(...colors.primary)
+      doc.text(lines, margin + 12, y)
+
+      y += lines.length * lineHeight + avisoSpacing
+    }
+
+    y += 16
+  }
+
+  // =====================================================
+  // 7. DETALLE DE EGRESOS DEL MES ANTERIOR
   // =====================================================
   if (data.datosAnterior.detalleEgresos && data.datosAnterior.detalleEgresos.length > 0) {
     const egresosGastosComunes = data.datosAnterior.detalleEgresos.filter(e => e.clasificacion === 'GASTO_COMUN')
@@ -1139,6 +1169,39 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
       y = drawSectionTitle(doc, `Detalle de Egresos - Fondo de Reserva - ${data.mesAnterior.label}`, margin, y)
       y = drawEgresosTable(doc, egresosFondoReserva, y, margin, availableWidth, pageHeight, drawPageHeader)
     }
+  }
+
+  // =====================================================
+  // 8. NOTA FINAL (Aviso Final)
+  // =====================================================
+  if (avisoFinal && avisoFinal.trim()) {
+    if (y > pageHeight - 50) {
+      doc.addPage("landscape")
+      drawPageHeader()
+      y = 40
+    }
+
+    y += 8
+    y = drawSectionTitle(doc, "Nota", margin, y)
+
+    // Calcular altura del aviso final
+    doc.setFontSize(8)
+    const lines = doc.splitTextToSize(avisoFinal.trim(), pageWidth - margin * 2 - 16)
+    const avisoHeight = lines.length * 4.5 + 12
+
+    // Recuadro con fondo azul claro
+    doc.setFillColor(239, 246, 255) // blue-50
+    doc.setDrawColor(...colors.blue)
+    doc.setLineWidth(0.3)
+    doc.roundedRect(margin, y, pageWidth - margin * 2, avisoHeight, 2, 2, "FD")
+    doc.setLineWidth(0.2)
+
+    y += 6
+
+    // Texto del aviso final
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(...colors.primary)
+    doc.text(lines, margin + 8, y)
   }
 
   // Footer

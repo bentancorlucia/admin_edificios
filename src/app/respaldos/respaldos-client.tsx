@@ -16,13 +16,11 @@ import {
   Clock,
   FolderSync
 } from "lucide-react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import {
   checkGoogleDriveStatus,
   backupToGoogleDrive,
-  backupToCustomPath,
-  verifyCustomPath,
+  backupToSelectedFolder,
+  selectBackupFolder,
   getBackupHistory,
   diagnosticGoogleDrivePaths,
   type DriveStatus,
@@ -93,7 +91,7 @@ export function RespaldosClient() {
     try {
       let result: BackupResult
       if (useCustomPath && customPath) {
-        result = await backupToCustomPath(customPath)
+        result = await backupToSelectedFolder(customPath)
       } else {
         result = await backupToGoogleDrive()
       }
@@ -109,22 +107,18 @@ export function RespaldosClient() {
     }
   }
 
-  const handleSaveCustomPath = async () => {
-    if (!customPath) return
-
+  const handleSelectFolder = async () => {
     setVerifying(true)
     setPathError(null)
 
     try {
-      const result = await verifyCustomPath(customPath)
-      if (result.valid) {
-        localStorage.setItem('backup_custom_path', result.normalizedPath)
-        setCustomPath(result.normalizedPath)
+      const selectedPath = await selectBackupFolder()
+      if (selectedPath) {
+        localStorage.setItem('backup_custom_path', selectedPath)
+        setCustomPath(selectedPath)
         setUseCustomPath(true)
         setPathError(null)
         checkStatus()
-      } else {
-        setPathError(result.error || 'Ruta inválida')
       }
     } catch (error) {
       setPathError(`Error: ${String(error)}`)
@@ -197,23 +191,21 @@ export function RespaldosClient() {
               {/* Opción para cambiar ruta */}
               <details className="text-sm">
                 <summary className="cursor-pointer text-slate-500 hover:text-slate-700">
-                  Cambiar carpeta de respaldo (multicuentas)
+                  Cambiar carpeta de respaldo
                 </summary>
                 <div className="mt-2 p-3 bg-blue-50 rounded-lg space-y-2">
-                  <Label className="text-xs">Ruta personalizada:</Label>
                   <div className="flex gap-2">
-                    <Input
-                      placeholder="Ej: H:\Mi unidad"
-                      value={customPath}
-                      onChange={(e) => setCustomPath(e.target.value)}
-                      className="flex-1 text-sm"
-                    />
-                    <Button size="sm" onClick={handleSaveCustomPath} disabled={!customPath}>
-                      Usar
+                    <Button size="sm" onClick={handleSelectFolder} disabled={verifying}>
+                      {verifying ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                      ) : (
+                        <FolderSync className="h-4 w-4 mr-1" />
+                      )}
+                      Seleccionar carpeta
                     </Button>
                     {useCustomPath && (
                       <Button size="sm" variant="ghost" onClick={handleClearCustomPath}>
-                        Auto
+                        Usar auto-detección
                       </Button>
                     )}
                   </div>
@@ -279,46 +271,38 @@ export function RespaldosClient() {
                 </AlertDescription>
               </Alert>
 
-              {/* Ruta personalizada */}
+              {/* Selección de carpeta */}
               <div className="bg-blue-50 p-4 rounded-lg space-y-3 border border-blue-200">
                 <h4 className="font-medium flex items-center gap-2">
                   <FolderSync className="h-4 w-4" />
-                  Configurar ruta manualmente
+                  Seleccionar carpeta de respaldo
                 </h4>
                 <p className="text-sm text-slate-600">
-                  Si tienes Google Drive en una unidad diferente (ej: H:\Mi unidad), ingrésala aquí:
+                  Selecciona la carpeta donde quieres guardar los respaldos (puede ser tu carpeta de Google Drive u otra ubicación):
                 </p>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Ej: H:\Mi unidad o H:/Mi unidad"
-                    value={customPath}
-                    onChange={(e) => {
-                      setCustomPath(e.target.value)
-                      setPathError(null)
-                    }}
-                    className="flex-1"
-                  />
-                  <Button onClick={handleSaveCustomPath} disabled={!customPath || verifying}>
-                    {verifying ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      'Verificar y Guardar'
-                    )}
-                  </Button>
-                </div>
+                <Button onClick={handleSelectFolder} disabled={verifying} className="w-full">
+                  {verifying ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Verificando...
+                    </>
+                  ) : (
+                    <>
+                      <FolderSync className="h-4 w-4 mr-2" />
+                      Seleccionar carpeta
+                    </>
+                  )}
+                </Button>
                 {pathError && (
                   <Alert variant="destructive" className="mt-2">
                     <AlertCircle className="h-4 w-4" />
                     <AlertDescription>{pathError}</AlertDescription>
                   </Alert>
                 )}
-                <p className="text-xs text-slate-500 mt-1">
-                  Tip: Puedes usar / o \ en la ruta. Ejemplo: H:/Mi unidad
-                </p>
                 {useCustomPath && customPath && (
                   <div className="flex items-center justify-between bg-green-100 p-2 rounded">
                     <span className="text-sm text-green-800">
-                      Usando ruta: <code className="font-mono">{customPath}</code>
+                      Carpeta seleccionada: <code className="font-mono text-xs">{customPath}</code>
                     </span>
                     <Button variant="ghost" size="sm" onClick={handleClearCustomPath}>
                       Limpiar

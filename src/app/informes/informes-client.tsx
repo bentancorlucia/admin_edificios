@@ -62,6 +62,7 @@ import {
   deleteAvisoInforme,
   reorderAvisosInforme,
   updatePiePaginaInforme,
+  updateAvisoFinalInforme,
 } from "@/lib/database"
 import { Input } from "@/components/ui/input"
 import { generateInformePDF, generateInformeCombinado } from "@/lib/informe-pdf"
@@ -93,9 +94,10 @@ type Props = {
   initialMes: number
   initialAnio: number
   initialPiePagina: string
+  initialAvisoFinal: string
 }
 
-export function InformesClient({ initialData, initialMes, initialAnio, initialPiePagina }: Props) {
+export function InformesClient({ initialData, initialMes, initialAnio, initialPiePagina, initialAvisoFinal }: Props) {
   const [data, setData] = useState<InformeData>(initialData)
   const [mes, setMes] = useState(initialMes)
   const [anio, setAnio] = useState(initialAnio)
@@ -121,6 +123,12 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
   const [editingPiePagina, setEditingPiePagina] = useState(false)
   const [piePaginaTemp, setPiePaginaTemp] = useState(initialPiePagina)
   const [savingPiePagina, setSavingPiePagina] = useState(false)
+
+  // Estados para aviso final
+  const [avisoFinal, setAvisoFinal] = useState(initialAvisoFinal)
+  const [editingAvisoFinal, setEditingAvisoFinal] = useState(false)
+  const [avisoFinalTemp, setAvisoFinalTemp] = useState(initialAvisoFinal)
+  const [savingAvisoFinal, setSavingAvisoFinal] = useState(false)
 
   // Estados para informe acumulado
   const [acumuladoFechaInicio, setAcumuladoFechaInicio] = useState(
@@ -303,6 +311,27 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
     setEditingPiePagina(false)
   }
 
+  // Handlers para aviso final
+  const handleSaveAvisoFinal = async () => {
+    if (avisoFinalTemp.trim() === avisoFinal) {
+      setEditingAvisoFinal(false)
+      return
+    }
+    setSavingAvisoFinal(true)
+    try {
+      const nuevoValor = await updateAvisoFinalInforme(avisoFinalTemp.trim())
+      setAvisoFinal(nuevoValor)
+      setEditingAvisoFinal(false)
+    } finally {
+      setSavingAvisoFinal(false)
+    }
+  }
+
+  const handleCancelAvisoFinal = () => {
+    setAvisoFinalTemp(avisoFinal)
+    setEditingAvisoFinal(false)
+  }
+
   // Handler para cargar informe acumulado
   const handleLoadAcumulado = async () => {
     setLoadingAcumulado(true)
@@ -336,13 +365,13 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
       ...data,
       avisos: avisos,
     }
-    generateInformePDF(dataConAvisosActualizados, mesLabel, piePagina)
+    generateInformePDF(dataConAvisosActualizados, mesLabel, piePagina, avisoFinal)
     toast({
       title: "PDF descargado",
       description: `Informe de ${mesLabel} descargado correctamente`,
       variant: "success",
     })
-  }, [data, avisos, mesLabel, piePagina])
+  }, [data, avisos, mesLabel, piePagina, avisoFinal])
 
   const handleExportExcel = useCallback(() => {
     generateInformeExcel(data, mesLabel)
@@ -361,7 +390,7 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
         ...dataCombinada,
         avisos: avisos,
       }
-      generateInformeCombinado(dataConAvisosActualizados, piePagina)
+      generateInformeCombinado(dataConAvisosActualizados, piePagina, avisoFinal)
       toast({
         title: "PDF Combinado descargado",
         description: `Informe combinado ${dataCombinada.mesAnterior.label} + ${dataCombinada.mesCorriente.label}`,
@@ -375,7 +404,7 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
         variant: "destructive",
       })
     }
-  }, [mes, anio, avisos, piePagina])
+  }, [mes, anio, avisos, piePagina, avisoFinal])
 
   return (
     <div className="space-y-6 p-6">
@@ -831,8 +860,8 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
               </CardContent>
             </Card>
 
-            {/* Avisos y Pie de Página en grid */}
-            <div className="grid gap-6 lg:grid-cols-2">
+            {/* Avisos, Pie de Página y Aviso Final en grid */}
+            <div className="grid gap-6 lg:grid-cols-3">
               {/* Avisos */}
               <Card>
                 <CardHeader className="pb-3">
@@ -1073,6 +1102,73 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
                     >
                       <span className="text-sm text-slate-600">{piePagina || "Click para agregar pie de página"}</span>
                       <Pencil className="h-4 w-4 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100" />
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Aviso Final */}
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <MessageSquare className="h-4 w-4 text-blue-600" />
+                    Nota Final del Informe
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="mb-3 text-xs text-slate-500">
+                    Este texto aparecerá al final del PDF, después del detalle de egresos.
+                  </p>
+                  {editingAvisoFinal ? (
+                    <div className="space-y-2">
+                      <Textarea
+                        value={avisoFinalTemp}
+                        onChange={(e) => setAvisoFinalTemp(e.target.value)}
+                        placeholder="Escribe una nota final para el informe..."
+                        className="min-h-[80px] resize-none"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && e.ctrlKey) handleSaveAvisoFinal()
+                          if (e.key === "Escape") handleCancelAvisoFinal()
+                        }}
+                        autoFocus
+                      />
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleCancelAvisoFinal}
+                          disabled={savingAvisoFinal}
+                        >
+                          <X className="mr-1 h-3 w-3" />
+                          Cancelar
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={handleSaveAvisoFinal}
+                          disabled={savingAvisoFinal}
+                          className="bg-green-600 hover:bg-green-700"
+                        >
+                          {savingAvisoFinal ? (
+                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                          ) : (
+                            <Check className="mr-1 h-3 w-3" />
+                          )}
+                          Guardar
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      className="group flex cursor-pointer items-start justify-between rounded-lg border-2 border-dashed p-4 transition-colors hover:border-slate-300 hover:bg-slate-50"
+                      onClick={() => {
+                        setAvisoFinalTemp(avisoFinal)
+                        setEditingAvisoFinal(true)
+                      }}
+                    >
+                      <span className="text-sm text-slate-600 whitespace-pre-wrap">
+                        {avisoFinal || "Click para agregar nota final"}
+                      </span>
+                      <Pencil className="h-4 w-4 text-slate-400 opacity-0 transition-opacity group-hover:opacity-100 shrink-0 ml-2" />
                     </div>
                   )}
                 </CardContent>

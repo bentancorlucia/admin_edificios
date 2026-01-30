@@ -3043,6 +3043,19 @@ export async function updatePiePaginaInforme(valor: string): Promise<string> {
   return config.valor;
 }
 
+// Aviso final del informe (nota al final del PDF)
+const AVISO_FINAL_KEY = 'aviso_final_informe';
+
+export async function getAvisoFinalInforme(): Promise<string> {
+  const config = await getConfiguracionInforme(AVISO_FINAL_KEY);
+  return config?.valor ?? '';
+}
+
+export async function updateAvisoFinalInforme(valor: string): Promise<string> {
+  const config = await setConfiguracionInforme(AVISO_FINAL_KEY, valor);
+  return config.valor;
+}
+
 // ============ RECIBOS NO VINCULADOS ============
 
 export interface ReciboNoVinculado {

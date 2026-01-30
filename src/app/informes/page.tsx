@@ -5,12 +5,14 @@ import { InformesClient } from "./informes-client"
 import {
   getInformeData,
   getPiePaginaInforme,
+  getAvisoFinalInforme,
   type InformeData,
 } from "@/lib/database"
 
 export default function InformesPage() {
   const [informeData, setInformeData] = useState<InformeData | null>(null)
   const [piePagina, setPiePagina] = useState("")
+  const [avisoFinal, setAvisoFinal] = useState("")
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [anio, setAnio] = useState(new Date().getFullYear())
   const [isLoading, setIsLoading] = useState(true)
@@ -18,12 +20,14 @@ export default function InformesPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const [data, pie] = await Promise.all([
+        const [data, pie, aviso] = await Promise.all([
           getInformeData(mes, anio),
           getPiePaginaInforme(),
+          getAvisoFinalInforme(),
         ])
         setInformeData(data)
         setPiePagina(pie)
+        setAvisoFinal(aviso)
       } catch (error) {
         console.error("Error loading data:", error)
       } finally {
@@ -47,6 +51,7 @@ export default function InformesPage() {
       initialMes={mes}
       initialAnio={anio}
       initialPiePagina={piePagina}
+      initialAvisoFinal={avisoFinal}
     />
   )
 }

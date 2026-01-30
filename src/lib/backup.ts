@@ -1,6 +1,7 @@
 import { appDataDir, join, homeDir } from '@tauri-apps/api/path'
 import { copyFile, exists, mkdir, readDir } from '@tauri-apps/plugin-fs'
 import { platform } from '@tauri-apps/plugin-os'
+import { open } from '@tauri-apps/plugin-dialog'
 
 export interface BackupResult {
   success: boolean
@@ -228,6 +229,33 @@ export async function backupToCustomPath(customPath: string): Promise<BackupResu
     }
 
     return await createBackup(normalized)
+  } catch (error) {
+    return { success: false, error: `Error al respaldar: ${String(error)}` }
+  }
+}
+
+// Abrir diálogo para seleccionar carpeta de respaldo
+export async function selectBackupFolder(): Promise<string | null> {
+  try {
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: 'Seleccionar carpeta de respaldo'
+    })
+    return selected as string | null
+  } catch (error) {
+    console.error('Error selecting folder:', error)
+    return null
+  }
+}
+
+// Respaldar a carpeta seleccionada por el usuario
+export async function backupToSelectedFolder(folderPath: string): Promise<BackupResult> {
+  try {
+    if (!folderPath) {
+      return { success: false, error: 'No se seleccionó ninguna carpeta' }
+    }
+    return await createBackup(folderPath)
   } catch (error) {
     return { success: false, error: `Error al respaldar: ${String(error)}` }
   }
