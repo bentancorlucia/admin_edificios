@@ -495,7 +495,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" })
   }
 
-  const fileName = `detalle-gastos-comunes-${periodoLabel.toLowerCase().replace(/\s/g, "-")}.pdf`
+  const fileName = `Edificio Constituyente II – Gastos Comunes ${periodoLabel}.pdf`
   doc.save(fileName)
 }
 
@@ -796,9 +796,10 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   // =====================================================
   y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
 
-  // Headers con mes anterior dinámico
+  // Headers con mes anterior y mes corriente dinámicos
   const mesAnteriorCorto = data.mesAnterior.label.split(' ')[0].substring(0, 3) + ' ' + data.mesAnterior.anio
-  const tableHeaders = ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, "Saldo Ant.", "G. Comunes", "F. Reserva", "Saldo Actual"]
+  const mesCorrienteCorto = data.mesCorriente.label.split(' ')[0].substring(0, 3) + ' ' + data.mesCorriente.anio
+  const tableHeaders = ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", `Saldo ${mesCorrienteCorto}`]
   const colWidths = [1, 1, 1, 1, 1, 1, 1]
   const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
   const scaleFactor = availableWidth / totalColWidth
@@ -1220,6 +1221,6 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" })
   }
 
-  const fileName = `informe-gastos-comunes-${data.mesCorriente.label.toLowerCase().replace(/\s/g, "-")}.pdf`
+  const fileName = `Edificio Constituyente II – Informe Mensual ${data.mesCorriente.label}.pdf`
   doc.save(fileName)
 }

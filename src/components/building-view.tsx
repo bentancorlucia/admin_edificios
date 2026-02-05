@@ -15,7 +15,7 @@ import {
   MessageCircle,
   X
 } from "lucide-react"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatPhoneForWhatsApp } from "@/lib/utils"
 
 interface Apartamento {
   id: string
@@ -149,7 +149,7 @@ export function BuildingView({ apartamentos, saldos }: BuildingViewProps) {
     const mensaje = encodeURIComponent(
       `Hola${contacto ? ` ${contacto}` : ''}, le escribo desde la administración del edificio respecto al apartamento ${apt.numero}.`
     )
-    await open(`https://wa.me/${apt.contactoCelular.replace(/\D/g, "")}?text=${mensaje}`)
+    await open(`https://wa.me/${formatPhoneForWhatsApp(apt.contactoCelular)}?text=${mensaje}`)
   }
 
   const handleSendGmail = async (apt: Apartamento) => {

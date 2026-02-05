@@ -46,8 +46,11 @@ import {
   Star,
   Landmark,
   AlertTriangle,
+  MessageCircle,
+  Mail,
+  FileText,
 } from "lucide-react"
-import { formatCurrency, formatDate } from "@/lib/utils"
+import { formatCurrency, formatDate, formatPhoneForWhatsApp } from "@/lib/utils"
 import {
   createTransaccion,
   createVentaCredito,
@@ -59,18 +62,23 @@ import {
   obtenerDeudasPorConcepto,
   calcularDistribucionPago,
   getInfoBancoVinculadoTransaccion,
+  obtenerSaldosCuentaCorriente,
   type Transaccion as DBTransaccion,
   type DeudasPorConcepto,
   type DistribucionPago,
   type InfoBancoVinculado,
 } from "@/lib/database"
-import { generateTransaccionesPDF } from "@/lib/pdf"
+import { generateTransaccionesPDF, downloadReciboPagoPDF, type ReciboPagoData } from "@/lib/pdf"
 import { toast } from "@/hooks/use-toast"
 
 type Apartamento = {
   id: string
   numero: string
   tipoOcupacion: "PROPIETARIO" | "INQUILINO"
+  contactoNombre?: string | null
+  contactoApellido?: string | null
+  contactoCelular?: string | null
+  contactoEmail?: string | null
 }
 
 type CuentaBancaria = {
@@ -190,6 +198,9 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const [distribucionPago, setDistribucionPago] = useState<DistribucionPago | null>(null)
   const [cargandoDeuda, setCargandoDeuda] = useState(false)
 
+  // Estado para saldos de cuenta corriente (para recibos de pago)
+  const [saldosCuentaCorriente, setSaldosCuentaCorriente] = useState<Record<string, number>>({})
+
   // Efecto para cargar deudas cuando se selecciona un apartamento
   useEffect(() => {
     const cargarDeudas = async () => {
@@ -249,6 +260,19 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       }))
     }
   }, [cuentaPorDefecto, reciboPagoForm.cuentaBancariaId])
+
+  // Efecto para cargar saldos de cuenta corriente
+  useEffect(() => {
+    const cargarSaldos = async () => {
+      try {
+        const saldos = await obtenerSaldosCuentaCorriente()
+        setSaldosCuentaCorriente(saldos)
+      } catch (error) {
+        console.error("Error al cargar saldos:", error)
+      }
+    }
+    cargarSaldos()
+  }, [transacciones]) // Recargar cuando cambien las transacciones
 
   const [editForm, setEditForm] = useState({
     tipo: "INGRESO",
@@ -711,6 +735,166 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     }
   }
 
+  // Función para preparar datos del recibo de pago
+  const prepareReciboData = useCallback((t: Transaccion): ReciboPagoData | null => {
+    if (t.tipo !== "RECIBO_PAGO" || !t.apartamentoId) return null
+
+    const aptData = apartamentos.find(a => a.id === t.apartamentoId)
+    if (!aptData) return null
+
+    const fechaStr = typeof t.fecha === 'string' ? t.fecha : t.fecha.toISOString()
+    const saldoFinal = saldosCuentaCorriente[t.apartamentoId] || 0
+
+    return {
+      apartamentoNumero: aptData.numero,
+      fecha: fechaStr,
+      monto: t.monto,
+      metodoPago: t.metodoPago || "OTRO",
+      referencia: t.referencia,
+      conceptos: {
+        gastosComunes: t.montoGastoComun || (t.clasificacionPago === "GASTO_COMUN" ? t.monto : 0),
+        fondoReserva: t.montoFondoReserva || (t.clasificacionPago === "FONDO_RESERVA" ? t.monto : 0),
+      },
+      saldoFinal,
+    }
+  }, [apartamentos, saldosCuentaCorriente])
+
+  // Función para descargar el recibo en PDF
+  const handleDownloadRecibo = useCallback((t: Transaccion) => {
+    const reciboData = prepareReciboData(t)
+    if (!reciboData) {
+      toast({
+        title: "Error",
+        description: "No se pudo generar el recibo",
+        variant: "destructive",
+      })
+      return
+    }
+    downloadReciboPagoPDF(reciboData)
+    toast({
+      title: "Recibo descargado",
+      description: `Comprobante de pago del Apto ${reciboData.apartamentoNumero}`,
+      variant: "success",
+    })
+  }, [prepareReciboData])
+
+  // Función para enviar recibo por WhatsApp
+  const handleShareWhatsApp = useCallback((t: Transaccion) => {
+    const reciboData = prepareReciboData(t)
+    if (!reciboData || !t.apartamentoId) return
+
+    const aptData = apartamentos.find(a => a.id === t.apartamentoId)
+    if (!aptData?.contactoCelular) {
+      toast({
+        title: "Sin número de teléfono",
+        description: "Este apartamento no tiene un número de celular registrado",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const fechaFormateada = new Date(reciboData.fecha).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC"
+    })
+
+    const saldoTexto = reciboData.saldoFinal > 0
+      ? `Saldo deudor: $${reciboData.saldoFinal.toLocaleString()}`
+      : reciboData.saldoFinal < 0
+        ? `Saldo a favor: $${Math.abs(reciboData.saldoFinal).toLocaleString()}`
+        : "Cuenta al día"
+
+    // Construir detalle de conceptos
+    let conceptosTexto = ""
+    if (reciboData.conceptos.gastosComunes > 0) {
+      conceptosTexto += `• Gastos Comunes: $${reciboData.conceptos.gastosComunes.toLocaleString()}\n`
+    }
+    if (reciboData.conceptos.fondoReserva > 0) {
+      conceptosTexto += `• Fondo de Reserva: $${reciboData.conceptos.fondoReserva.toLocaleString()}\n`
+    }
+    if (!conceptosTexto) {
+      conceptosTexto = `• Pago a cuenta: $${reciboData.monto.toLocaleString()}\n`
+    }
+
+    const message = `*COMPROBANTE DE PAGO*
+Edificio Constituyente II
+
+*Apartamento:* ${reciboData.apartamentoNumero}
+*Fecha:* ${fechaFormateada}
+
+*Conceptos abonados:*
+${conceptosTexto}
+*Total abonado:* $${reciboData.monto.toLocaleString()}
+
+*${saldoTexto}*
+
+_Este mensaje es un comprobante de pago._`
+
+    const phone = formatPhoneForWhatsApp(aptData.contactoCelular)
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    window.open(url, "_blank")
+
+    toast({
+      title: "WhatsApp abierto",
+      description: "Se abrió WhatsApp con el comprobante de pago",
+      variant: "success",
+    })
+  }, [apartamentos, prepareReciboData])
+
+  // Función para enviar recibo por Email
+  const handleShareEmail = useCallback((t: Transaccion) => {
+    const reciboData = prepareReciboData(t)
+    if (!reciboData || !t.apartamentoId) return
+
+    const aptData = apartamentos.find(a => a.id === t.apartamentoId)
+    if (!aptData?.contactoEmail) {
+      toast({
+        title: "Sin email",
+        description: "Este apartamento no tiene un email registrado",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const fechaFormateada = new Date(reciboData.fecha).toLocaleDateString("es-ES", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      timeZone: "UTC"
+    })
+
+    const saldoTexto = reciboData.saldoFinal > 0
+      ? `Saldo deudor: $${reciboData.saldoFinal.toLocaleString()}`
+      : reciboData.saldoFinal < 0
+        ? `Saldo a favor: $${Math.abs(reciboData.saldoFinal).toLocaleString()}`
+        : "Cuenta al día"
+
+    // Construir detalle de conceptos
+    let conceptosTexto = ""
+    if (reciboData.conceptos.gastosComunes > 0) {
+      conceptosTexto += `- Gastos Comunes: $${reciboData.conceptos.gastosComunes.toLocaleString()}%0D%0A`
+    }
+    if (reciboData.conceptos.fondoReserva > 0) {
+      conceptosTexto += `- Fondo de Reserva: $${reciboData.conceptos.fondoReserva.toLocaleString()}%0D%0A`
+    }
+    if (!conceptosTexto) {
+      conceptosTexto = `- Pago a cuenta: $${reciboData.monto.toLocaleString()}%0D%0A`
+    }
+
+    const subject = encodeURIComponent(`Comprobante de Pago - Apto ${reciboData.apartamentoNumero} - ${fechaFormateada}`)
+    const body = `COMPROBANTE DE PAGO%0D%0AEdificio Constituyente II%0D%0A%0D%0AApartamento: ${reciboData.apartamentoNumero}%0D%0AFecha: ${fechaFormateada}%0D%0A%0D%0AConceptos abonados:%0D%0A${conceptosTexto}%0D%0ATotal abonado: $${reciboData.monto.toLocaleString()}%0D%0A%0D%0A${saldoTexto}%0D%0A%0D%0AEste correo es un comprobante de pago.`
+
+    window.open(`mailto:${aptData.contactoEmail}?subject=${subject}&body=${body}`, "_blank")
+
+    toast({
+      title: "Email abierto",
+      description: "Se abrió su cliente de correo con el comprobante",
+      variant: "success",
+    })
+  }, [apartamentos, prepareReciboData])
+
   return (
     <div className="space-y-8 px-4 md:px-8 lg:px-12 py-6">
       {/* Header con gradiente */}
@@ -983,8 +1167,8 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
+                  <div className="flex items-center gap-2">
+                    <div className="text-right mr-2">
                       <p className={`font-semibold ${
                         t.tipo === "EGRESO" ? "text-red-600" :
                         t.tipo === "VENTA_CREDITO" ? "text-amber-600" : "text-green-600"
@@ -1006,6 +1190,38 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
                         </div>
                       )}
                     </div>
+                    {/* Botones de envío de recibo (solo para RECIBO_PAGO) */}
+                    {t.tipo === "RECIBO_PAGO" && t.apartamentoId && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDownloadRecibo(t)}
+                          className="h-8 w-8 text-slate-400 hover:text-green-600"
+                          title="Descargar recibo PDF"
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleShareWhatsApp(t)}
+                          className="h-8 w-8 text-slate-400 hover:text-green-600"
+                          title="Enviar por WhatsApp"
+                        >
+                          <MessageCircle className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleShareEmail(t)}
+                          className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                          title="Enviar por Email"
+                        >
+                          <Mail className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"

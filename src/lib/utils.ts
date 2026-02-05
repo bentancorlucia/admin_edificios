@@ -24,3 +24,18 @@ export function formatDate(date: Date | string): string {
     timeZone: 'UTC'
   })
 }
+
+export function formatPhoneForWhatsApp(phone: string): string {
+  // Eliminar caracteres no numéricos
+  const cleaned = phone.replace(/\D/g, '')
+  // Si empieza con 09 (formato Uruguay), convertir a +5989
+  if (cleaned.startsWith('09')) {
+    return '598' + cleaned.substring(1)
+  }
+  // Si ya tiene código de país 598, dejarlo
+  if (cleaned.startsWith('598')) {
+    return cleaned
+  }
+  // Para otros casos, retornar el número limpio
+  return cleaned
+}

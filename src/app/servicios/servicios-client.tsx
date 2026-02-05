@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { open } from "@tauri-apps/plugin-shell"
+import { formatPhoneForWhatsApp } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -332,7 +333,7 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
   const handleWhatsApp = async (srv: Servicio) => {
     if (!srv.celular) return
     const message = `Hola ${srv.nombre}, me comunico del edificio.`
-    const url = `https://wa.me/${srv.celular.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`
+    const url = `https://wa.me/${formatPhoneForWhatsApp(srv.celular)}?text=${encodeURIComponent(message)}`
     await open(url)
   }
 

@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/select"
 import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
-import { formatCurrency } from "@/lib/utils"
+import { formatCurrency, formatPhoneForWhatsApp } from "@/lib/utils"
 import {
   createApartamento,
   updateApartamento,
@@ -327,8 +327,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
     const tipoLabel = tipo === 'propietario' ? 'Propietario' : 'Inquilino'
     const message = `Hola ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
-    const celular = apt.contactoCelular.replace(/\D/g, '')
-    const url = `https://wa.me/${celular}?text=${encodeURIComponent(message)}`
+    const url = `https://wa.me/${formatPhoneForWhatsApp(apt.contactoCelular)}?text=${encodeURIComponent(message)}`
     await open(url)
   }, [])
 

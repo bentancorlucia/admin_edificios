@@ -1706,7 +1706,7 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
       await createTransaccion({
         tipo: 'VENTA_CREDITO',
         monto: apt.gastosComunes,
-        fecha: ahora.toISOString(),
+        fecha: primerDiaMes,
         categoria: 'GASTOS_COMUNES',
         descripcion: `Gastos Comunes - ${mesActual}`,
         estadoCredito: 'PENDIENTE',
@@ -1726,7 +1726,7 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
       await createTransaccion({
         tipo: 'VENTA_CREDITO',
         monto: apt.fondoReserva,
-        fecha: ahora.toISOString(),
+        fecha: primerDiaMes,
         categoria: 'FONDO_RESERVA',
         descripcion: `Fondo de Reserva - ${mesActual}`,
         estadoCredito: 'PENDIENTE',
