@@ -57,6 +57,7 @@ import {
   getInformeData,
   getInformeAcumulado,
   getInformeCombinado,
+  getInformeCompleto,
   createAvisoInforme,
   updateAvisoInforme,
   deleteAvisoInforme,
@@ -65,7 +66,7 @@ import {
   updateAvisoFinalInforme,
 } from "@/lib/database"
 import { Input } from "@/components/ui/input"
-import { generateInformePDF, generateInformeCombinado } from "@/lib/informe-pdf"
+import { generateInformePDF, generateInformeCombinado, generateInformeDetalleMensual } from "@/lib/informe-pdf"
 import { generateInformeExcel } from "@/lib/informe-excel"
 import { toast } from "@/hooks/use-toast"
 
@@ -406,6 +407,30 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
     }
   }, [mes, anio, avisos, piePagina, avisoFinal])
 
+  const handleExportPDFCompleto = useCallback(async () => {
+    try {
+      const dataCompleta = await getInformeCompleto(mes, anio)
+      // Usar avisos del estado local
+      const dataConAvisosActualizados = {
+        ...dataCompleta,
+        avisos: avisos,
+      }
+      generateInformeDetalleMensual(dataConAvisosActualizados, piePagina, avisoFinal)
+      toast({
+        title: "PDF Completo descargado",
+        description: `Detalle mensual ${dataCompleta.mesCorriente.label} con pagos de ${dataCompleta.mesAnterior.label}`,
+        variant: "success",
+      })
+    } catch (error) {
+      console.error("Error generando PDF completo:", error)
+      toast({
+        title: "Error",
+        description: "No se pudo generar el PDF completo",
+        variant: "destructive",
+      })
+    }
+  }, [mes, anio, avisos, piePagina, avisoFinal])
+
   return (
     <div className="space-y-6 p-6">
       {/* Header con navegación de fecha */}
@@ -493,6 +518,16 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
           >
             <FileText className="h-4 w-4" />
             PDF Comb.
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleExportPDFCompleto}
+            disabled={isPending}
+            className="gap-2 bg-blue-600 hover:bg-blue-700"
+          >
+            <FileText className="h-4 w-4" />
+            PDF Completo
           </Button>
           <Button
             variant="outline"

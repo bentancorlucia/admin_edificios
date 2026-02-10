@@ -2428,6 +2428,30 @@ export interface InformeCombinado {
   avisos: AvisoInforme[];
 }
 
+// Interface para pago detallado en el informe
+export interface PagoDetalladoInforme {
+  fecha: string;
+  apartamentoNumero: string;
+  tipoOcupacion: 'PROPIETARIO' | 'INQUILINO';
+  contactoNombre: string | null;
+  contactoApellido: string | null;
+  monto: number;
+  montoGastoComun: number;
+  montoFondoReserva: number;
+  metodoPago: string | null;
+  referencia: string | null;
+}
+
+// Interface para informe completo (combinado + pagos del mes anterior)
+export interface InformeCompleto extends InformeCombinado {
+  pagosDelMesAnterior: PagoDetalladoInforme[];
+  totalPagosDetallados: {
+    totalMonto: number;
+    totalGastosComunes: number;
+    totalFondoReserva: number;
+  };
+}
+
 export async function getInformeData(mes: number, anio: number): Promise<InformeData> {
   const fechaInicio = new Date(anio, mes - 1, 1);
   const fechaFin = new Date(anio, mes, 0, 23, 59, 59, 999);
@@ -2920,6 +2944,101 @@ export async function getInformeCombinado(
       totalSaldoActual: apartamentosCombinados.reduce((s, a) => s + a.saldoActual, 0),
     },
     avisos,
+  };
+}
+
+export async function getInformeCompleto(
+  mesCorriente: number,
+  anioCorriente: number
+): Promise<InformeCompleto> {
+  // Obtener datos del informe combinado
+  const informeCombinado = await getInformeCombinado(mesCorriente, anioCorriente);
+
+  // Calcular mes anterior
+  let mesAnterior = mesCorriente - 1;
+  let anioAnterior = anioCorriente;
+  if (mesAnterior < 1) {
+    mesAnterior = 12;
+    anioAnterior = anioCorriente - 1;
+  }
+
+  // Definir rango de fechas del mes anterior
+  const fechaInicioAnterior = new Date(anioAnterior, mesAnterior - 1, 1);
+  const fechaFinAnterior = new Date(anioAnterior, mesAnterior, 0, 23, 59, 59, 999);
+
+  // Obtener datos necesarios
+  const [apartamentos, todasTransacciones] = await Promise.all([
+    getApartamentos(),
+    getTransacciones(),
+  ]);
+
+  // Crear mapa de apartamentos para acceso rápido
+  const aptMap = new Map(apartamentos.map(a => [a.id, a]));
+
+  // Filtrar pagos del mes anterior
+  const pagosDelMesAnterior: PagoDetalladoInforme[] = [];
+  let totalMonto = 0;
+  let totalGastosComunes = 0;
+  let totalFondoReserva = 0;
+
+  for (const t of todasTransacciones) {
+    if (t.tipo !== 'RECIBO_PAGO') continue;
+
+    const fechaPago = new Date(t.fecha);
+    if (fechaPago < fechaInicioAnterior || fechaPago > fechaFinAnterior) continue;
+
+    const apt = aptMap.get(t.apartamentoId || '');
+    if (!apt) continue;
+
+    // Calcular montos por concepto
+    let montoGC = 0;
+    let montoFR = 0;
+
+    if (t.clasificacionPago === 'GASTO_COMUN') {
+      montoGC = t.monto;
+    } else if (t.clasificacionPago === 'FONDO_RESERVA') {
+      montoFR = t.monto;
+    } else if (t.montoGastoComun || t.montoFondoReserva) {
+      montoGC = t.montoGastoComun || 0;
+      montoFR = t.montoFondoReserva || 0;
+    } else {
+      // Si no tiene clasificación, asignar todo a gastos comunes
+      montoGC = t.monto;
+    }
+
+    pagosDelMesAnterior.push({
+      fecha: t.fecha,
+      apartamentoNumero: apt.numero,
+      tipoOcupacion: apt.tipoOcupacion,
+      contactoNombre: apt.contactoNombre,
+      contactoApellido: apt.contactoApellido,
+      monto: t.monto,
+      montoGastoComun: montoGC,
+      montoFondoReserva: montoFR,
+      metodoPago: t.metodoPago || null,
+      referencia: t.referencia || null,
+    });
+
+    totalMonto += t.monto;
+    totalGastosComunes += montoGC;
+    totalFondoReserva += montoFR;
+  }
+
+  // Ordenar por fecha y apartamento
+  pagosDelMesAnterior.sort((a, b) => {
+    const fechaComparison = new Date(a.fecha).getTime() - new Date(b.fecha).getTime();
+    if (fechaComparison !== 0) return fechaComparison;
+    return a.apartamentoNumero.localeCompare(b.apartamentoNumero, undefined, { numeric: true });
+  });
+
+  return {
+    ...informeCombinado,
+    pagosDelMesAnterior,
+    totalPagosDetallados: {
+      totalMonto,
+      totalGastosComunes,
+      totalFondoReserva,
+    },
   };
 }
 

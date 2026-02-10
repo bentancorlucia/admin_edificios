@@ -820,59 +820,79 @@ export type ReciboPagoData = {
     fondoReserva: number
   }
   saldoFinal: number
+  tipoOcupacion?: "PROPIETARIO" | "INQUILINO" | "AMBOS"
+  mesCorrespondiente?: string // Ej: "Febrero 2026"
 }
 
 export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
 
-  // Header con gradiente verde
+  // Header compacto con gradiente verde
   doc.setFillColor(22, 163, 74) // green-600
-  doc.rect(0, 0, pageWidth, 45, "F")
+  doc.rect(0, 0, pageWidth, 35, "F")
 
   doc.setTextColor(255, 255, 255)
-  doc.setFontSize(16)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text("Edificio Constituyente II", 20, 14)
+  doc.text("Edificio Constituyente II", 15, 12)
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setFont("helvetica", "normal")
-  doc.text("Constituyente 2015 - Montevideo", 20, 22)
+  doc.text("Constituyente 2015 - Montevideo", 15, 19)
 
-  doc.setFontSize(18)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text("COMPROBANTE DE PAGO", 20, 38)
+  doc.text("COMPROBANTE DE PAGO", 15, 30)
 
-  let y = 60
+  let y = 45
 
-  // Información del apartamento y fecha
+  // Información compacta del apartamento, tipo y fecha
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(15, y - 5, pageWidth - 30, 25, 3, 3, "F")
+  doc.roundedRect(15, y - 3, pageWidth - 30, 22, 2, 2, "F")
 
-  doc.setFontSize(11)
+  doc.setFontSize(9)
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Apartamento:", 20, y + 4)
+
+  // Fila 1: Apartamento y Tipo
+  doc.text("Apto:", 20, y + 4)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
-  doc.text(data.apartamentoNumero, 60, y + 4)
+  doc.text(data.apartamentoNumero, 38, y + 4)
 
+  // Tipo de ocupación
+  if (data.tipoOcupacion) {
+    const tipoLabel = data.tipoOcupacion === "PROPIETARIO" ? "Propietario" :
+                      data.tipoOcupacion === "INQUILINO" ? "Inquilino" : "Prop./Inq."
+    doc.setTextColor(71, 85, 105)
+    doc.setFont("helvetica", "normal")
+    doc.text("Tipo:", 60, y + 4)
+    doc.setTextColor(data.tipoOcupacion === "PROPIETARIO" ? 37 : 147,
+                     data.tipoOcupacion === "PROPIETARIO" ? 99 : 51,
+                     data.tipoOcupacion === "PROPIETARIO" ? 235 : 234)
+    doc.setFont("helvetica", "bold")
+    doc.text(tipoLabel, 76, y + 4)
+  }
+
+  // Fecha a la derecha
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Fecha:", 110, y + 4)
+  doc.text("Fecha:", 120, y + 4)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const fechaFormateada = new Date(data.fecha).toLocaleDateString("es-ES", {
     day: "2-digit",
-    month: "long",
+    month: "short",
     year: "numeric",
     timeZone: "UTC"
   })
-  doc.text(fechaFormateada, 130, y + 4)
+  doc.text(fechaFormateada, 140, y + 4)
 
+  // Fila 2: Forma de pago y referencia
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Forma de pago:", 20, y + 14)
+  doc.text("Pago:", 20, y + 13)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const metodoPagoLabel: Record<string, string> = {
@@ -882,111 +902,107 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
     CHEQUE: "Cheque",
     OTRO: "Otro"
   }
-  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 60, y + 14)
+  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, y + 13)
 
   if (data.referencia) {
     doc.setTextColor(71, 85, 105)
     doc.setFont("helvetica", "normal")
-    doc.text("Ref:", 110, y + 14)
+    doc.text("Ref:", 90, y + 13)
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
-    doc.text(data.referencia, 125, y + 14)
+    const refTruncada = data.referencia.length > 25 ? data.referencia.substring(0, 22) + "..." : data.referencia
+    doc.text(refTruncada, 102, y + 13)
   }
 
-  y += 35
+  y += 28
 
-  // Línea divisoria
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.5)
-  doc.line(15, y, pageWidth - 15, y)
-
-  y += 15
-
-  // Conceptos abonados
-  doc.setFontSize(12)
+  // Conceptos abonados - más compacto
+  doc.setFontSize(10)
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "bold")
   doc.text("CONCEPTOS ABONADOS", 20, y)
 
-  y += 12
+  y += 8
 
-  // Tabla de conceptos
+  // Tabla de conceptos compacta
   doc.setFillColor(248, 250, 252)
-  doc.rect(15, y, pageWidth - 30, 10, "F")
+  doc.rect(15, y, pageWidth - 30, 8, "F")
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(71, 85, 105)
-  doc.text("Concepto", 20, y + 7)
-  doc.text("Importe", pageWidth - 20, y + 7, { align: "right" })
+  doc.text("Concepto", 20, y + 5.5)
+  doc.text("Importe", pageWidth - 20, y + 5.5, { align: "right" })
 
-  y += 14
+  y += 10
 
   doc.setFont("helvetica", "normal")
   doc.setTextColor(30, 41, 59)
 
-  // Gastos Comunes
+  // Determinar el texto del mes correspondiente
+  const mesTexto = data.mesCorrespondiente ? ` del mes de ${data.mesCorrespondiente}` : ""
+
+  // Gastos Comunes con mes
   if (data.conceptos.gastosComunes > 0) {
-    doc.text("Gastos Comunes", 20, y)
+    doc.text(`Gastos Comunes${mesTexto}`, 20, y)
     doc.text(`$${data.conceptos.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
-  // Fondo de Reserva
+  // Fondo de Reserva con mes
   if (data.conceptos.fondoReserva > 0) {
-    doc.text("Fondo de Reserva", 20, y)
+    doc.text(`Fondo de Reserva${mesTexto}`, 20, y)
     doc.text(`$${data.conceptos.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
   // Si el pago no tiene desglose, mostrar solo el total
   if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0) {
-    doc.text("Pago a cuenta", 20, y)
+    doc.text(`Pago a cuenta${mesTexto}`, 20, y)
     doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
   // Línea divisoria
   doc.setDrawColor(226, 232, 240)
   doc.line(15, y, pageWidth - 15, y)
 
-  y += 8
+  y += 6
 
-  // Total pagado
+  // Total pagado - compacto
   doc.setFillColor(22, 163, 74)
-  doc.roundedRect(15, y, pageWidth - 30, 20, 3, 3, "F")
+  doc.roundedRect(15, y, pageWidth - 30, 16, 2, 2, "F")
 
-  doc.setFontSize(12)
+  doc.setFontSize(10)
   doc.setTextColor(255, 255, 255)
   doc.setFont("helvetica", "bold")
-  doc.text("TOTAL ABONADO", 20, y + 13)
-  doc.setFontSize(16)
-  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 13, { align: "right" })
+  doc.text("TOTAL ABONADO", 20, y + 10)
+  doc.setFontSize(14)
+  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 10, { align: "right" })
 
-  y += 35
+  y += 24
 
-  // Saldo de cuenta
+  // Saldo de cuenta - compacto
   const saldoColor = data.saldoFinal > 0 ? [220, 38, 38] : data.saldoFinal < 0 ? [22, 163, 74] : [71, 85, 105]
   const saldoTexto = data.saldoFinal > 0 ? "SALDO DEUDOR" : data.saldoFinal < 0 ? "SALDO A FAVOR" : "CUENTA AL DÍA"
 
   doc.setFillColor(saldoColor[0], saldoColor[1], saldoColor[2])
-  doc.roundedRect(15, y, pageWidth - 30, 25, 3, 3, "F")
+  doc.roundedRect(15, y, pageWidth - 30, 18, 2, 2, "F")
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setTextColor(255, 255, 255)
   doc.setFont("helvetica", "normal")
-  doc.text(saldoTexto, 20, y + 10)
-  doc.setFontSize(18)
+  doc.text(saldoTexto, 20, y + 8)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 17, { align: "right" })
+  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 12, { align: "right" })
 
   // Footer
   const pageHeight = doc.internal.pageSize.getHeight()
-  doc.setFontSize(8)
+  doc.setFontSize(7)
   doc.setTextColor(148, 163, 184)
   doc.setFont("helvetica", "normal")
-  doc.text("Este comprobante es válido como constancia de pago", pageWidth / 2, pageHeight - 15, { align: "center" })
-  doc.text("EdificioApp - Sistema de Gestión de Edificios", pageWidth / 2, pageHeight - 10, { align: "center" })
+  doc.text("Comprobante válido como constancia de pago · EdificioApp", pageWidth / 2, pageHeight - 8, { align: "center" })
 
   return doc.output("blob")
 }
@@ -995,53 +1011,71 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   const doc = new jsPDF()
   const pageWidth = doc.internal.pageSize.getWidth()
 
-  // Header con gradiente verde
+  // Header compacto con gradiente verde
   doc.setFillColor(22, 163, 74) // green-600
-  doc.rect(0, 0, pageWidth, 45, "F")
+  doc.rect(0, 0, pageWidth, 35, "F")
 
   doc.setTextColor(255, 255, 255)
-  doc.setFontSize(16)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text("Edificio Constituyente II", 20, 14)
+  doc.text("Edificio Constituyente II", 15, 12)
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setFont("helvetica", "normal")
-  doc.text("Constituyente 2015 - Montevideo", 20, 22)
+  doc.text("Constituyente 2015 - Montevideo", 15, 19)
 
-  doc.setFontSize(18)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text("COMPROBANTE DE PAGO", 20, 38)
+  doc.text("COMPROBANTE DE PAGO", 15, 30)
 
-  let y = 60
+  let y = 45
 
-  // Información del apartamento y fecha
+  // Información compacta del apartamento, tipo y fecha
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(15, y - 5, pageWidth - 30, 25, 3, 3, "F")
+  doc.roundedRect(15, y - 3, pageWidth - 30, 22, 2, 2, "F")
 
-  doc.setFontSize(11)
+  doc.setFontSize(9)
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Apartamento:", 20, y + 4)
+
+  // Fila 1: Apartamento y Tipo
+  doc.text("Apto:", 20, y + 4)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
-  doc.text(data.apartamentoNumero, 60, y + 4)
+  doc.text(data.apartamentoNumero, 38, y + 4)
 
+  // Tipo de ocupación
+  if (data.tipoOcupacion) {
+    const tipoLabel = data.tipoOcupacion === "PROPIETARIO" ? "Propietario" :
+                      data.tipoOcupacion === "INQUILINO" ? "Inquilino" : "Prop./Inq."
+    doc.setTextColor(71, 85, 105)
+    doc.setFont("helvetica", "normal")
+    doc.text("Tipo:", 60, y + 4)
+    doc.setTextColor(data.tipoOcupacion === "PROPIETARIO" ? 37 : 147,
+                     data.tipoOcupacion === "PROPIETARIO" ? 99 : 51,
+                     data.tipoOcupacion === "PROPIETARIO" ? 235 : 234)
+    doc.setFont("helvetica", "bold")
+    doc.text(tipoLabel, 76, y + 4)
+  }
+
+  // Fecha a la derecha
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Fecha:", 110, y + 4)
+  doc.text("Fecha:", 120, y + 4)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const fechaFormateada = new Date(data.fecha).toLocaleDateString("es-ES", {
     day: "2-digit",
-    month: "long",
+    month: "short",
     year: "numeric",
     timeZone: "UTC"
   })
-  doc.text(fechaFormateada, 130, y + 4)
+  doc.text(fechaFormateada, 140, y + 4)
 
+  // Fila 2: Forma de pago y referencia
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Forma de pago:", 20, y + 14)
+  doc.text("Pago:", 20, y + 13)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const metodoPagoLabel: Record<string, string> = {
@@ -1051,111 +1085,107 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
     CHEQUE: "Cheque",
     OTRO: "Otro"
   }
-  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 60, y + 14)
+  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, y + 13)
 
   if (data.referencia) {
     doc.setTextColor(71, 85, 105)
     doc.setFont("helvetica", "normal")
-    doc.text("Ref:", 110, y + 14)
+    doc.text("Ref:", 90, y + 13)
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
-    doc.text(data.referencia, 125, y + 14)
+    const refTruncada = data.referencia.length > 25 ? data.referencia.substring(0, 22) + "..." : data.referencia
+    doc.text(refTruncada, 102, y + 13)
   }
 
-  y += 35
+  y += 28
 
-  // Línea divisoria
-  doc.setDrawColor(226, 232, 240)
-  doc.setLineWidth(0.5)
-  doc.line(15, y, pageWidth - 15, y)
-
-  y += 15
-
-  // Conceptos abonados
-  doc.setFontSize(12)
+  // Conceptos abonados - más compacto
+  doc.setFontSize(10)
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "bold")
   doc.text("CONCEPTOS ABONADOS", 20, y)
 
-  y += 12
+  y += 8
 
-  // Tabla de conceptos
+  // Tabla de conceptos compacta
   doc.setFillColor(248, 250, 252)
-  doc.rect(15, y, pageWidth - 30, 10, "F")
+  doc.rect(15, y, pageWidth - 30, 8, "F")
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setFont("helvetica", "bold")
   doc.setTextColor(71, 85, 105)
-  doc.text("Concepto", 20, y + 7)
-  doc.text("Importe", pageWidth - 20, y + 7, { align: "right" })
+  doc.text("Concepto", 20, y + 5.5)
+  doc.text("Importe", pageWidth - 20, y + 5.5, { align: "right" })
 
-  y += 14
+  y += 10
 
   doc.setFont("helvetica", "normal")
   doc.setTextColor(30, 41, 59)
 
-  // Gastos Comunes
+  // Determinar el texto del mes correspondiente
+  const mesTexto = data.mesCorrespondiente ? ` del mes de ${data.mesCorrespondiente}` : ""
+
+  // Gastos Comunes con mes
   if (data.conceptos.gastosComunes > 0) {
-    doc.text("Gastos Comunes", 20, y)
+    doc.text(`Gastos Comunes${mesTexto}`, 20, y)
     doc.text(`$${data.conceptos.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
-  // Fondo de Reserva
+  // Fondo de Reserva con mes
   if (data.conceptos.fondoReserva > 0) {
-    doc.text("Fondo de Reserva", 20, y)
+    doc.text(`Fondo de Reserva${mesTexto}`, 20, y)
     doc.text(`$${data.conceptos.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
   // Si el pago no tiene desglose, mostrar solo el total
   if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0) {
-    doc.text("Pago a cuenta", 20, y)
+    doc.text(`Pago a cuenta${mesTexto}`, 20, y)
     doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 10
+    y += 8
   }
 
   // Línea divisoria
   doc.setDrawColor(226, 232, 240)
   doc.line(15, y, pageWidth - 15, y)
 
-  y += 8
+  y += 6
 
-  // Total pagado
+  // Total pagado - compacto
   doc.setFillColor(22, 163, 74)
-  doc.roundedRect(15, y, pageWidth - 30, 20, 3, 3, "F")
+  doc.roundedRect(15, y, pageWidth - 30, 16, 2, 2, "F")
 
-  doc.setFontSize(12)
+  doc.setFontSize(10)
   doc.setTextColor(255, 255, 255)
   doc.setFont("helvetica", "bold")
-  doc.text("TOTAL ABONADO", 20, y + 13)
-  doc.setFontSize(16)
-  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 13, { align: "right" })
+  doc.text("TOTAL ABONADO", 20, y + 10)
+  doc.setFontSize(14)
+  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 10, { align: "right" })
 
-  y += 35
+  y += 24
 
-  // Saldo de cuenta
+  // Saldo de cuenta - compacto
   const saldoColor = data.saldoFinal > 0 ? [220, 38, 38] : data.saldoFinal < 0 ? [22, 163, 74] : [71, 85, 105]
   const saldoTexto = data.saldoFinal > 0 ? "SALDO DEUDOR" : data.saldoFinal < 0 ? "SALDO A FAVOR" : "CUENTA AL DÍA"
 
   doc.setFillColor(saldoColor[0], saldoColor[1], saldoColor[2])
-  doc.roundedRect(15, y, pageWidth - 30, 25, 3, 3, "F")
+  doc.roundedRect(15, y, pageWidth - 30, 18, 2, 2, "F")
 
-  doc.setFontSize(10)
+  doc.setFontSize(9)
   doc.setTextColor(255, 255, 255)
   doc.setFont("helvetica", "normal")
-  doc.text(saldoTexto, 20, y + 10)
-  doc.setFontSize(18)
+  doc.text(saldoTexto, 20, y + 8)
+  doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 17, { align: "right" })
+  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 12, { align: "right" })
 
   // Footer
   const pageHeight = doc.internal.pageSize.getHeight()
-  doc.setFontSize(8)
+  doc.setFontSize(7)
   doc.setTextColor(148, 163, 184)
   doc.setFont("helvetica", "normal")
-  doc.text("Este comprobante es válido como constancia de pago", pageWidth / 2, pageHeight - 15, { align: "center" })
-  doc.text("EdificioApp - Sistema de Gestión de Edificios", pageWidth / 2, pageHeight - 10, { align: "center" })
+  doc.text("Comprobante válido como constancia de pago · EdificioApp", pageWidth / 2, pageHeight - 8, { align: "center" })
 
   const fechaFile = new Date(data.fecha).toISOString().split("T")[0]
   doc.save(`recibo-apto-${data.apartamentoNumero}-${fechaFile}.pdf`)

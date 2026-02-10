@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
+import { open } from "@tauri-apps/plugin-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -779,7 +780,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   }, [prepareReciboData])
 
   // Función para enviar recibo por WhatsApp
-  const handleShareWhatsApp = useCallback((t: Transaccion) => {
+  const handleShareWhatsApp = useCallback(async (t: Transaccion) => {
     const reciboData = prepareReciboData(t)
     if (!reciboData || !t.apartamentoId) return
 
@@ -800,41 +801,20 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       timeZone: "UTC"
     })
 
-    const saldoTexto = reciboData.saldoFinal > 0
-      ? `Saldo deudor: $${reciboData.saldoFinal.toLocaleString()}`
-      : reciboData.saldoFinal < 0
-        ? `Saldo a favor: $${Math.abs(reciboData.saldoFinal).toLocaleString()}`
-        : "Cuenta al día"
+    const nombre = aptData.contactoNombre || ""
+    const gastosComunes = reciboData.conceptos.gastosComunes || 0
+    const fondoReserva = reciboData.conceptos.fondoReserva || 0
 
-    // Construir detalle de conceptos
-    let conceptosTexto = ""
-    if (reciboData.conceptos.gastosComunes > 0) {
-      conceptosTexto += `• Gastos Comunes: $${reciboData.conceptos.gastosComunes.toLocaleString()}\n`
-    }
-    if (reciboData.conceptos.fondoReserva > 0) {
-      conceptosTexto += `• Fondo de Reserva: $${reciboData.conceptos.fondoReserva.toLocaleString()}\n`
-    }
-    if (!conceptosTexto) {
-      conceptosTexto = `• Pago a cuenta: $${reciboData.monto.toLocaleString()}\n`
-    }
-
-    const message = `*COMPROBANTE DE PAGO*
-Edificio Constituyente II
-
-*Apartamento:* ${reciboData.apartamentoNumero}
-*Fecha:* ${fechaFormateada}
-
-*Conceptos abonados:*
-${conceptosTexto}
-*Total abonado:* $${reciboData.monto.toLocaleString()}
-
-*${saldoTexto}*
-
-_Este mensaje es un comprobante de pago._`
+    const message = `Apartamento (${reciboData.apartamentoNumero}). Estimada/o ${nombre}
+Fecha (${fechaFormateada})
+Se ha acreditado el importe de $${reciboData.monto.toLocaleString()} correspondiente al pago realizado:
+Gastos Comunes: $${gastosComunes.toLocaleString()}
+Fondo de Reserva: $${fondoReserva.toLocaleString()}
+Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
 
     const phone = formatPhoneForWhatsApp(aptData.contactoCelular)
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
-    window.open(url, "_blank")
+    await open(url)
 
     toast({
       title: "WhatsApp abierto",
