@@ -805,8 +805,8 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     const gastosComunes = reciboData.conceptos.gastosComunes || 0
     const fondoReserva = reciboData.conceptos.fondoReserva || 0
 
-    const message = `Apartamento (${reciboData.apartamentoNumero}). Estimada/o ${nombre}
-Fecha (${fechaFormateada})
+    const message = `${fechaFormateada} - Apartamento (${reciboData.apartamentoNumero}). Estimada/o ${nombre},
+
 Se ha acreditado el importe de $${reciboData.monto.toLocaleString()} correspondiente al pago realizado:
 Gastos Comunes: $${gastosComunes.toLocaleString()}
 Fondo de Reserva: $${fondoReserva.toLocaleString()}

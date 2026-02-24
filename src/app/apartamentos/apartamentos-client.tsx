@@ -312,37 +312,35 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   }, [saldos])
 
   const handleShareWhatsApp = useCallback(async (apt: Apartamento) => {
-    const totalMensual = apt.gastosComunes + apt.fondoReserva
+    const saldoActual = saldos[apt.id] || 0
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
-    const message = `Apartamento ${apt.numero}\nPiso: ${apt.piso || 'N/A'}\nTipo: ${tipoOcupacionLabels[apt.tipoOcupacion]}\nContacto: ${contacto}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
+    const message = `Hola ${contacto}.\n\nLe escribo desde la administración del edificio respecto al Apartamento ${apt.numero}.\n\nSaldo Actual: ${formatCurrency(Math.abs(saldoActual))} ${saldoActual > 0 ? '(Deudor)' : saldoActual < 0 ? '(A favor)' : '(Sin saldo)'}`
     const url = `https://wa.me/?text=${encodeURIComponent(message)}`
     await open(url)
-  }, [])
+  }, [saldos])
 
   const handleShareWhatsAppGrupo = useCallback(async (grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
     if (!apt.contactoCelular) return
-    const totalMensual = apt.gastosComunes + apt.fondoReserva
+    const saldoActual = saldos[apt.id] || 0
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : 'Sin contacto'
-    const tipoLabel = tipo === 'propietario' ? 'Propietario' : 'Inquilino'
-    const message = `Hola ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}`
+    const message = `Hola ${contacto}.\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\nSaldo Actual: ${formatCurrency(Math.abs(saldoActual))} ${saldoActual > 0 ? '(Deudor)' : saldoActual < 0 ? '(A favor)' : '(Sin saldo)'}`
     const url = `https://wa.me/${formatPhoneForWhatsApp(apt.contactoCelular)}?text=${encodeURIComponent(message)}`
     await open(url)
-  }, [])
+  }, [saldos])
 
   const handleSendGmailGrupo = useCallback(async (grupo: ApartamentoAgrupado, tipo: 'propietario' | 'inquilino') => {
     const apt = tipo === 'propietario' ? grupo.propietario : grupo.inquilino
     if (!apt) return
     if (!apt.contactoEmail) return
-    const totalMensual = apt.gastosComunes + apt.fondoReserva
+    const saldoActual = saldos[apt.id] || 0
     const contacto = apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : ''
-    const tipoLabel = tipo === 'propietario' ? 'Propietario' : 'Inquilino'
     const subject = `Administración del Edificio - Apartamento ${grupo.numero}`
-    const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\n${tipoLabel}\nPiso: ${grupo.piso || 'N/A'}\nGastos Comunes: ${formatCurrency(apt.gastosComunes)}\nFondo Reserva: ${formatCurrency(apt.fondoReserva)}\nTotal Mensual: ${formatCurrency(totalMensual)}\n\nSaludos cordiales.`
+    const body = `Estimado/a ${contacto},\n\nLe escribo desde la administración del edificio respecto al Apartamento ${grupo.numero}.\n\nSaldo Actual: ${formatCurrency(Math.abs(saldoActual))} ${saldoActual > 0 ? '(Deudor)' : saldoActual < 0 ? '(A favor)' : '(Sin saldo)'}\n\nSaludos cordiales.`
     const url = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(apt.contactoEmail)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
     await open(url)
-  }, [])
+  }, [saldos])
 
   const handleExport = useCallback(() => {
     const headers = ["Número", "Piso", "Tipo", "Contacto", "Gastos Comunes", "Fondo Reserva", "Total Mensual"]
