@@ -1,7 +1,8 @@
 import { appDataDir, join, homeDir } from '@tauri-apps/api/path'
-import { copyFile, exists, mkdir, readDir } from '@tauri-apps/plugin-fs'
+import { copyFile, exists, mkdir, readDir, readFile } from '@tauri-apps/plugin-fs'
 import { platform } from '@tauri-apps/plugin-os'
 import { open } from '@tauri-apps/plugin-dialog'
+import { closeDatabase } from './database'
 
 export interface BackupResult {
   success: boolean
@@ -270,6 +271,113 @@ export async function backupToGoogleDrive(): Promise<BackupResult> {
     }
   }
   return await createBackup(folder)
+}
+
+// ============ RESTAURACIÓN ============
+
+export interface RestoreResult {
+  success: boolean
+  error?: string
+  restoredFrom?: string
+  preRestoreBackupPath?: string
+}
+
+const SQLITE_HEADER = "SQLite format 3 "
+
+/**
+ * Verifica que el archivo sea una base de datos SQLite válida
+ * leyendo el header (primeros 16 bytes).
+ */
+export async function validateBackupFile(filePath: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    if (!(await exists(filePath))) {
+      return { valid: false, error: 'El archivo no existe' }
+    }
+
+    const data = await readFile(filePath)
+    if (data.length < 16) {
+      return { valid: false, error: 'Archivo demasiado pequeño para ser una base de datos' }
+    }
+
+    // Compare first 16 bytes con "SQLite format 3\0"
+    for (let i = 0; i < 16; i++) {
+      if (data[i] !== SQLITE_HEADER.charCodeAt(i)) {
+        return { valid: false, error: 'El archivo no es una base de datos SQLite válida' }
+      }
+    }
+
+    return { valid: true }
+  } catch (error) {
+    return { valid: false, error: `Error al leer el archivo: ${String(error)}` }
+  }
+}
+
+/**
+ * Abre un diálogo para que el usuario seleccione un archivo .db a restaurar.
+ */
+export async function selectBackupFile(): Promise<string | null> {
+  try {
+    const selected = await open({
+      multiple: false,
+      title: 'Seleccionar archivo de respaldo (.db)',
+      filters: [
+        { name: 'Base de datos', extensions: ['db'] },
+        { name: 'Todos los archivos', extensions: ['*'] },
+      ],
+    })
+    return selected as string | null
+  } catch (error) {
+    console.error('Error seleccionando archivo:', error)
+    return null
+  }
+}
+
+/**
+ * Restaura la DB desde un archivo backup.
+ * - Valida header SQLite del archivo origen.
+ * - Crea un backup automático "pre-restore" de la DB actual.
+ * - Cierra la conexión SQLite y sobrescribe la DB con el archivo origen.
+ * - El llamante debe reiniciar la app para que tome la nueva DB.
+ */
+export async function restoreBackup(sourcePath: string): Promise<RestoreResult> {
+  try {
+    // 1. Validar header
+    const validation = await validateBackupFile(sourcePath)
+    if (!validation.valid) {
+      return { success: false, error: validation.error }
+    }
+
+    const dbPath = await getDatabasePath()
+    const appData = await appDataDir()
+
+    // 2. Backup automático "pre-restore" de la DB actual (si existe)
+    let preRestoreBackupPath: string | undefined
+    if (await exists(dbPath)) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      preRestoreBackupPath = await join(appData, `database_pre_restore_${ts}.db`)
+      await copyFile(dbPath, preRestoreBackupPath)
+    }
+
+    // 3. Cerrar la conexión SQLite antes de sobrescribir el archivo
+    try {
+      await closeDatabase()
+    } catch (e) {
+      console.warn('Error cerrando DB antes de restaurar (puede ser ignorable):', e)
+    }
+    // Pequeña espera para que SQLite suelte el lock en Windows
+    await new Promise((r) => setTimeout(r, 200))
+
+    // 4. Sobrescribir la DB con el archivo origen
+    await copyFile(sourcePath, dbPath)
+
+    return {
+      success: true,
+      restoredFrom: sourcePath,
+      preRestoreBackupPath,
+    }
+  } catch (error) {
+    return { success: false, error: `Error al restaurar: ${String(error)}` }
+  }
 }
 
 export async function getBackupHistory(folderPath: string): Promise<{ name: string; date: Date }[]> {

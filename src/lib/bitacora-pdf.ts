@@ -255,5 +255,7 @@ export function generateBitacoraPDF(registros: Registro[]) {
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 6, { align: "right" })
   }
 
-  doc.save("bitacora.pdf")
+  const fileName = "bitacora.pdf"
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }

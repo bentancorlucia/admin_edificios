@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { open } from "@tauri-apps/plugin-shell"
+import { BackToHome } from "@/components/back-to-home"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -33,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail } from "lucide-react"
+import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail, Calculator } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { formatCurrency, formatPhoneForWhatsApp } from "@/lib/utils"
 import {
@@ -50,6 +51,8 @@ import {
   generatePropietarioPDF,
   generateInquilinoPDF,
 } from "@/lib/pdf"
+import { savePDFWithDialog } from "@/lib/save-pdf"
+import { exportToExcel } from "@/lib/excel-export"
 import { toast } from "@/hooks/use-toast"
 
 type Apartamento = {
@@ -59,6 +62,7 @@ type Apartamento = {
   alicuota: number
   gastosComunes: number
   fondoReserva: number
+  otrosGastos: number
   tipoOcupacion: "PROPIETARIO" | "INQUILINO"
   contactoNombre: string | null
   contactoApellido: string | null
@@ -217,6 +221,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
         tipoOcupacion: formData.tipoOcupacion as "PROPIETARIO" | "INQUILINO",
         gastosComunes: parseFloat(formData.gastosComunes) || 0,
         fondoReserva: parseFloat(formData.fondoReserva) || 0,
+        otrosGastos: 0,
         contactoNombre: formData.contactoNombre || null,
         contactoApellido: formData.contactoApellido || null,
         contactoCelular: formData.contactoCelular || null,
@@ -262,25 +267,24 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   }
 
   // Memoizar handlers para evitar re-creación en cada render
-  const handleGeneratePDF = useCallback((apt: Apartamento) => {
-    generateApartamentoPDF(apt)
-    toast({
-      title: "PDF descargado",
-      description: `Reporte del apartamento ${apt.numero} descargado correctamente`,
-      variant: "success",
-    })
+  const handleGeneratePDF = useCallback(async (apt: Apartamento) => {
+    try {
+      const result = generateApartamentoPDF(apt)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: `Reporte del apartamento ${apt.numero} guardado correctamente`, variant: "success" })
+    } catch (error) {
+      console.error("Error al generar PDF:", error)
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
+    }
   }, [])
 
   const handleGeneratePropietarioPDF = useCallback(async (grupo: ApartamentoAgrupado) => {
     if (!grupo.propietario) return
     try {
       const transacciones = await getTransaccionesByApartamento(grupo.propietario.id)
-      generatePropietarioPDF(grupo, saldos, transacciones)
-      toast({
-        title: "PDF descargado",
-        description: `Reporte de propietario del Apto ${grupo.numero} descargado correctamente`,
-        variant: "success",
-      })
+      const result = generatePropietarioPDF(grupo, saldos, transacciones)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: `Reporte de propietario del Apto ${grupo.numero} guardado correctamente`, variant: "success" })
     } catch (error) {
       console.error("Error al generar PDF:", error)
       toast({
@@ -295,12 +299,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     if (!grupo.inquilino) return
     try {
       const transacciones = await getTransaccionesByApartamento(grupo.inquilino.id)
-      generateInquilinoPDF(grupo, saldos, transacciones)
-      toast({
-        title: "PDF descargado",
-        description: `Reporte de inquilino del Apto ${grupo.numero} descargado correctamente`,
-        variant: "success",
-      })
+      const result = generateInquilinoPDF(grupo, saldos, transacciones)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: `Reporte de inquilino del Apto ${grupo.numero} guardado correctamente`, variant: "success" })
     } catch (error) {
       console.error("Error al generar PDF:", error)
       toast({
@@ -342,27 +343,28 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     await open(url)
   }, [saldos])
 
-  const handleExport = useCallback(() => {
-    const headers = ["Número", "Piso", "Tipo", "Contacto", "Gastos Comunes", "Fondo Reserva", "Total Mensual"]
+  const handleExport = useCallback(async () => {
+    const headers = ["Número", "Piso", "Tipo", "Contacto", "Gastos Comunes", "Fondo Reserva", "Otros Gastos", "Total Mensual"]
     const rows = apartamentos.map((apt) => [
       apt.numero,
-      apt.piso?.toString() || "",
+      apt.piso ?? "",
       tipoOcupacionLabels[apt.tipoOcupacion],
       apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ''}`.trim() : "",
-      apt.gastosComunes.toString(),
-      apt.fondoReserva.toString(),
-      (apt.gastosComunes + apt.fondoReserva).toString(),
+      apt.gastosComunes,
+      apt.fondoReserva,
+      apt.otrosGastos,
+      apt.gastosComunes + apt.fondoReserva + apt.otrosGastos,
     ])
 
-    const csvContent = [headers, ...rows].map((row) => row.join(",")).join("\n")
-    const blob = new Blob([csvContent], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "apartamentos.csv"
-    a.click()
+    await exportToExcel({
+      filename: "apartamentos",
+      sheetName: "Apartamentos",
+      headers,
+      rows,
+    })
+
     toast({
-      title: "CSV descargado",
+      title: "Excel descargado",
       description: "Lista de apartamentos exportada correctamente",
       variant: "success",
     })
@@ -397,6 +399,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
+            <BackToHome dark />
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
                 <Building2 className="h-6 w-6 text-white" />
@@ -418,6 +421,14 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
             >
               <Download className="h-4 w-4 mr-2" />
               Exportar
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => router.push("/importes-generales")}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Calculator className="h-4 w-4 mr-2" />
+              Importes Generales
             </Button>
             <AlertDialog open={isGenerateDialogOpen} onOpenChange={setIsGenerateDialogOpen}>
               <AlertDialogTrigger asChild>
@@ -667,13 +678,13 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
 
       {/* Create/Edit Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {selectedApartamento ? "Editar Apartamento" : "Nuevo Apartamento"}
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3">
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -681,54 +692,54 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
               </Alert>
             )}
 
-            {/* Número y Piso */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="numero">Número *</Label>
+            {/* Número, Piso y Tipo */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="col-span-1 space-y-1">
+                <Label htmlFor="numero" className="text-xs">Número *</Label>
                 <Input
                   id="numero"
-                  placeholder="Ej: 101"
+                  placeholder="101"
                   value={formData.numero}
                   onChange={(e) => setFormData({ ...formData, numero: e.target.value })}
                   required
+                  className="h-9"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="piso">Piso</Label>
+              <div className="col-span-1 space-y-1">
+                <Label htmlFor="piso" className="text-xs">Piso</Label>
                 <Input
                   id="piso"
                   type="number"
-                  placeholder="Ej: 1"
+                  placeholder="1"
                   value={formData.piso}
                   onChange={(e) => setFormData({ ...formData, piso: e.target.value })}
+                  className="h-9"
                 />
               </div>
+              <div className="col-span-2 space-y-1">
+                <Label htmlFor="tipoOcupacion" className="text-xs">Tipo *</Label>
+                <Select
+                  value={formData.tipoOcupacion}
+                  onValueChange={(value) => setFormData({ ...formData, tipoOcupacion: value })}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="PROPIETARIO">Propietario (P)</SelectItem>
+                    <SelectItem value="INQUILINO">Inquilino (I)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
-
-            {/* Tipo de Ocupación */}
-            <div className="space-y-2">
-              <Label htmlFor="tipoOcupacion">Tipo de Registro *</Label>
-              <Select
-                value={formData.tipoOcupacion}
-                onValueChange={(value) => setFormData({ ...formData, tipoOcupacion: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="PROPIETARIO">Propietario (P)</SelectItem>
-                  <SelectItem value="INQUILINO">Inquilino (I)</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-slate-500">
-                Puedes crear un registro de Propietario y otro de Inquilino para el mismo apartamento
-              </p>
-            </div>
+            <p className="text-xs text-slate-500 -mt-1">
+              Puedes crear un registro de Propietario y otro de Inquilino para el mismo apartamento
+            </p>
 
             {/* Gastos */}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="gastosComunes">Gastos Comunes</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="gastosComunes" className="text-xs">Gastos Comunes</Label>
                 <Input
                   id="gastosComunes"
                   type="number"
@@ -736,10 +747,11 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                   step="0.01"
                   value={formData.gastosComunes}
                   onChange={(e) => setFormData({ ...formData, gastosComunes: e.target.value })}
+                  className="h-9"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="fondoReserva">Fondo de Reserva</Label>
+              <div className="space-y-1">
+                <Label htmlFor="fondoReserva" className="text-xs">Fondo de Reserva</Label>
                 <Input
                   id="fondoReserva"
                   type="number"
@@ -747,77 +759,84 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                   step="0.01"
                   value={formData.fondoReserva}
                   onChange={(e) => setFormData({ ...formData, fondoReserva: e.target.value })}
+                  className="h-9"
                 />
               </div>
             </div>
 
             {/* Contacto */}
-            <div className="border-t pt-4">
-              <p className="text-sm font-medium text-slate-700 mb-3">
+            <div className="border-t pt-3">
+              <p className="text-sm font-medium text-slate-700 mb-2">
                 Contacto ({tipoOcupacionLabels[formData.tipoOcupacion as keyof typeof tipoOcupacionLabels]})
               </p>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="contactoNombre">Nombre</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="contactoNombre" className="text-xs">Nombre</Label>
                   <Input
                     id="contactoNombre"
                     placeholder="Nombre"
                     value={formData.contactoNombre}
                     onChange={(e) => setFormData({ ...formData, contactoNombre: e.target.value })}
+                    className="h-9"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contactoApellido">Apellido</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="contactoApellido" className="text-xs">Apellido</Label>
                   <Input
                     id="contactoApellido"
                     placeholder="Apellido"
                     value={formData.contactoApellido}
                     onChange={(e) => setFormData({ ...formData, contactoApellido: e.target.value })}
+                    className="h-9"
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 mt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="contactoCelular">Celular</Label>
+              <div className="grid grid-cols-2 gap-3 mt-2">
+                <div className="space-y-1">
+                  <Label htmlFor="contactoCelular" className="text-xs">Celular</Label>
                   <Input
                     id="contactoCelular"
-                    placeholder="Ej: 3001234567"
+                    placeholder="099 123 456"
                     value={formData.contactoCelular}
                     onChange={(e) => setFormData({ ...formData, contactoCelular: e.target.value })}
+                    className="h-9"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="contactoEmail">Email</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="contactoEmail" className="text-xs">Email</Label>
                   <Input
                     id="contactoEmail"
                     type="email"
                     placeholder="ejemplo@correo.com"
                     value={formData.contactoEmail}
                     onChange={(e) => setFormData({ ...formData, contactoEmail: e.target.value })}
+                    className="h-9"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="notas">Notas</Label>
+            <div className="space-y-1">
+              <Label htmlFor="notas" className="text-xs">Notas</Label>
               <Textarea
                 id="notas"
                 placeholder="Notas adicionales..."
                 value={formData.notas}
                 onChange={(e) => setFormData({ ...formData, notas: e.target.value })}
+                className="min-h-[60px] resize-none"
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-4">
+            <div className="flex justify-end gap-2 pt-2">
               <Button
                 type="button"
                 variant="outline"
+                size="sm"
                 onClick={() => setIsDialogOpen(false)}
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={isLoading}>
+              <Button type="submit" size="sm" disabled={isLoading}>
                 {isLoading ? "Guardando..." : "Guardar"}
               </Button>
             </div>

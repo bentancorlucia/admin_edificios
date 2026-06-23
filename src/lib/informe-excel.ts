@@ -1,3 +1,4 @@
+import ExcelJS from "exceljs"
 import { type InformeData } from "@/lib/database"
 
 const tipoOcupacionLabels: Record<string, string> = {
@@ -5,50 +6,53 @@ const tipoOcupacionLabels: Record<string, string> = {
   INQUILINO: "Inquilino",
 }
 
-export function generateInformeExcel(data: InformeData, periodoLabel: string) {
-  // Crear contenido CSV con BOM para Excel
-  const BOM = "\uFEFF"
-  const rows: string[][] = []
+export async function generateInformeExcel(data: InformeData, periodoLabel: string) {
+  const workbook = new ExcelJS.Workbook()
+  workbook.creator = "Admin Edificios"
+  workbook.created = new Date()
+
+  const ws = workbook.addWorksheet("Informe Mensual")
 
   // Título
-  rows.push([`Informe Mensual de Cuenta Corriente - ${periodoLabel}`])
-  rows.push([`Generado: ${new Date().toLocaleDateString("es-ES")}`])
-  rows.push([])
+  ws.addRow([`Informe Mensual de Cuenta Corriente - ${periodoLabel}`])
+  ws.getRow(1).font = { bold: true, size: 14 }
+  ws.addRow([`Generado: ${new Date().toLocaleDateString("es-ES")}`])
+  ws.addRow([])
 
   // Resumen General
-  rows.push(["RESUMEN GENERAL"])
-  rows.push(["Concepto", "Monto"])
-  rows.push(["Saldo Anterior Total", formatNumber(data.totales.totalSaldoAnterior)])
-  rows.push(["Pagos del Mes Total", formatNumber(data.totales.totalPagosMes)])
-  rows.push(["Gastos Comunes Total", formatNumber(data.totales.totalGastosComunesMes)])
-  rows.push(["Fondo Reserva Total", formatNumber(data.totales.totalFondoReservaMes)])
-  rows.push(["Saldo Actual Total", formatNumber(data.totales.totalSaldoActual)])
-  rows.push([])
+  ws.addRow(["RESUMEN GENERAL"]).font = { bold: true }
+  ws.addRow(["Concepto", "Monto"]).font = { bold: true }
+  ws.addRow(["Saldo Anterior Total", data.totales.totalSaldoAnterior])
+  ws.addRow(["Pagos del Mes Total", data.totales.totalPagosMes])
+  ws.addRow(["Gastos Comunes Total", data.totales.totalGastosComunesMes])
+  ws.addRow(["Fondo Reserva Total", data.totales.totalFondoReservaMes])
+  ws.addRow(["Saldo Actual Total", data.totales.totalSaldoActual])
+  ws.addRow([])
 
   // Resumen Bancario
-  rows.push(["RESUMEN BANCARIO"])
-  rows.push(["Concepto", "Monto"])
-  rows.push(["Ingreso por Gastos Comunes", formatNumber(data.resumenBancario.ingresoGastosComunes)])
-  rows.push(["Ingreso por Fondo de Reserva", formatNumber(data.resumenBancario.ingresoFondoReserva)])
-  rows.push(["Egreso por Gastos Comunes", formatNumber(data.resumenBancario.egresoGastosComunes)])
-  rows.push(["Egreso por Fondo de Reserva", formatNumber(data.resumenBancario.egresoFondoReserva)])
-  rows.push(["Saldo Bancario Total", formatNumber(data.resumenBancario.saldoBancarioTotal)])
-  rows.push([])
+  ws.addRow(["RESUMEN BANCARIO"]).font = { bold: true }
+  ws.addRow(["Concepto", "Monto"]).font = { bold: true }
+  ws.addRow(["Ingreso por Gastos Comunes", data.resumenBancario.ingresoGastosComunes])
+  ws.addRow(["Ingreso por Fondo de Reserva", data.resumenBancario.ingresoFondoReserva])
+  ws.addRow(["Egreso por Gastos Comunes", data.resumenBancario.egresoGastosComunes])
+  ws.addRow(["Egreso por Fondo de Reserva", data.resumenBancario.egresoFondoReserva])
+  ws.addRow(["Saldo Bancario Total", data.resumenBancario.saldoBancarioTotal])
+  ws.addRow([])
 
   // Avisos (si hay avisos activos)
   const avisosActivos = (data.avisos || []).filter((a) => a.activo)
   if (avisosActivos.length > 0) {
-    rows.push(["AVISOS"])
-    rows.push(["#", "Aviso"])
+    ws.addRow(["AVISOS"]).font = { bold: true }
+    ws.addRow(["#", "Aviso"]).font = { bold: true }
     avisosActivos.forEach((aviso, index) => {
-      rows.push([(index + 1).toString(), aviso.texto])
+      ws.addRow([index + 1, aviso.texto])
     })
-    rows.push([])
+    ws.addRow([])
   }
 
   // Desglose por Apartamento
-  rows.push(["DESGLOSE POR APARTAMENTO"])
-  rows.push([
+  ws.addRow(["DESGLOSE POR APARTAMENTO"]).font = { bold: true }
+  const headerRow = ws.addRow([
     "Apartamento",
     "Tipo",
     "Saldo Anterior",
@@ -57,52 +61,52 @@ export function generateInformeExcel(data: InformeData, periodoLabel: string) {
     "Fondo Reserva",
     "Saldo Actual",
   ])
+  headerRow.font = { bold: true }
 
   for (const apt of data.apartamentos) {
-    rows.push([
+    ws.addRow([
       apt.numero,
       tipoOcupacionLabels[apt.tipoOcupacion],
-      formatNumber(apt.saldoAnterior),
-      formatNumber(apt.pagosMes),
-      formatNumber(apt.gastosComunesMes),
-      formatNumber(apt.fondoReservaMes),
-      formatNumber(apt.saldoActual),
+      apt.saldoAnterior,
+      apt.pagosMes,
+      apt.gastosComunesMes,
+      apt.fondoReservaMes,
+      apt.saldoActual,
     ])
   }
 
   // Fila de totales
-  rows.push([
+  const totalRow = ws.addRow([
     "TOTALES",
     "",
-    formatNumber(data.totales.totalSaldoAnterior),
-    formatNumber(data.totales.totalPagosMes),
-    formatNumber(data.totales.totalGastosComunesMes),
-    formatNumber(data.totales.totalFondoReservaMes),
-    formatNumber(data.totales.totalSaldoActual),
+    data.totales.totalSaldoAnterior,
+    data.totales.totalPagosMes,
+    data.totales.totalGastosComunesMes,
+    data.totales.totalFondoReservaMes,
+    data.totales.totalSaldoActual,
   ])
+  totalRow.font = { bold: true }
 
-  // Convertir a CSV
-  const csvContent = BOM + rows.map((row) => row.map(escapeCSV).join(";")).join("\n")
+  // Anchos de columna
+  ws.getColumn(1).width = 28
+  ws.getColumn(2).width = 16
+  ws.getColumn(3).width = 18
+  ws.getColumn(4).width = 18
+  ws.getColumn(5).width = 18
+  ws.getColumn(6).width = 18
+  ws.getColumn(7).width = 18
 
   // Descargar
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" })
+  const buffer = await workbook.xlsx.writeBuffer()
+  const blob = new Blob([buffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  })
   const url = URL.createObjectURL(blob)
   const link = document.createElement("a")
   link.href = url
-  link.download = `informe-mensual-${periodoLabel.toLowerCase().replace(/\s/g, "-")}.csv`
+  link.download = `informe-mensual-${periodoLabel.toLowerCase().replace(/\s/g, "-")}.xlsx`
   document.body.appendChild(link)
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
-}
-
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace(".", ",")
-}
-
-function escapeCSV(value: string): string {
-  if (value.includes(";") || value.includes('"') || value.includes("\n")) {
-    return `"${value.replace(/"/g, '""')}"`
-  }
-  return value
 }

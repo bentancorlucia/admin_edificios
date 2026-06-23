@@ -1,6 +1,6 @@
 [package]
 name = "admin-edificios"
-version = "1.3.3"
+version = "1.4.2"
 description = "Sistema de Administración de Edificios"
 authors = ["Admin Edificios"]
 license = "MIT"
@@ -26,4 +26,5 @@ tauri-plugin-fs = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-process = "2"
 tauri-plugin-shell = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-os = "2"

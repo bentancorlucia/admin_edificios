@@ -1,6 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { Fragment, useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
+import { BackToHome } from "@/components/back-to-home"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -48,6 +50,8 @@ import {
   ExternalLink,
   Upload,
   X,
+  MessageSquare,
+  CheckCircle2,
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -64,11 +68,13 @@ import {
   type InfoTransaccionVinculada,
 } from "@/lib/database"
 import { formatCurrency, formatDate } from "@/lib/utils"
+import { exportToExcel } from "@/lib/excel-export"
 import { generateEstadoCuentaPDF } from "@/lib/pdf"
+import { savePDFWithDialog } from "@/lib/save-pdf"
 import { toast } from "@/hooks/use-toast"
 import { open as openDialog } from "@tauri-apps/plugin-dialog"
 import { copyFile, exists, mkdir, BaseDirectory } from "@tauri-apps/plugin-fs"
-import { open as openFile } from "@tauri-apps/plugin-shell"
+import { openPath } from "@tauri-apps/plugin-opener"
 import { appDataDir, join } from "@tauri-apps/api/path"
 
 type TipoMovimiento = "INGRESO" | "EGRESO"
@@ -85,6 +91,7 @@ type Movimiento = {
   archivoUrl: string | null
   clasificacion: string | null
   servicioId: string | null
+  proyectoId: string | null
   conciliado: boolean
   transaccionId: string | null
   servicio?: {
@@ -126,10 +133,16 @@ type Servicio = {
   email: string | null
 }
 
+type ProyectoActivo = {
+  id: string
+  nombre: string
+}
+
 type Props = {
   initialCuentas: CuentaBancaria[]
   recibosNoVinculados: Recibo[]
   servicios: Servicio[]
+  proyectos: ProyectoActivo[]
 }
 
 const tiposCuenta = [
@@ -139,7 +152,8 @@ const tiposCuenta = [
   "Otro",
 ]
 
-export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }: Props) {
+export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, proyectos }: Props) {
+  const router = useRouter()
   const [cuentas, setCuentas] = useState(initialCuentas)
   const [recibos, setRecibos] = useState(recibosNoVinculados)
   const [search, setSearch] = useState("")
@@ -165,6 +179,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     titular: "",
     saldoInicial: 0,
     porDefecto: false,
+    activa: true,
   })
 
   const [movimientoForm, setMovimientoForm] = useState({
@@ -176,6 +191,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     clasificacion: "" as ClasificacionEgreso | "",
     servicioId: "",
     archivoUrl: "",
+    proyectoId: "",
   })
   const [archivoFile, setArchivoFile] = useState<string | null>(null)  // Ruta del archivo seleccionado
   const [uploadingFile, setUploadingFile] = useState(false)
@@ -193,10 +209,17 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
   const [historialPage, setHistorialPage] = useState(1)
   const historialPageSize = 10
 
-  const filteredCuentas = cuentas.filter((cuenta) =>
-    cuenta.banco.toLowerCase().includes(search.toLowerCase()) ||
-    cuenta.numeroCuenta.includes(search)
-  )
+  const filteredCuentas = cuentas
+    .filter((cuenta) =>
+      cuenta.banco.toLowerCase().includes(search.toLowerCase()) ||
+      cuenta.numeroCuenta.includes(search)
+    )
+    .slice()
+    .sort((a, b) => {
+      // Inactivas al final
+      if (a.activa !== b.activa) return a.activa ? -1 : 1
+      return 0
+    })
 
   // Calcular saldo actual de una cuenta
   const calcularSaldo = (cuenta: CuentaBancaria) => {
@@ -220,8 +243,24 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       titular: "",
       saldoInicial: 0,
       porDefecto: false,
+      activa: true,
     })
     setSelectedCuenta(null)
+  }
+
+  const handleReactivarCuenta = async (cuenta: CuentaBancaria) => {
+    try {
+      const result = await updateCuentaBancaria(cuenta.id, { activa: true })
+      setCuentas((prev) =>
+        prev.map((c) =>
+          c.id === cuenta.id ? { ...c, ...result, movimientos: c.movimientos } : c
+        )
+      )
+      toast({ title: "Cuenta reactivada", description: `${cuenta.banco} - ${cuenta.numeroCuenta}` })
+    } catch (err) {
+      console.error("Error reactivando cuenta:", err)
+      toast({ title: "Error", description: "No se pudo reactivar la cuenta.", variant: "destructive" })
+    }
   }
 
   const resetMovimientoForm = () => {
@@ -234,6 +273,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       clasificacion: "" as ClasificacionEgreso | "",
       servicioId: "",
       archivoUrl: "",
+      proyectoId: "",
     })
     setArchivoFile(null)
   }
@@ -310,7 +350,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
   // Abrir archivo con la aplicación predeterminada del sistema
   const handleOpenFile = async (filePath: string) => {
     try {
-      await openFile(filePath)
+      await openPath(filePath)
     } catch (error) {
       console.error("Error abriendo archivo:", error)
       toast({
@@ -338,6 +378,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       titular: cuenta.titular || "",
       saldoInicial: cuenta.saldoInicial,
       porDefecto: cuenta.porDefecto,
+      activa: cuenta.activa,
     })
     setIsAccountDialogOpen(true)
   }
@@ -353,13 +394,16 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     setError(null)
 
     try {
+      // Regla: si está inactiva no puede ser por defecto
+      const porDefectoFinal = accountForm.activa && accountForm.porDefecto
       const data = {
         banco: accountForm.banco,
         tipoCuenta: accountForm.tipoCuenta,
         numeroCuenta: accountForm.numeroCuenta,
         titular: accountForm.titular || null,
         saldoInicial: accountForm.saldoInicial,
-        porDefecto: accountForm.porDefecto,
+        porDefecto: porDefectoFinal,
+        activa: accountForm.activa,
       }
 
       if (selectedCuenta) {
@@ -451,6 +495,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       clasificacion: (mov.clasificacion || "") as ClasificacionEgreso | "",
       servicioId: mov.servicioId || "",
       archivoUrl: mov.archivoUrl || "",
+      proyectoId: mov.proyectoId || "",
     })
     setArchivoFile(null)
     setError(null)
@@ -523,6 +568,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         archivoUrl: archivoUrl,
         clasificacion: tipoMovimiento === "EGRESO" && movimientoForm.clasificacion ? movimientoForm.clasificacion : null,
         servicioId: tipoMovimiento === "EGRESO" && movimientoForm.servicioId ? movimientoForm.servicioId : null,
+        proyectoId: movimientoForm.proyectoId || null,
         cuentaBancariaId: selectedCuenta.id,
         conciliado: false,
         transaccionId: null,
@@ -569,6 +615,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                       archivoUrl: result.archivoUrl,
                       clasificacion: result.clasificacion as ClasificacionEgreso | null,
                       servicioId: result.servicioId,
+                      proyectoId: result.proyectoId,
                       conciliado: result.conciliado,
                       transaccionId: result.transaccionId,
                     }
@@ -591,6 +638,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   archivoUrl: result.archivoUrl,
                   clasificacion: result.clasificacion as ClasificacionEgreso | null,
                   servicioId: result.servicioId,
+                  proyectoId: result.proyectoId,
                   conciliado: result.conciliado,
                   transaccionId: result.transaccionId,
                 },
@@ -684,6 +732,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                     archivoUrl: result.archivoUrl,
                     clasificacion: result.clasificacion as ClasificacionEgreso | null,
                     servicioId: result.servicioId,
+                    proyectoId: result.proyectoId,
                     conciliado: result.conciliado,
                     transaccionId: result.transaccionId,
                   },
@@ -710,12 +759,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     try {
       const data = await getEstadoCuenta(cuenta.id)
       if (data) {
-        generateEstadoCuentaPDF(data)
-        toast({
-          title: "PDF descargado",
-          description: `Estado de cuenta de ${cuenta.banco} descargado correctamente`,
-          variant: "success",
-        })
+        const result = generateEstadoCuentaPDF(data)
+        const saved = await savePDFWithDialog(result)
+        if (saved) toast({ title: "PDF guardado", description: `Estado de cuenta de ${cuenta.banco} guardado correctamente`, variant: "success" })
       }
     } catch {
       toast({
@@ -765,17 +811,18 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
     }
   }
 
-  const handleExportEstadoCuenta = () => {
+  const handleExportEstadoCuenta = async () => {
     if (!estadoCuenta) return
-    generateEstadoCuentaPDF(estadoCuenta)
-    toast({
-      title: "PDF descargado",
-      description: `Estado de cuenta de ${estadoCuenta.cuenta.banco} descargado correctamente`,
-      variant: "success",
-    })
+    try {
+      const result = generateEstadoCuentaPDF(estadoCuenta)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: `Estado de cuenta de ${estadoCuenta.cuenta.banco} guardado correctamente`, variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
+    }
   }
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     if (!estadoCuenta || !selectedCuenta) return
 
     // Aplicar los mismos filtros que se muestran en la tabla
@@ -799,35 +846,30 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
       return true
     })
 
-    // Crear contenido CSV
     const headers = ["Fecha", "Descripción", "Referencia", "Tipo", "Clasificación", "Ingreso", "Egreso", "Saldo"]
     const rows = movimientosFiltrados.map((mov) => {
       const movCompleto = selectedCuenta.movimientos.find(m => m.id === mov.id)
       return [
         formatDate(new Date(mov.fecha)),
-        `"${mov.descripcion.replace(/"/g, '""')}"`,
+        mov.descripcion,
         mov.referencia || movCompleto?.numeroDocumento || "",
         mov.tipo,
-        mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : mov.clasificacion === "FONDO_RESERVA" ? "Fondo Reserva" : "",
-        mov.tipo === "INGRESO" ? mov.monto.toFixed(2) : "",
-        mov.tipo === "EGRESO" ? mov.monto.toFixed(2) : "",
-        mov.saldoAcumulado.toFixed(2),
-      ].join(",")
+        mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : mov.clasificacion === "FONDO_RESERVA" ? "Fondo Reserva" : mov.clasificacion === "OTROS_GASTOS" ? "Otros Gastos" : "",
+        mov.tipo === "INGRESO" ? mov.monto : "",
+        mov.tipo === "EGRESO" ? mov.monto : "",
+        mov.saldoAcumulado,
+      ]
     })
 
-    const csvContent = [headers.join(","), ...rows].join("\n")
-    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `movimientos_${estadoCuenta.cuenta.banco}_${new Date().toISOString().split("T")[0]}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    await exportToExcel({
+      filename: `movimientos_${estadoCuenta.cuenta.banco}_${new Date().toISOString().split("T")[0]}`,
+      sheetName: "Movimientos",
+      headers,
+      rows,
+    })
 
     toast({
-      title: "CSV descargado",
+      title: "Excel descargado",
       description: `${movimientosFiltrados.length} movimientos exportados correctamente`,
       variant: "success",
     })
@@ -840,6 +882,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
+            <BackToHome dark />
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
                 <Landmark className="h-6 w-6 text-white" />
@@ -853,13 +896,22 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
             </div>
           </div>
 
-          <Button
-            onClick={openCreateAccountDialog}
-            className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Nueva Cuenta
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => router.push('/mensajes?contexto=banco')}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <MessageSquare className="h-4 w-4 mr-2" />
+              Notificar
+            </Button>
+            <Button
+              onClick={openCreateAccountDialog}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Nueva Cuenta
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -945,15 +997,15 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
         </Card>
       </div>
 
-      {/* Cuentas Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* Cuentas Grid (1 por fila, ancho completo) */}
+      <div className="grid grid-cols-1 gap-6">
         {filteredCuentas.length === 0 ? (
           <div className="col-span-full text-center py-12">
             <Landmark className="h-12 w-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500">No hay cuentas bancarias registradas</p>
           </div>
         ) : (
-          filteredCuentas.map((cuenta) => {
+          filteredCuentas.map((cuenta, index) => {
             const saldoActual = calcularSaldo(cuenta)
             const totalIngresos = cuenta.movimientos
               .filter((m) => m.tipo === "INGRESO")
@@ -962,8 +1014,22 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               .filter((m) => m.tipo === "EGRESO")
               .reduce((s, m) => s + m.monto, 0)
 
+            const esPrimeraInactiva =
+              !cuenta.activa && filteredCuentas.findIndex((c) => !c.activa) === index
+
             return (
-              <Card key={cuenta.id} className="overflow-hidden">
+              <Fragment key={cuenta.id}>
+                {esPrimeraInactiva && (
+                  <div className="col-span-full mt-4 pt-4 border-t border-slate-200">
+                    <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
+                      Cuentas inactivas
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Ocultas de selectores y reportes. Podés reactivarlas con el ícono verde.
+                    </p>
+                  </div>
+                )}
+              <Card className={`overflow-hidden ${!cuenta.activa ? "opacity-60 grayscale-[30%]" : ""}`}>
                 <CardHeader className="bg-slate-50 border-b">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
@@ -971,11 +1037,16 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                         <Landmark className="h-6 w-6 text-blue-600" />
                       </div>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <CardTitle className="text-lg">{cuenta.banco}</CardTitle>
                           {cuenta.porDefecto && (
                             <Badge className="bg-blue-500 text-white text-xs">
                               Por defecto
+                            </Badge>
+                          )}
+                          {!cuenta.activa && (
+                            <Badge className="bg-slate-500 text-white text-xs">
+                              Inactiva
                             </Badge>
                           )}
                         </div>
@@ -988,6 +1059,17 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                       </div>
                     </div>
                     <div className="flex gap-1">
+                      {!cuenta.activa && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleReactivarCuenta(cuenta)}
+                          className="text-emerald-600 hover:text-emerald-700"
+                          title="Reactivar cuenta"
+                        >
+                          <CheckCircle2 className="h-4 w-4" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
@@ -1250,6 +1332,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   </div>
                 </CardContent>
               </Card>
+              </Fragment>
             )
           })
         )}
@@ -1353,20 +1436,51 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 type="checkbox"
                 id="porDefecto"
                 checked={accountForm.porDefecto}
+                disabled={!accountForm.activa}
                 onChange={(e) =>
                   setAccountForm({
                     ...accountForm,
                     porDefecto: e.target.checked,
                   })
                 }
-                className="h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500"
+                className="h-4 w-4 rounded border-blue-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
               />
               <div>
-                <Label htmlFor="porDefecto" className="text-blue-800 cursor-pointer">
+                <Label htmlFor="porDefecto" className={`cursor-pointer ${accountForm.activa ? "text-blue-800" : "text-slate-400"}`}>
                   Cuenta por defecto para recibos
                 </Label>
-                <p className="text-xs text-blue-600">
-                  Esta cuenta se seleccionará automáticamente al crear recibos de pago
+                <p className={`text-xs ${accountForm.activa ? "text-blue-600" : "text-slate-400"}`}>
+                  {accountForm.activa
+                    ? "Esta cuenta se seleccionará automáticamente al crear recibos de pago"
+                    : "Una cuenta inactiva no puede ser por defecto"}
+                </p>
+              </div>
+            </div>
+
+            <div className={`flex items-center gap-3 p-3 border rounded-lg ${accountForm.activa ? "bg-emerald-50 border-emerald-200" : "bg-slate-100 border-slate-300"}`}>
+              <input
+                type="checkbox"
+                id="activa"
+                checked={accountForm.activa}
+                onChange={(e) => {
+                  const nuevaActiva = e.target.checked
+                  setAccountForm({
+                    ...accountForm,
+                    activa: nuevaActiva,
+                    // Si se desactiva, quitar flag por defecto
+                    porDefecto: nuevaActiva ? accountForm.porDefecto : false,
+                  })
+                }}
+                className={`h-4 w-4 rounded focus:ring-emerald-500 ${accountForm.activa ? "border-emerald-300 text-emerald-600" : "border-slate-300 text-slate-500"}`}
+              />
+              <div>
+                <Label htmlFor="activa" className={`cursor-pointer ${accountForm.activa ? "text-emerald-800" : "text-slate-700"}`}>
+                  Cuenta activa
+                </Label>
+                <p className={`text-xs ${accountForm.activa ? "text-emerald-600" : "text-slate-500"}`}>
+                  {accountForm.activa
+                    ? "La cuenta aparece en selectores y reportes"
+                    : "Una cuenta inactiva se oculta de selectores, reportes y dashboard. Los movimientos históricos se conservan."}
                 </p>
               </div>
             </div>
@@ -1389,9 +1503,9 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
       {/* Dialog: Crear/Editar Movimiento */}
       <Dialog open={isMovimientoDialogOpen} onOpenChange={setIsMovimientoDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className="text-base">
               {isEditMode
                 ? `Editar ${tipoMovimiento === "INGRESO" ? "Ingreso" : "Egreso"}`
                 : tipoMovimiento === "INGRESO"
@@ -1399,7 +1513,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                 : "Registrar Egreso Bancario"}
             </DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmitMovimiento} className="space-y-4">
+          <form onSubmit={handleSubmitMovimiento} className="space-y-3">
             {error && (
               <Alert variant="destructive">
                 <AlertCircle className="h-4 w-4" />
@@ -1407,24 +1521,23 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               </Alert>
             )}
 
-            <div className="p-3 bg-slate-50 rounded-lg">
-              <p className="text-sm text-slate-600">
+            <div className="p-2 bg-slate-50 rounded-lg">
+              <p className="text-xs text-slate-600">
                 Cuenta: <strong>{selectedCuenta?.banco}</strong>
-              </p>
-              <p className="text-xs text-slate-400">
-                {selectedCuenta?.numeroCuenta}
+                <span className="text-slate-400 ml-2">{selectedCuenta?.numeroCuenta}</span>
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="monto">Monto *</Label>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="monto" className="text-xs">Monto *</Label>
                 <Input
                   id="monto"
                   type="number"
                   step="0.01"
                   min="0.01"
                   placeholder="0.00"
+                  className="h-8 text-sm"
                   value={movimientoForm.monto || ""}
                   onChange={(e) =>
                     setMovimientoForm({
@@ -1435,11 +1548,12 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   required
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="fecha">Fecha *</Label>
+              <div className="space-y-1">
+                <Label htmlFor="fecha" className="text-xs">Fecha *</Label>
                 <Input
                   id="fecha"
                   type="date"
+                  className="h-8 text-sm"
                   value={movimientoForm.fecha}
                   onChange={(e) =>
                     setMovimientoForm({ ...movimientoForm, fecha: e.target.value })
@@ -1449,12 +1563,13 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="descripcion">
+            <div className="space-y-1">
+              <Label htmlFor="descripcion" className="text-xs">
                 Descripción {tipoMovimiento === "INGRESO" ? "*" : "(opcional)"}
               </Label>
               <Input
                 id="descripcion"
+                className="h-8 text-sm"
                 placeholder={
                   tipoMovimiento === "INGRESO"
                     ? "Ej: Depósito, Transferencia recibida"
@@ -1480,8 +1595,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
 
             {tipoMovimiento === "EGRESO" && (
               <>
-                <div className="space-y-2">
-                  <Label htmlFor="clasificacion">Clasificación *</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="clasificacion" className="text-xs">Clasificación *</Label>
                   <Select
                     value={movimientoForm.clasificacion || ""}
                     onValueChange={(value) =>
@@ -1498,8 +1613,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="servicioId">Servicio / Proveedor</Label>
+                <div className="space-y-1">
+                  <Label htmlFor="servicioId" className="text-xs">Servicio / Proveedor</Label>
                   <Select
                     value={movimientoForm.servicioId || "none"}
                     onValueChange={(value) =>
@@ -1520,8 +1635,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   </Select>
                 </div>
 
-                <div className="space-y-2">
-                  <Label>Archivo Adjunto</Label>
+                <div className="space-y-1">
+                  <Label className="text-xs">Archivo Adjunto</Label>
                   {/* Mostrar archivo existente en modo edición */}
                   {isEditMode && movimientoForm.archivoUrl && !archivoFile && (
                     <div className="flex items-center justify-between p-2 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1591,11 +1706,36 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               </>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="referencia">Referencia</Label>
+            {proyectos.length > 0 && (
+              <div className="space-y-1">
+                <Label htmlFor="proyectoId" className="text-xs">Proyecto</Label>
+                <Select
+                  value={movimientoForm.proyectoId || "none"}
+                  onValueChange={(value) =>
+                    setMovimientoForm({ ...movimientoForm, proyectoId: value === "none" ? "" : value })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Sin proyecto asignado" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Sin proyecto asignado</SelectItem>
+                    {proyectos.map((proyecto) => (
+                      <SelectItem key={proyecto.id} value={proyecto.id}>
+                        {proyecto.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label htmlFor="referencia" className="text-xs">Referencia</Label>
                 <Input
                   id="referencia"
+                  className="h-8 text-sm"
                   placeholder="Nº de referencia"
                   value={movimientoForm.referencia}
                   onChange={(e) =>
@@ -1606,10 +1746,11 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
                   }
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="numeroDocumento">Nº Documento</Label>
+              <div className="space-y-1">
+                <Label htmlFor="numeroDocumento" className="text-xs">Nº Documento</Label>
                 <Input
                   id="numeroDocumento"
+                  className="h-8 text-sm"
                   placeholder="Nº cheque/transfer"
                   value={movimientoForm.numeroDocumento}
                   onChange={(e) =>
@@ -1622,7 +1763,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios }:
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 pt-4">
+            <div className="flex justify-end gap-2 pt-2">
               <Button
                 type="button"
                 variant="outline"

@@ -1,6 +1,8 @@
 "use client"
 
 import { useState, useTransition, useMemo, useCallback } from "react"
+import { useRouter } from "next/navigation"
+import { BackToHome } from "@/components/back-to-home"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -68,6 +70,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { generateInformePDF, generateInformeCombinado, generateInformeDetalleMensual } from "@/lib/informe-pdf"
 import { generateInformeExcel } from "@/lib/informe-excel"
+import { savePDFWithDialog } from "@/lib/save-pdf"
 import { toast } from "@/hooks/use-toast"
 
 const meses = [
@@ -99,6 +102,7 @@ type Props = {
 }
 
 export function InformesClient({ initialData, initialMes, initialAnio, initialPiePagina, initialAvisoFinal }: Props) {
+  const router = useRouter()
   const [data, setData] = useState<InformeData>(initialData)
   const [mes, setMes] = useState(initialMes)
   const [anio, setAnio] = useState(initialAnio)
@@ -351,7 +355,7 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
 
   // Memoizar función de formateo
   const formatCurrency = useCallback((value: number) => {
-    return `$ ${value.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    return `$ ${value.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
   }, [])
 
   // Memoizar label del mes
@@ -360,22 +364,19 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
     return mesObj ? `${mesObj.label} ${anio}` : ""
   }, [mes, anio])
 
-  const handleExportPDF = useCallback(() => {
-    // Usar los avisos del estado local (con cambios de texto y orden) en lugar de data.avisos
-    const dataConAvisosActualizados = {
-      ...data,
-      avisos: avisos,
+  const handleExportPDF = useCallback(async () => {
+    try {
+      const dataConAvisosActualizados = { ...data, avisos: avisos }
+      const result = generateInformePDF(dataConAvisosActualizados, mesLabel, piePagina, avisoFinal)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: `Informe de ${mesLabel} guardado correctamente`, variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
     }
-    generateInformePDF(dataConAvisosActualizados, mesLabel, piePagina, avisoFinal)
-    toast({
-      title: "PDF descargado",
-      description: `Informe de ${mesLabel} descargado correctamente`,
-      variant: "success",
-    })
   }, [data, avisos, mesLabel, piePagina, avisoFinal])
 
-  const handleExportExcel = useCallback(() => {
-    generateInformeExcel(data, mesLabel)
+  const handleExportExcel = useCallback(async () => {
+    await generateInformeExcel(data, mesLabel)
     toast({
       title: "Excel descargado",
       description: `Informe de ${mesLabel} descargado correctamente`,
@@ -391,12 +392,9 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
         ...dataCombinada,
         avisos: avisos,
       }
-      generateInformeCombinado(dataConAvisosActualizados, piePagina, avisoFinal)
-      toast({
-        title: "PDF Combinado descargado",
-        description: `Informe combinado ${dataCombinada.mesAnterior.label} + ${dataCombinada.mesCorriente.label}`,
-        variant: "success",
-      })
+      const result = generateInformeCombinado(dataConAvisosActualizados, piePagina, avisoFinal)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF Combinado guardado", description: `Informe combinado ${dataCombinada.mesAnterior.label} + ${dataCombinada.mesCorriente.label}`, variant: "success" })
     } catch (error) {
       console.error("Error generando PDF combinado:", error)
       toast({
@@ -415,12 +413,9 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
         ...dataCompleta,
         avisos: avisos,
       }
-      generateInformeDetalleMensual(dataConAvisosActualizados, piePagina, avisoFinal)
-      toast({
-        title: "PDF Completo descargado",
-        description: `Detalle mensual ${dataCompleta.mesCorriente.label} con pagos de ${dataCompleta.mesAnterior.label}`,
-        variant: "success",
-      })
+      const result = generateInformeDetalleMensual(dataConAvisosActualizados, piePagina, avisoFinal)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF Completo guardado", description: `Detalle mensual ${dataCompleta.mesCorriente.label} con pagos de ${dataCompleta.mesAnterior.label}`, variant: "success" })
     } catch (error) {
       console.error("Error generando PDF completo:", error)
       toast({
@@ -436,6 +431,7 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
       {/* Header con navegación de fecha */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
+          <BackToHome />
           <h1 className="text-2xl font-bold text-slate-900">Informes</h1>
           <p className="text-sm text-slate-500">Resumen financiero del edificio</p>
         </div>
@@ -538,6 +534,16 @@ export function InformesClient({ initialData, initialMes, initialAnio, initialPi
           >
             <FileSpreadsheet className="h-4 w-4" />
             Excel
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => router.push(`/mensajes?contexto=informe&mes=${mes}&anio=${anio}`)}
+            disabled={isPending}
+            className="gap-2"
+          >
+            <MessageSquare className="h-4 w-4" />
+            Enviar
           </Button>
         </div>
       </div>

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { BackToHome } from "@/components/back-to-home"
 import { open } from "@tauri-apps/plugin-shell"
 import { formatPhoneForWhatsApp } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -45,6 +46,8 @@ import {
   type TipoServicio as TipoServicioType,
 } from "@/lib/database"
 import { generateServiciosPDF } from "@/lib/servicios-pdf"
+import { savePDFWithDialog } from "@/lib/save-pdf"
+import { exportToExcel } from "@/lib/excel-export"
 import { toast } from "@/hooks/use-toast"
 
 type Servicio = {
@@ -199,7 +202,7 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
     }
   }
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     const headers = ["Tipo", "Nombre", "Celular", "Email", "Banco", "Número de Cuenta", "Observaciones"]
     const rows = servicios.map((srv) => [
       tipoServicioLabels[srv.tipo] || srv.tipo,
@@ -211,27 +214,28 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
       srv.observaciones || "",
     ])
 
-    const csvContent = [headers, ...rows].map((row) => row.map(cell => `"${cell}"`).join(",")).join("\n")
-    const blob = new Blob([csvContent], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "servicios.csv"
-    a.click()
+    await exportToExcel({
+      filename: "servicios",
+      sheetName: "Servicios",
+      headers,
+      rows,
+    })
+
     toast({
-      title: "CSV descargado",
+      title: "Excel descargado",
       description: "Directorio de servicios exportado correctamente",
       variant: "success",
     })
   }
 
-  const handleExportPDF = () => {
-    generateServiciosPDF(servicios, tiposServicio)
-    toast({
-      title: "PDF descargado",
-      description: "Directorio de servicios exportado correctamente",
-      variant: "success",
-    })
+  const handleExportPDF = async () => {
+    try {
+      const result = generateServiciosPDF(servicios, tiposServicio)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: "Directorio de servicios exportado correctamente", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
+    }
   }
 
   const handleCallPhone = (celular: string) => {
@@ -344,6 +348,7 @@ export function ServiciosClient({ initialServicios, initialTiposServicio }: Prop
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
+            <BackToHome dark />
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
                 <Wrench className="h-6 w-6 text-white" />

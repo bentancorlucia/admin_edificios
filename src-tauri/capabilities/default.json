@@ -32,9 +32,21 @@
     "fs:allow-write",
     "dialog:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "process:default",
+    "process:allow-restart",
+    "process:allow-exit",
     "shell:default",
-    "shell:allow-open",
+    "opener:default",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$APPDATA/archivos/*" },
+        { "path": "$APPDATA/archivos/**" }
+      ]
+    },
+    "opener:allow-open-url",
+    "opener:allow-reveal-item-in-dir",
     "os:default",
     "os:allow-platform",
     "fs:allow-home-read",

@@ -1,7 +1,51 @@
 import Database from '@tauri-apps/plugin-sql';
+import { invoke } from '@tauri-apps/api/core';
 
 let db: Database | null = null;
 let isInitialized = false;
+let dbName: string | null = null;
+
+// Obtiene el nombre del archivo de DB desde el backend (database_dev.db o database.db)
+async function getDbConnectionString(): Promise<string> {
+  if (!dbName) {
+    try {
+      dbName = await invoke<string>('get_dev_db_name');
+    } catch {
+      dbName = 'database.db';
+    }
+  }
+  return `sqlite:${dbName}`;
+}
+
+// Verifica si estamos en modo desarrollo
+export async function isDevMode(): Promise<boolean> {
+  try {
+    return await invoke<boolean>('is_dev_mode');
+  } catch {
+    return false;
+  }
+}
+
+// Cierra la conexión activa de la base de datos (necesario antes de sync)
+export async function closeDatabase(): Promise<void> {
+  if (db) {
+    try {
+      await db.close();
+    } catch {
+      // Ignorar errores al cerrar
+    }
+    db = null;
+    isInitialized = false;
+    dbName = null;
+  }
+}
+
+// Sincroniza la base de datos de desarrollo con producción (copia prod -> dev)
+// Cierra la conexión actual, copia el archivo, y requiere recarga de la app
+export async function syncDevFromProd(): Promise<string> {
+  await closeDatabase();
+  return await invoke<string>('sync_dev_from_prod');
+}
 
 // SQL para crear las tablas
 const INIT_SQL = `
@@ -13,6 +57,7 @@ CREATE TABLE IF NOT EXISTS Apartamento (
     alicuota REAL DEFAULT 0,
     gastosComunes REAL DEFAULT 0,
     fondoReserva REAL DEFAULT 0,
+    otrosGastos REAL DEFAULT 0,
     tipoOcupacion TEXT DEFAULT 'PROPIETARIO' CHECK (tipoOcupacion IN ('PROPIETARIO', 'INQUILINO')),
     contactoNombre TEXT,
     contactoApellido TEXT,
@@ -90,16 +135,17 @@ CREATE TABLE IF NOT EXISTS Transaccion (
     tipo TEXT NOT NULL CHECK (tipo IN ('INGRESO', 'EGRESO', 'VENTA_CREDITO', 'RECIBO_PAGO')),
     monto REAL NOT NULL,
     fecha TEXT DEFAULT (datetime('now')),
-    categoria TEXT CHECK (categoria IN ('GASTOS_COMUNES', 'FONDO_RESERVA', 'MANTENIMIENTO', 'SERVICIOS', 'ADMINISTRACION', 'REPARACIONES', 'LIMPIEZA', 'SEGURIDAD', 'OTROS')),
+    categoria TEXT CHECK (categoria IN ('GASTOS_COMUNES', 'FONDO_RESERVA', 'OTROS_GASTOS', 'MANTENIMIENTO', 'SERVICIOS', 'ADMINISTRACION', 'REPARACIONES', 'LIMPIEZA', 'SEGURIDAD', 'OTROS')),
     descripcion TEXT,
     referencia TEXT,
     metodoPago TEXT DEFAULT 'EFECTIVO' CHECK (metodoPago IN ('EFECTIVO', 'TRANSFERENCIA', 'TARJETA', 'CHEQUE', 'OTRO')),
     notas TEXT,
     estadoCredito TEXT CHECK (estadoCredito IN ('PENDIENTE', 'PARCIAL', 'PAGADO')),
     montoPagado REAL DEFAULT 0,
-    clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'MIXTO')),
+    clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'OTROS_GASTOS', 'MIXTO')),
     montoGastoComun REAL,
     montoFondoReserva REAL,
+    montoOtrosGastos REAL,
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now')),
     apartamentoId TEXT,
@@ -116,7 +162,7 @@ CREATE TABLE IF NOT EXISTS MovimientoBancario (
     referencia TEXT,
     numeroDocumento TEXT,
     archivoUrl TEXT,
-    clasificacion TEXT CHECK (clasificacion IN ('GASTO_COMUN', 'FONDO_RESERVA')),
+    clasificacion TEXT CHECK (clasificacion IN ('GASTO_COMUN', 'FONDO_RESERVA', 'OTROS_GASTOS')),
     conciliado INTEGER DEFAULT 0,
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now')),
@@ -160,6 +206,79 @@ CREATE TABLE IF NOT EXISTS ConfiguracionInforme (
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now'))
 );
+
+-- Tabla Proyecto
+CREATE TABLE IF NOT EXISTS Proyecto (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    presupuesto REAL DEFAULT 0,
+    fechaInicio TEXT,
+    fechaFin TEXT,
+    observaciones TEXT DEFAULT '',
+    activo INTEGER DEFAULT 1,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+-- Tabla ContactoLibre (contactos no vinculados a apartamentos/servicios)
+CREATE TABLE IF NOT EXISTS ContactoLibre (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    apellido TEXT,
+    celular TEXT,
+    email TEXT,
+    notas TEXT,
+    activo INTEGER DEFAULT 1,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+-- Tabla PlantillaMensaje (plantillas de mensajes)
+CREATE TABLE IF NOT EXISTS PlantillaMensaje (
+    id TEXT PRIMARY KEY,
+    nombre TEXT NOT NULL,
+    asunto TEXT,
+    cuerpo TEXT NOT NULL,
+    canal TEXT DEFAULT 'AMBOS' CHECK (canal IN ('WHATSAPP', 'EMAIL', 'AMBOS')),
+    predefinida INTEGER DEFAULT 0,
+    activo INTEGER DEFAULT 1,
+    prioridad INTEGER DEFAULT 0,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+-- Tabla HistorialMensaje (log de mensajes enviados)
+CREATE TABLE IF NOT EXISTS HistorialMensaje (
+    id TEXT PRIMARY KEY,
+    destinatarioNombre TEXT NOT NULL,
+    destinatarioContacto TEXT,
+    destinatarioTipo TEXT CHECK (destinatarioTipo IN ('PROPIETARIO', 'INQUILINO', 'SERVICIO', 'LIBRE')),
+    canal TEXT NOT NULL CHECK (canal IN ('WHATSAPP', 'EMAIL')),
+    asunto TEXT,
+    contenido TEXT NOT NULL,
+    estado TEXT DEFAULT 'ENVIADO' CHECK (estado IN ('PENDIENTE', 'ENVIADO', 'ERROR')),
+    plantillaId TEXT,
+    apartamentoId TEXT,
+    servicioId TEXT,
+    contactoLibreId TEXT,
+    createdAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (plantillaId) REFERENCES PlantillaMensaje(id) ON DELETE SET NULL,
+    FOREIGN KEY (apartamentoId) REFERENCES Apartamento(id) ON DELETE SET NULL,
+    FOREIGN KEY (servicioId) REFERENCES Servicio(id) ON DELETE SET NULL,
+    FOREIGN KEY (contactoLibreId) REFERENCES ContactoLibre(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS FlujoCajaOverride (
+    id TEXT PRIMARY KEY,
+    mes INTEGER NOT NULL,
+    anio INTEGER NOT NULL,
+    concepto TEXT NOT NULL,
+    valor REAL NOT NULL,
+    clasificacion TEXT NOT NULL DEFAULT 'AMBOS' CHECK (clasificacion IN ('GASTO_COMUN', 'FONDO_RESERVA', 'AMBOS')),
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now')),
+    UNIQUE(mes, anio, concepto, clasificacion)
+);
 `;
 
 // Índices SQL (separados para ejecutar uno por uno)
@@ -170,6 +289,11 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_movimiento_transaccion ON MovimientoBancario(transaccionId)',
   'CREATE INDEX IF NOT EXISTS idx_movimiento_servicio ON MovimientoBancario(servicioId)',
   'CREATE INDEX IF NOT EXISTS idx_aviso_mes_anio ON AvisoInforme(mes, anio)',
+  'CREATE INDEX IF NOT EXISTS idx_movimiento_proyecto ON MovimientoBancario(proyectoId)',
+  'CREATE INDEX IF NOT EXISTS idx_historial_fecha ON HistorialMensaje(createdAt)',
+  'CREATE INDEX IF NOT EXISTS idx_historial_destinatario ON HistorialMensaje(destinatarioTipo)',
+  'CREATE INDEX IF NOT EXISTS idx_contacto_libre_activo ON ContactoLibre(activo)',
+  'CREATE INDEX IF NOT EXISTS idx_flujo_override_mes ON FlujoCajaOverride(mes, anio, clasificacion)',
 ];
 
 export async function initDatabase(): Promise<void> {
@@ -194,13 +318,167 @@ export async function initDatabase(): Promise<void> {
     await database.execute(statement);
   }
 
-  // Crear índices
+  // Migraciones: agregar columna proyectoId a MovimientoBancario si no existe
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(MovimientoBancario)");
+    const hasProyectoId = columns.some(c => c.name === 'proyectoId');
+    if (!hasProyectoId) {
+      await database.execute('ALTER TABLE MovimientoBancario ADD COLUMN proyectoId TEXT REFERENCES Proyecto(id) ON DELETE SET NULL');
+    }
+  } catch (e) {
+    console.error('Error en migración proyectoId:', e);
+  }
+
+  // Migración: agregar columna observaciones a Proyecto si no existe
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(Proyecto)");
+    const hasObservaciones = columns.some(c => c.name === 'observaciones');
+    if (!hasObservaciones) {
+      await database.execute("ALTER TABLE Proyecto ADD COLUMN observaciones TEXT DEFAULT ''");
+    }
+  } catch (e) {
+    console.error('Error en migración observaciones:', e);
+  }
+
+  // Migración: agregar columna prioridad a PlantillaMensaje si no existe
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(PlantillaMensaje)");
+    const hasPrioridad = columns.some(c => c.name === 'prioridad');
+    if (!hasPrioridad) {
+      await database.execute('ALTER TABLE PlantillaMensaje ADD COLUMN prioridad INTEGER DEFAULT 0');
+    }
+  } catch (e) {
+    console.error('Error en migración prioridad PlantillaMensaje:', e);
+  }
+
+  // Migración: agregar columna otrosGastos a Apartamento si no existe
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(Apartamento)");
+    const hasOtrosGastos = columns.some(c => c.name === 'otrosGastos');
+    if (!hasOtrosGastos) {
+      await database.execute('ALTER TABLE Apartamento ADD COLUMN otrosGastos REAL DEFAULT 0');
+    }
+  } catch (e) {
+    console.error('Error en migración otrosGastos Apartamento:', e);
+  }
+
+  // Migración: rebuild Transaccion para soportar OTROS_GASTOS en CHECK constraints
+  // (SQLite no permite ALTER de CHECK constraints, hay que recrear la tabla)
+  try {
+    const result = await database.select<{ sql: string }[]>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='Transaccion'"
+    );
+    const currentSql = result[0]?.sql || '';
+    const needsRebuild = !currentSql.includes("'OTROS_GASTOS'");
+
+    if (needsRebuild) {
+      await database.execute('PRAGMA foreign_keys = OFF');
+      await database.execute(`
+        CREATE TABLE Transaccion_new (
+          id TEXT PRIMARY KEY,
+          tipo TEXT NOT NULL CHECK (tipo IN ('INGRESO', 'EGRESO', 'VENTA_CREDITO', 'RECIBO_PAGO')),
+          monto REAL NOT NULL,
+          fecha TEXT DEFAULT (datetime('now')),
+          categoria TEXT CHECK (categoria IN ('GASTOS_COMUNES', 'FONDO_RESERVA', 'OTROS_GASTOS', 'MANTENIMIENTO', 'SERVICIOS', 'ADMINISTRACION', 'REPARACIONES', 'LIMPIEZA', 'SEGURIDAD', 'OTROS')),
+          descripcion TEXT,
+          referencia TEXT,
+          metodoPago TEXT DEFAULT 'EFECTIVO' CHECK (metodoPago IN ('EFECTIVO', 'TRANSFERENCIA', 'TARJETA', 'CHEQUE', 'OTRO')),
+          notas TEXT,
+          estadoCredito TEXT CHECK (estadoCredito IN ('PENDIENTE', 'PARCIAL', 'PAGADO')),
+          montoPagado REAL DEFAULT 0,
+          clasificacionPago TEXT CHECK (clasificacionPago IN ('GASTO_COMUN', 'FONDO_RESERVA', 'OTROS_GASTOS', 'MIXTO')),
+          montoGastoComun REAL,
+          montoFondoReserva REAL,
+          montoOtrosGastos REAL,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now')),
+          apartamentoId TEXT,
+          FOREIGN KEY (apartamentoId) REFERENCES Apartamento(id) ON DELETE SET NULL
+        )
+      `);
+      await database.execute(`
+        INSERT INTO Transaccion_new (id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, montoOtrosGastos, createdAt, updatedAt, apartamentoId)
+        SELECT id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, NULL, createdAt, updatedAt, apartamentoId FROM Transaccion
+      `);
+      await database.execute('DROP TABLE Transaccion');
+      await database.execute('ALTER TABLE Transaccion_new RENAME TO Transaccion');
+      await database.execute('PRAGMA foreign_keys = ON');
+    }
+  } catch (e) {
+    console.error('Error en migración Transaccion CHECK constraints:', e);
+  }
+
+  // Migración: rebuild MovimientoBancario para soportar OTROS_GASTOS en CHECK
+  try {
+    const result = await database.select<{ sql: string }[]>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='MovimientoBancario'"
+    );
+    const currentSql = result[0]?.sql || '';
+    const needsRebuild = !currentSql.includes("'OTROS_GASTOS'");
+
+    if (needsRebuild) {
+      // Verificar si ya tiene columna proyectoId (agregada en migración previa)
+      const cols = await database.select<{ name: string }[]>("PRAGMA table_info(MovimientoBancario)");
+      const hasProyectoId = cols.some(c => c.name === 'proyectoId');
+
+      await database.execute('PRAGMA foreign_keys = OFF');
+      await database.execute(`
+        CREATE TABLE MovimientoBancario_new (
+          id TEXT PRIMARY KEY,
+          tipo TEXT NOT NULL CHECK (tipo IN ('INGRESO', 'EGRESO')),
+          monto REAL NOT NULL,
+          fecha TEXT DEFAULT (datetime('now')),
+          descripcion TEXT NOT NULL,
+          referencia TEXT,
+          numeroDocumento TEXT,
+          archivoUrl TEXT,
+          clasificacion TEXT CHECK (clasificacion IN ('GASTO_COMUN', 'FONDO_RESERVA', 'OTROS_GASTOS')),
+          conciliado INTEGER DEFAULT 0,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now')),
+          cuentaBancariaId TEXT NOT NULL,
+          transaccionId TEXT UNIQUE,
+          servicioId TEXT,
+          proyectoId TEXT,
+          FOREIGN KEY (cuentaBancariaId) REFERENCES CuentaBancaria(id) ON DELETE CASCADE,
+          FOREIGN KEY (transaccionId) REFERENCES Transaccion(id) ON DELETE SET NULL,
+          FOREIGN KEY (servicioId) REFERENCES Servicio(id) ON DELETE SET NULL,
+          FOREIGN KEY (proyectoId) REFERENCES Proyecto(id) ON DELETE SET NULL
+        )
+      `);
+
+      const proyectoIdSelect = hasProyectoId ? 'proyectoId' : 'NULL';
+      await database.execute(`
+        INSERT INTO MovimientoBancario_new (id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, createdAt, updatedAt, cuentaBancariaId, transaccionId, servicioId, proyectoId)
+        SELECT id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, createdAt, updatedAt, cuentaBancariaId, transaccionId, servicioId, ${proyectoIdSelect} FROM MovimientoBancario
+      `);
+      await database.execute('DROP TABLE MovimientoBancario');
+      await database.execute('ALTER TABLE MovimientoBancario_new RENAME TO MovimientoBancario');
+      await database.execute('PRAGMA foreign_keys = ON');
+    }
+  } catch (e) {
+    console.error('Error en migración MovimientoBancario CHECK constraints:', e);
+  }
+
+  // Crear índices (después de migraciones para que las columnas existan)
   for (const indexSql of INDEX_SQL) {
     await database.execute(indexSql);
   }
 
   // Inicializar tipos de servicio predeterminados
   await initTiposServicioDefault();
+
+  // Inicializar plantillas de mensaje predeterminadas
+  await initPlantillasDefault();
+
+  // Auto-reparación: re-sincronizar la imputación de créditos con el libro.
+  // Corrige cualquier crédito cuyo estado/montoPagado hubiera quedado desfasado
+  // respecto de los pagos (p. ej. pagos no imputados que mostraban deuda de más).
+  try {
+    await recalcularTodosLosCreditosApartamentos();
+  } catch (e) {
+    console.error('Error en auto-reparación de imputación de créditos:', e);
+  }
 
   isInitialized = true;
 
@@ -212,14 +490,15 @@ export async function getDatabase(): Promise<Database> {
     // Intentar cargar la base de datos con reintentos
     let retries = 5;
     let lastError: Error | null = null;
+    const connString = await getDbConnectionString();
 
     while (retries > 0) {
       try {
-        console.log(`Intentando conectar a la base de datos (intento ${6 - retries}/5)...`);
-        db = await Database.load('sqlite:database.db');
+        console.log(`Intentando conectar a la base de datos (intento ${6 - retries}/5)... [${connString}]`);
+        db = await Database.load(connString);
         // Activar claves foráneas en cada conexión (SQLite las desactiva por defecto)
         await db.execute('PRAGMA foreign_keys = ON');
-        console.log('Conexión a la base de datos establecida correctamente');
+        console.log(`Conexión a la base de datos establecida correctamente [${connString}]`);
         break;
       } catch (error) {
         lastError = error as Error;
@@ -266,6 +545,7 @@ export interface Apartamento {
   alicuota: number;
   gastosComunes: number;
   fondoReserva: number;
+  otrosGastos: number;
   tipoOcupacion: 'PROPIETARIO' | 'INQUILINO';
   contactoNombre: string | null;
   contactoApellido: string | null;
@@ -298,9 +578,9 @@ export async function createApartamento(data: Omit<Apartamento, 'id' | 'createdA
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO Apartamento (id, numero, piso, alicuota, gastosComunes, fondoReserva, tipoOcupacion, contactoNombre, contactoApellido, contactoCelular, contactoEmail, notas, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.numero, data.piso, 0, data.gastosComunes, data.fondoReserva, data.tipoOcupacion, data.contactoNombre, data.contactoApellido, data.contactoCelular, data.contactoEmail, data.notas, now, now]
+    `INSERT INTO Apartamento (id, numero, piso, alicuota, gastosComunes, fondoReserva, otrosGastos, tipoOcupacion, contactoNombre, contactoApellido, contactoCelular, contactoEmail, notas, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.numero, data.piso, 0, data.gastosComunes, data.fondoReserva, data.otrosGastos ?? 0, data.tipoOcupacion, data.contactoNombre, data.contactoApellido, data.contactoCelular, data.contactoEmail, data.notas, now, now]
   );
 
   return (await getApartamentoById(id))!;
@@ -354,6 +634,7 @@ export interface Transaccion {
   clasificacionPago: string | null;
   montoGastoComun: number | null;
   montoFondoReserva: number | null;
+  montoOtrosGastos: number | null;
   createdAt: string;
   updatedAt: string;
   apartamentoId: string | null;
@@ -424,9 +705,9 @@ export async function createTransaccion(data: Omit<Transaccion, 'id' | 'createdA
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO Transaccion (id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, apartamentoId, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.tipo, data.monto, data.fecha, data.categoria, data.descripcion, data.referencia, data.metodoPago, data.notas, data.estadoCredito, data.montoPagado, data.clasificacionPago, data.montoGastoComun, data.montoFondoReserva, data.apartamentoId, now, now]
+    `INSERT INTO Transaccion (id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, montoOtrosGastos, apartamentoId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.tipo, data.monto, data.fecha, data.categoria, data.descripcion, data.referencia, data.metodoPago, data.notas, data.estadoCredito, data.montoPagado, data.clasificacionPago, data.montoGastoComun, data.montoFondoReserva, data.montoOtrosGastos, data.apartamentoId, now, now]
   );
 
   return (await getTransaccionById(id))!;
@@ -488,54 +769,81 @@ export async function deleteTransaccion(id: string): Promise<void> {
   }
 }
 
-// Recalcular el estado de los créditos de un apartamento basándose en los pagos existentes
-async function recalcularEstadoCreditosApartamento(apartamentoId: string): Promise<void> {
+// ── Imputación de pagos a créditos: ÚNICA FUENTE DE VERDAD ──────────────────
+// Calcula, exclusivamente a partir del libro de transacciones (créditos y pagos),
+// cuánto queda pagado/pendiente en cada crédito del apartamento, aplicando los
+// pagos en orden FIFO por fecha. El "Saldo Actual", las deudas por concepto y el
+// detalle de deuda derivan TODOS de esta misma base, por lo que no pueden quedar
+// desincronizados entre sí.
+interface CreditoImputado {
+  credito: Transaccion;
+  montoPagado: number;
+  pendiente: number;
+  estado: 'PENDIENTE' | 'PARCIAL' | 'PAGADO';
+}
+
+async function imputarCreditosFIFO(apartamentoId: string): Promise<CreditoImputado[]> {
   const database = await getDatabase();
 
-  // Obtener todos los créditos del apartamento ordenados por fecha (FIFO)
+  // Créditos del apartamento en orden FIFO (fecha, y createdAt como desempate estable)
   const creditos = await database.select<Transaccion[]>(
     `SELECT * FROM Transaccion
      WHERE apartamentoId = ? AND tipo = 'VENTA_CREDITO'
-     ORDER BY fecha ASC`,
+     ORDER BY fecha ASC, createdAt ASC`,
     [apartamentoId]
   );
 
-  // Obtener todos los recibos de pago del apartamento ordenados por fecha
-  const recibos = await database.select<Transaccion[]>(
-    `SELECT * FROM Transaccion
-     WHERE apartamentoId = ? AND tipo = 'RECIBO_PAGO'
-     ORDER BY fecha ASC`,
+  // Total efectivamente pagado por el apartamento (mismo origen que el Saldo Actual)
+  const pagadoRows = await database.select<{ total: number }[]>(
+    `SELECT COALESCE(SUM(monto), 0) as total
+     FROM Transaccion
+     WHERE apartamentoId = ? AND tipo = 'RECIBO_PAGO'`,
     [apartamentoId]
   );
+  let restante = pagadoRows[0]?.total ?? 0;
 
-  // Calcular el total pagado
-  const totalPagado = recibos.reduce((sum, r) => sum + r.monto, 0);
+  return creditos.map((credito) => {
+    const aplicar = Math.max(0, Math.min(restante, credito.monto));
+    restante -= aplicar;
+    const pendiente = credito.monto - aplicar;
+    const estado: 'PENDIENTE' | 'PARCIAL' | 'PAGADO' =
+      aplicar <= 0 ? 'PENDIENTE' : aplicar >= credito.monto ? 'PAGADO' : 'PARCIAL';
+    return { credito, montoPagado: aplicar, pendiente, estado };
+  });
+}
 
-  // Resetear todos los créditos a PENDIENTE con montoPagado = 0
-  for (const credito of creditos) {
-    await database.execute(
-      `UPDATE Transaccion SET montoPagado = 0, estadoCredito = 'PENDIENTE', updatedAt = ? WHERE id = ?`,
-      [getCurrentTimestamp(), credito.id]
-    );
-  }
+// Persiste en cada crédito la imputación FIFO derivada del libro. El cache
+// (estadoCredito/montoPagado) queda siempre igual a lo que muestran las consultas
+// de deuda. Idempotente: solo escribe cuando hay diferencias.
+async function recalcularEstadoCreditosApartamento(apartamentoId: string): Promise<void> {
+  const database = await getDatabase();
+  const imputados = await imputarCreditosFIFO(apartamentoId);
 
-  // Redistribuir los pagos en orden FIFO
-  let montoRestante = totalPagado;
-
-  for (const credito of creditos) {
-    if (montoRestante <= 0) break;
-
-    const montoCredito = credito.monto;
-    const aplicar = Math.min(montoRestante, montoCredito);
-
-    const nuevoEstado = aplicar >= montoCredito ? 'PAGADO' : 'PARCIAL';
-
+  for (const { credito, montoPagado, estado } of imputados) {
+    if ((credito.montoPagado ?? 0) === montoPagado && credito.estadoCredito === estado) {
+      continue;
+    }
     await database.execute(
       `UPDATE Transaccion SET montoPagado = ?, estadoCredito = ?, updatedAt = ? WHERE id = ?`,
-      [aplicar, nuevoEstado, getCurrentTimestamp(), credito.id]
+      [montoPagado, estado, getCurrentTimestamp(), credito.id]
     );
+  }
+}
 
-    montoRestante -= aplicar;
+// Auto-reparación: re-imputa los pagos de todos los apartamentos para sincronizar
+// el cache con el libro. Idempotente; seguro de ejecutar en cada arranque.
+export async function recalcularTodosLosCreditosApartamentos(): Promise<void> {
+  const database = await getDatabase();
+  const filas = await database.select<{ apartamentoId: string }[]>(
+    `SELECT DISTINCT apartamentoId FROM Transaccion
+     WHERE apartamentoId IS NOT NULL AND tipo = 'VENTA_CREDITO'`
+  );
+  for (const { apartamentoId } of filas) {
+    try {
+      await recalcularEstadoCreditosApartamento(apartamentoId);
+    } catch (e) {
+      console.error('Error al recalcular créditos del apartamento', apartamentoId, e);
+    }
   }
 }
 
@@ -562,6 +870,7 @@ export async function createVentaCredito(data: {
     clasificacionPago: null,
     montoGastoComun: null,
     montoFondoReserva: null,
+    montoOtrosGastos: null,
   });
 }
 
@@ -572,7 +881,7 @@ export async function updateVentaCredito(
     monto?: number;
     apartamentoId?: string;
     fecha?: string;
-    categoria?: 'GASTOS_COMUNES' | 'FONDO_RESERVA';
+    categoria?: 'GASTOS_COMUNES' | 'FONDO_RESERVA' | 'OTROS_GASTOS';
   }
 ): Promise<Transaccion> {
   const transaccion = await getTransaccionById(id);
@@ -593,7 +902,12 @@ export async function updateVentaCredito(
 
   // Actualizar descripción si cambia la categoría
   if (data.categoria !== undefined) {
-    updateData.descripcion = data.categoria === 'GASTOS_COMUNES' ? 'Gastos Comunes' : 'Fondo de Reserva';
+    updateData.descripcion =
+      data.categoria === 'GASTOS_COMUNES'
+        ? 'Gastos Comunes'
+        : data.categoria === 'FONDO_RESERVA'
+        ? 'Fondo de Reserva'
+        : 'Otros Gastos';
   }
 
   return await updateTransaccion(id, updateData);
@@ -660,20 +974,24 @@ export async function getCuentaBancariaById(id: string): Promise<CuentaBancaria 
   return { ...result[0], activa: Boolean(result[0].activa), porDefecto: Boolean(result[0].porDefecto) };
 }
 
-export async function createCuentaBancaria(data: Omit<CuentaBancaria, 'id' | 'createdAt' | 'updatedAt' | 'activa'>): Promise<CuentaBancaria> {
+export async function createCuentaBancaria(data: Omit<CuentaBancaria, 'id' | 'createdAt' | 'updatedAt'> & { activa?: boolean }): Promise<CuentaBancaria> {
   const database = await getDatabase();
   const id = generateId();
   const now = getCurrentTimestamp();
 
+  const activa = data.activa ?? true;
+  // Una cuenta inactiva no puede ser por defecto
+  const porDefecto = activa && data.porDefecto ? true : false;
+
   // Si se marca como por defecto, desmarcar las demás
-  if (data.porDefecto) {
+  if (porDefecto) {
     await database.execute('UPDATE CuentaBancaria SET porDefecto = 0 WHERE porDefecto = 1', []);
   }
 
   await database.execute(
     `INSERT INTO CuentaBancaria (id, banco, tipoCuenta, numeroCuenta, titular, saldoInicial, activa, porDefecto, createdAt, updatedAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.banco, data.tipoCuenta, data.numeroCuenta, data.titular, data.saldoInicial, 1, data.porDefecto ? 1 : 0, now, now]
+    [id, data.banco, data.tipoCuenta, data.numeroCuenta, data.titular, data.saldoInicial, activa ? 1 : 0, porDefecto ? 1 : 0, now, now]
   );
 
   return (await getCuentaBancariaById(id))!;
@@ -682,6 +1000,11 @@ export async function createCuentaBancaria(data: Omit<CuentaBancaria, 'id' | 'cr
 export async function updateCuentaBancaria(id: string, data: Partial<Omit<CuentaBancaria, 'id' | 'createdAt' | 'updatedAt'>>): Promise<CuentaBancaria> {
   const database = await getDatabase();
   const now = getCurrentTimestamp();
+
+  // Regla: una cuenta inactiva no puede quedar como "por defecto"
+  if (data.activa === false) {
+    data = { ...data, porDefecto: false };
+  }
 
   // Si se marca como por defecto, desmarcar las demás
   if (data.porDefecto) {
@@ -737,6 +1060,7 @@ export interface MovimientoBancario {
   cuentaBancariaId: string;
   transaccionId: string | null;
   servicioId: string | null;
+  proyectoId: string | null;
 }
 
 interface MovimientoBancarioDB {
@@ -755,6 +1079,7 @@ interface MovimientoBancarioDB {
   cuentaBancariaId: string;
   transaccionId: string | null;
   servicioId: string | null;
+  proyectoId: string | null;
 }
 
 export interface MovimientoBancarioCompleto extends MovimientoBancario {
@@ -871,9 +1196,9 @@ export async function createMovimientoBancario(data: Omit<MovimientoBancario, 'i
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO MovimientoBancario (id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, cuentaBancariaId, transaccionId, servicioId, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.tipo, data.monto, data.fecha, data.descripcion, data.referencia, data.numeroDocumento, data.archivoUrl, data.clasificacion, data.conciliado ? 1 : 0, data.cuentaBancariaId, data.transaccionId, data.servicioId, now, now]
+    `INSERT INTO MovimientoBancario (id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, cuentaBancariaId, transaccionId, servicioId, proyectoId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.tipo, data.monto, data.fecha, data.descripcion, data.referencia, data.numeroDocumento, data.archivoUrl, data.clasificacion, data.conciliado ? 1 : 0, data.cuentaBancariaId, data.transaccionId, data.servicioId, data.proyectoId, now, now]
   );
 
   return (await getMovimientoBancarioById(id))!;
@@ -1674,11 +1999,15 @@ export async function setConfiguracionInforme(clave: string, valor: string): Pro
 // ============ FUNCIONES DE NEGOCIO ============
 
 // Generar transacciones mensuales (gastos comunes y fondo de reserva)
-export async function generarTransaccionesMensuales(): Promise<{ creadas: number; mes: string }> {
+// Si no se pasan mes/anio, usa el mes corriente.
+export async function generarTransaccionesMensuales(opts?: { mes?: number; anio?: number }): Promise<{ creadas: number; mes: string }> {
   const ahora = new Date();
-  const mesActual = ahora.toLocaleString('es', { month: 'long', year: 'numeric' });
-  const primerDiaMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString();
-  const ultimoDiaMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 0, 23, 59, 59).toISOString();
+  const anioTarget = opts?.anio ?? ahora.getFullYear();
+  const mesTarget = opts?.mes ?? (ahora.getMonth() + 1); // 1-12
+  const fechaRef = new Date(anioTarget, mesTarget - 1, 1);
+  const mesActual = fechaRef.toLocaleString('es', { month: 'long', year: 'numeric' });
+  const primerDiaMes = new Date(anioTarget, mesTarget - 1, 1).toISOString();
+  const ultimoDiaMes = new Date(anioTarget, mesTarget, 0, 23, 59, 59).toISOString();
 
   const apartamentos = await getApartamentos();
 
@@ -1718,6 +2047,7 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
         clasificacionPago: null,
         montoGastoComun: null,
         montoFondoReserva: null,
+        montoOtrosGastos: null,
       });
       transaccionesCreadas++;
     }
@@ -1738,6 +2068,7 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
         clasificacionPago: null,
         montoGastoComun: null,
         montoFondoReserva: null,
+        montoOtrosGastos: null,
       });
       transaccionesCreadas++;
     }
@@ -1748,6 +2079,68 @@ export async function generarTransaccionesMensuales(): Promise<{ creadas: number
   }
 
   return { creadas: transaccionesCreadas, mes: mesActual };
+}
+
+// Generar créditos de Otros Gastos del mes corriente (idempotente).
+// Crea VENTA_CREDITO categoria='OTROS_GASTOS' por cada apartamento con apt.otrosGastos > 0
+// que aún no tenga un crédito OG cargado en el mes. No toca GC ni FR.
+// Si no se pasan mes/anio, usa el mes corriente.
+export async function generarOtrosGastosMensuales(opts?: { mes?: number; anio?: number }): Promise<{ creadas: number; mes: string; saltadosYaExistentes: number }> {
+  const ahora = new Date();
+  const anioTarget = opts?.anio ?? ahora.getFullYear();
+  const mesTarget = opts?.mes ?? (ahora.getMonth() + 1);
+  const fechaRef = new Date(anioTarget, mesTarget - 1, 1);
+  const mesActual = fechaRef.toLocaleString('es', { month: 'long', year: 'numeric' });
+  const primerDiaMes = new Date(anioTarget, mesTarget - 1, 1).toISOString();
+  const ultimoDiaMes = new Date(anioTarget, mesTarget, 0, 23, 59, 59).toISOString();
+
+  const apartamentos = await getApartamentos();
+
+  if (apartamentos.length === 0) {
+    throw new Error("No hay apartamentos registrados");
+  }
+
+  let creadas = 0;
+  let saltadosYaExistentes = 0;
+
+  for (const apt of apartamentos) {
+    if (apt.otrosGastos <= 0) continue;
+
+    const transacciones = await getTransaccionesByApartamento(apt.id);
+    const yaExiste = transacciones.some(t => {
+      const fechaTrans = new Date(t.fecha);
+      return t.tipo === 'VENTA_CREDITO' &&
+             t.categoria === 'OTROS_GASTOS' &&
+             fechaTrans >= new Date(primerDiaMes) &&
+             fechaTrans <= new Date(ultimoDiaMes);
+    });
+
+    if (yaExiste) {
+      saltadosYaExistentes++;
+      continue;
+    }
+
+    await createTransaccion({
+      tipo: 'VENTA_CREDITO',
+      monto: apt.otrosGastos,
+      fecha: primerDiaMes,
+      categoria: 'OTROS_GASTOS',
+      descripcion: `Otros Gastos - ${mesActual}`,
+      estadoCredito: 'PENDIENTE',
+      montoPagado: 0,
+      apartamentoId: apt.id,
+      referencia: null,
+      metodoPago: null,
+      notas: null,
+      clasificacionPago: null,
+      montoGastoComun: null,
+      montoFondoReserva: null,
+      montoOtrosGastos: null,
+    });
+    creadas++;
+  }
+
+  return { creadas, mes: mesActual, saltadosYaExistentes };
 }
 
 // Obtener saldos de cuenta corriente - Optimizado para evitar N+1
@@ -1779,42 +2172,39 @@ export async function obtenerSaldosCuentaCorriente(): Promise<Record<string, num
   return saldos;
 }
 
-// Obtener deudas desglosadas por concepto (GC y FR) para un apartamento
+// Obtener deudas desglosadas por concepto (GC, FR, OG) para un apartamento
 export interface DeudasPorConcepto {
   gastosComunes: number;
   fondoReserva: number;
+  otrosGastos: number;
   total: number;
 }
 
 export async function obtenerDeudasPorConcepto(apartamentoId: string): Promise<DeudasPorConcepto> {
-  const database = await getDatabase();
+  // Deriva de la imputación FIFO sobre el libro (misma base que el Saldo Actual),
+  // por lo que la suma de conceptos siempre coincide con el saldo deudor.
+  const imputados = await imputarCreditosFIFO(apartamentoId);
 
-  // Obtener créditos (VENTA_CREDITO) pendientes/parciales y pagos (RECIBO_PAGO) del apartamento
-  const creditos = await database.select<{ categoria: string; monto: number; montoPagado: number }[]>(`
-    SELECT categoria, monto, COALESCE(montoPagado, 0) as montoPagado
-    FROM Transaccion
-    WHERE apartamentoId = ?
-      AND tipo = 'VENTA_CREDITO'
-      AND (estadoCredito = 'PENDIENTE' OR estadoCredito = 'PARCIAL')
-  `, [apartamentoId]);
+  let gc = 0;
+  let fr = 0;
+  let og = 0;
 
-  // Calcular totales de créditos por categoría
-  let creditosGC = 0;
-  let creditosFR = 0;
-
-  for (const credito of creditos) {
-    const pendiente = credito.monto - credito.montoPagado;
+  for (const { credito, pendiente } of imputados) {
+    if (pendiente <= 0) continue;
     if (credito.categoria === 'GASTOS_COMUNES') {
-      creditosGC += pendiente;
+      gc += pendiente;
     } else if (credito.categoria === 'FONDO_RESERVA') {
-      creditosFR += pendiente;
+      fr += pendiente;
+    } else if (credito.categoria === 'OTROS_GASTOS') {
+      og += pendiente;
     }
   }
 
   return {
-    gastosComunes: Math.max(0, creditosGC),
-    fondoReserva: Math.max(0, creditosFR),
-    total: Math.max(0, creditosGC) + Math.max(0, creditosFR),
+    gastosComunes: gc,
+    fondoReserva: fr,
+    otrosGastos: og,
+    total: gc + fr + og,
   };
 }
 
@@ -1830,35 +2220,27 @@ export interface CreditoPendiente {
 }
 
 export async function getCreditosPendientes(apartamentoId: string): Promise<CreditoPendiente[]> {
-  const database = await getDatabase();
+  // Deriva de la imputación FIFO sobre el libro (misma base que el Saldo Actual).
+  const imputados = await imputarCreditosFIFO(apartamentoId);
 
-  const creditos = await database.select<{
-    id: string;
-    monto: number;
-    montoPagado: number | null;
-    categoria: string;
-    fecha: string;
-    descripcion: string | null;
-  }[]>(`
-    SELECT id, monto, COALESCE(montoPagado, 0) as montoPagado, categoria, fecha, descripcion
-    FROM Transaccion
-    WHERE apartamentoId = ?
-      AND tipo = 'VENTA_CREDITO'
-      AND (estadoCredito = 'PENDIENTE' OR estadoCredito = 'PARCIAL')
-    ORDER BY fecha ASC
-  `, [apartamentoId]);
-
-  return creditos.map(c => ({
-    ...c,
-    montoPagado: c.montoPagado || 0,
-    pendiente: c.monto - (c.montoPagado || 0),
-  }));
+  return imputados
+    .filter(({ pendiente }) => pendiente > 0)
+    .map(({ credito, montoPagado, pendiente }) => ({
+      id: credito.id,
+      monto: credito.monto,
+      montoPagado,
+      pendiente,
+      categoria: (credito.categoria ?? '') as string,
+      fecha: credito.fecha,
+      descripcion: credito.descripcion,
+    }));
 }
 
 // Interfaz para resultado de distribución de pago
 export interface DistribucionPago {
   aplicadoGastosComunes: number;
   aplicadoFondoReserva: number;
+  aplicadoOtrosGastos: number;
   excedente: number;
   creditosActualizados: { id: string; montoAplicado: number; nuevoMontoPagado: number; nuevoEstado: string }[];
 }
@@ -1873,6 +2255,7 @@ export async function calcularDistribucionPago(
   let montoRestante = montoTransferencia;
   let aplicadoGC = 0;
   let aplicadoFR = 0;
+  let aplicadoOG = 0;
   const creditosActualizados: DistribucionPago['creditosActualizados'] = [];
 
   for (const credito of creditosPendientes) {
@@ -1885,6 +2268,8 @@ export async function calcularDistribucionPago(
       aplicadoGC += aplicar;
     } else if (credito.categoria === 'FONDO_RESERVA') {
       aplicadoFR += aplicar;
+    } else if (credito.categoria === 'OTROS_GASTOS') {
+      aplicadoOG += aplicar;
     }
 
     const nuevoMontoPagado = credito.montoPagado + aplicar;
@@ -1903,6 +2288,7 @@ export async function calcularDistribucionPago(
   return {
     aplicadoGastosComunes: aplicadoGC,
     aplicadoFondoReserva: aplicadoFR,
+    aplicadoOtrosGastos: aplicadoOG,
     excedente: montoRestante,
     creditosActualizados,
   };
@@ -1917,13 +2303,19 @@ export async function createReciboPago(data: {
   cuentaBancariaId: string | null;
   referencia: string | null;
   notas: string | null;
-  clasificacionPago: 'GASTO_COMUN' | 'FONDO_RESERVA';
+  clasificacionPago: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'OTROS_GASTOS';
   // Nuevos parámetros para distribución automática
   usarDistribucionAutomatica?: boolean;
-  excedentePara?: 'GASTO_COMUN' | 'FONDO_RESERVA';
+  excedentePara?: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'OTROS_GASTOS';
   // Montos pre-calculados (si vienen del frontend)
   montoGastoComun?: number;
   montoFondoReserva?: number;
+  montoOtrosGastos?: number;
+  // Distribución manual: el usuario asignó explícitamente cuánto a cada categoría.
+  // Si true, se ignoran usarDistribucionAutomatica/excedentePara y se respetan los montos del frontend.
+  // Para cada categoría, se imputa FIFO contra créditos pendientes hasta el monto pedido;
+  // el sobrante en una categoría queda como saldo a favor del apartamento.
+  distribucionManual?: boolean;
 }): Promise<Transaccion> {
   const apartamento = await getApartamentoById(data.apartamentoId);
   if (!apartamento) {
@@ -1933,30 +2325,77 @@ export async function createReciboPago(data: {
   // Calcular distribución automática si está habilitada
   let montoGC = data.montoGastoComun ?? 0;
   let montoFR = data.montoFondoReserva ?? 0;
-  let clasificacionFinal: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'MIXTO' = data.clasificacionPago;
+  let montoOG = data.montoOtrosGastos ?? 0;
+  let clasificacionFinal: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'OTROS_GASTOS' | 'MIXTO' = data.clasificacionPago;
 
-  if (data.usarDistribucionAutomatica) {
-    const distribucion = await calcularDistribucionPago(data.apartamentoId, data.monto);
+  if (data.distribucionManual) {
+    // Imputar contra créditos pendientes por categoría hasta los montos manuales pedidos.
+    // El sobrante en cada categoría no se aplica a ningún crédito (queda como saldo a favor).
+    const creditosPendientes = await getCreditosPendientes(data.apartamentoId);
+    const targets: Record<'GASTOS_COMUNES' | 'FONDO_RESERVA' | 'OTROS_GASTOS', number> = {
+      GASTOS_COMUNES: montoGC,
+      FONDO_RESERVA: montoFR,
+      OTROS_GASTOS: montoOG,
+    };
+    const restantePorCategoria: Record<string, number> = { ...targets };
 
-    montoGC = distribucion.aplicadoGastosComunes;
-    montoFR = distribucion.aplicadoFondoReserva;
+    for (const credito of creditosPendientes) {
+      const cat = credito.categoria as 'GASTOS_COMUNES' | 'FONDO_RESERVA' | 'OTROS_GASTOS';
+      if (!(cat in restantePorCategoria)) continue;
+      const restante = restantePorCategoria[cat];
+      if (restante <= 0) continue;
 
-    // Asignar excedente al concepto elegido
-    if (distribucion.excedente > 0 && data.excedentePara) {
-      if (data.excedentePara === 'GASTO_COMUN') {
-        montoGC += distribucion.excedente;
-      } else {
-        montoFR += distribucion.excedente;
-      }
+      const aplicar = Math.min(restante, credito.pendiente);
+      if (aplicar <= 0) continue;
+
+      const nuevoMontoPagado = credito.montoPagado + aplicar;
+      const nuevoEstado = nuevoMontoPagado >= credito.monto ? 'PAGADO' : 'PARCIAL';
+      await updateTransaccion(credito.id, {
+        montoPagado: nuevoMontoPagado,
+        estadoCredito: nuevoEstado,
+      });
+      restantePorCategoria[cat] -= aplicar;
     }
 
     // Determinar clasificación final
-    if (montoGC > 0 && montoFR > 0) {
+    const usadosPrincipales = [montoGC > 0, montoFR > 0, montoOG > 0].filter(Boolean).length;
+    if (usadosPrincipales > 1) {
       clasificacionFinal = 'MIXTO';
     } else if (montoGC > 0) {
       clasificacionFinal = 'GASTO_COMUN';
     } else if (montoFR > 0) {
       clasificacionFinal = 'FONDO_RESERVA';
+    } else if (montoOG > 0) {
+      clasificacionFinal = 'OTROS_GASTOS';
+    }
+  } else if (data.usarDistribucionAutomatica) {
+    const distribucion = await calcularDistribucionPago(data.apartamentoId, data.monto);
+
+    montoGC = distribucion.aplicadoGastosComunes;
+    montoFR = distribucion.aplicadoFondoReserva;
+    montoOG = distribucion.aplicadoOtrosGastos;
+
+    // Asignar excedente al concepto elegido
+    if (distribucion.excedente > 0 && data.excedentePara) {
+      if (data.excedentePara === 'GASTO_COMUN') {
+        montoGC += distribucion.excedente;
+      } else if (data.excedentePara === 'FONDO_RESERVA') {
+        montoFR += distribucion.excedente;
+      } else {
+        montoOG += distribucion.excedente;
+      }
+    }
+
+    // Determinar clasificación final
+    const usadosPrincipales = [montoGC > 0, montoFR > 0, montoOG > 0].filter(Boolean).length;
+    if (usadosPrincipales > 1) {
+      clasificacionFinal = 'MIXTO';
+    } else if (montoGC > 0) {
+      clasificacionFinal = 'GASTO_COMUN';
+    } else if (montoFR > 0) {
+      clasificacionFinal = 'FONDO_RESERVA';
+    } else if (montoOG > 0) {
+      clasificacionFinal = 'OTROS_GASTOS';
     }
 
     // Actualizar créditos pendientes con la distribución calculada
@@ -1967,17 +2406,16 @@ export async function createReciboPago(data: {
       });
     }
   } else {
-    // Modo legacy: usar clasificación simple
-    montoGC = data.clasificacionPago === 'GASTO_COMUN' ? data.monto : 0;
-    montoFR = data.clasificacionPago === 'FONDO_RESERVA' ? data.monto : 0;
-
-    // Actualizar créditos pendientes de forma secuencial (modo legacy)
+    // Modo legacy: distribuir pago entre créditos pendientes por categoría
     const transacciones = await getTransaccionesByApartamento(data.apartamentoId);
     const pendingCredits = transacciones
       .filter(t => t.tipo === 'VENTA_CREDITO' && (t.estadoCredito === 'PENDIENTE' || t.estadoCredito === 'PARCIAL'))
       .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
 
     let remainingPayment = data.monto;
+    montoGC = 0;
+    montoFR = 0;
+    montoOG = 0;
 
     for (const credit of pendingCredits) {
       if (remainingPayment <= 0) break;
@@ -1993,12 +2431,51 @@ export async function createReciboPago(data: {
         estadoCredito: newEstado,
       });
 
+      // Distribuir monto aplicado según la categoría del crédito
+      if (credit.categoria === 'FONDO_RESERVA') {
+        montoFR += paymentToApply;
+      } else if (credit.categoria === 'OTROS_GASTOS') {
+        montoOG += paymentToApply;
+      } else {
+        montoGC += paymentToApply;
+      }
+
       remainingPayment -= paymentToApply;
+    }
+
+    // Si hay excedente (pago mayor que la deuda), asignarlo a la clasificación seleccionada
+    if (remainingPayment > 0) {
+      if (data.clasificacionPago === 'FONDO_RESERVA') {
+        montoFR += remainingPayment;
+      } else if (data.clasificacionPago === 'OTROS_GASTOS') {
+        montoOG += remainingPayment;
+      } else {
+        montoGC += remainingPayment;
+      }
+    }
+
+    // Determinar clasificación final según distribución real
+    const usadosPrincipales = [montoGC > 0, montoFR > 0, montoOG > 0].filter(Boolean).length;
+    if (usadosPrincipales > 1) {
+      clasificacionFinal = 'MIXTO';
+    } else if (montoFR > 0) {
+      clasificacionFinal = 'FONDO_RESERVA';
+    } else if (montoOG > 0) {
+      clasificacionFinal = 'OTROS_GASTOS';
+    } else {
+      clasificacionFinal = 'GASTO_COMUN';
     }
   }
 
   const tipoOcupacionLabel = apartamento.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
-  const clasificacionLabel = clasificacionFinal === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionFinal === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+  const clasificacionLabel =
+    clasificacionFinal === 'GASTO_COMUN'
+      ? 'Gastos Comunes'
+      : clasificacionFinal === 'FONDO_RESERVA'
+      ? 'Fondo de Reserva'
+      : clasificacionFinal === 'OTROS_GASTOS'
+      ? 'Otros Gastos'
+      : 'Mixto';
   const descripcionRecibo = `Pago Apto ${apartamento.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`;
 
   const recibo = await createTransaccion({
@@ -2013,6 +2490,7 @@ export async function createReciboPago(data: {
     clasificacionPago: clasificacionFinal,
     montoGastoComun: montoGC > 0 ? montoGC : null,
     montoFondoReserva: montoFR > 0 ? montoFR : null,
+    montoOtrosGastos: montoOG > 0 ? montoOG : null,
     categoria: null,
     estadoCredito: null,
     montoPagado: null,
@@ -2033,8 +2511,13 @@ export async function createReciboPago(data: {
       clasificacion: clasificacionFinal === 'MIXTO' ? null : (clasificacionFinal || null),
       conciliado: false,
       servicioId: null,
+      proyectoId: null,
     });
   }
+
+  // Sincronizar el cache de imputación de los créditos con el libro (FIFO por fecha),
+  // de modo que la deuda por concepto y el saldo nunca queden desincronizados.
+  await recalcularEstadoCreditosApartamento(data.apartamentoId);
 
   return recibo;
 }
@@ -2050,7 +2533,7 @@ export async function updateReciboPago(
     cuentaBancariaId?: string | null;
     referencia?: string | null;
     notas?: string | null;
-    clasificacionPago?: 'GASTO_COMUN' | 'FONDO_RESERVA';
+    clasificacionPago?: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'OTROS_GASTOS';
   }
 ): Promise<Transaccion> {
   const transaccion = await getTransaccionById(id);
@@ -2062,6 +2545,15 @@ export async function updateReciboPago(
     throw new Error("Esta función solo aplica para recibos de pago");
   }
 
+  const labelClasificacion = (c: string | null | undefined): string =>
+    c === 'GASTO_COMUN'
+      ? 'Gastos Comunes'
+      : c === 'FONDO_RESERVA'
+      ? 'Fondo de Reserva'
+      : c === 'OTROS_GASTOS'
+      ? 'Otros Gastos'
+      : 'Mixto';
+
   // Actualizar la transacción
   const updateData: Record<string, unknown> = {};
   if (data.monto !== undefined) updateData.monto = data.monto;
@@ -2072,8 +2564,10 @@ export async function updateReciboPago(
   if (data.notas !== undefined) updateData.notas = data.notas;
   if (data.clasificacionPago !== undefined) {
     updateData.clasificacionPago = data.clasificacionPago;
-    updateData.montoGastoComun = data.clasificacionPago === 'GASTO_COMUN' ? (data.monto ?? transaccion.monto) : null;
-    updateData.montoFondoReserva = data.clasificacionPago === 'FONDO_RESERVA' ? (data.monto ?? transaccion.monto) : null;
+    const monto = data.monto ?? transaccion.monto;
+    updateData.montoGastoComun = data.clasificacionPago === 'GASTO_COMUN' ? monto : null;
+    updateData.montoFondoReserva = data.clasificacionPago === 'FONDO_RESERVA' ? monto : null;
+    updateData.montoOtrosGastos = data.clasificacionPago === 'OTROS_GASTOS' ? monto : null;
   }
 
   // Actualizar descripción de la transacción si cambia clasificación o apartamento
@@ -2082,7 +2576,7 @@ export async function updateReciboPago(
     const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
     const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
     const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
-    const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+    const clasificacionLabel = labelClasificacion(clasificacionParaDesc);
     updateData.descripcion = apartamentoParaDesc
       ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
       : 'Recibo de Pago';
@@ -2115,7 +2609,7 @@ export async function updateReciboPago(
         const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
         const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
         const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
-        const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+        const clasificacionLabel = labelClasificacion(clasificacionParaDesc);
         updateMovData.descripcion = apartamentoParaDesc
           ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
           : 'Recibo de Pago';
@@ -2133,7 +2627,7 @@ export async function updateReciboPago(
       const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
       const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
       const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
-      const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+      const clasificacionLabel = labelClasificacion(clasificacionParaDesc);
       const descripcionRecibo = apartamentoParaDesc
         ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
         : 'Recibo de Pago';
@@ -2153,6 +2647,7 @@ export async function updateReciboPago(
         clasificacion: clasificacionNuevoMov === 'MIXTO' ? null : (clasificacionNuevoMov || null),
         conciliado: false,
         servicioId: null,
+        proyectoId: null,
       });
     }
   } else if (movimientoExistente) {
@@ -2168,7 +2663,7 @@ export async function updateReciboPago(
       const apartamentoParaDesc = apartamentoIdParaDesc ? await getApartamentoById(apartamentoIdParaDesc) : null;
       const tipoOcupacionLabel = apartamentoParaDesc?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
       const clasificacionParaDesc = data.clasificacionPago ?? transaccion.clasificacionPago;
-      const clasificacionLabel = clasificacionParaDesc === 'GASTO_COMUN' ? 'Gastos Comunes' : clasificacionParaDesc === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+      const clasificacionLabel = labelClasificacion(clasificacionParaDesc);
       updateMovData.descripcion = apartamentoParaDesc
         ? `Pago Apto ${apartamentoParaDesc.numero} (${tipoOcupacionLabel}) - ${clasificacionLabel}`
         : 'Recibo de Pago';
@@ -2210,7 +2705,14 @@ export async function vincularReciboConIngreso(
     ? await getApartamentoById(transaccion.apartamentoId)
     : null;
   const tipoOcupacionLabel = apartamento?.tipoOcupacion === 'PROPIETARIO' ? 'Propietario' : 'Inquilino';
-  const clasificacionLabel = transaccion.clasificacionPago === 'GASTO_COMUN' ? 'Gastos Comunes' : transaccion.clasificacionPago === 'FONDO_RESERVA' ? 'Fondo de Reserva' : 'Mixto';
+  const clasificacionLabel =
+    transaccion.clasificacionPago === 'GASTO_COMUN'
+      ? 'Gastos Comunes'
+      : transaccion.clasificacionPago === 'FONDO_RESERVA'
+      ? 'Fondo de Reserva'
+      : transaccion.clasificacionPago === 'OTROS_GASTOS'
+      ? 'Otros Gastos'
+      : 'Mixto';
 
   const movimiento = await createMovimientoBancario({
     tipo: 'INGRESO',
@@ -2225,6 +2727,7 @@ export async function vincularReciboConIngreso(
     clasificacion: transaccion.clasificacionPago === 'MIXTO' ? null : (transaccion.clasificacionPago || null),
     conciliado: false,
     servicioId: null,
+    proyectoId: null,
   });
 
   return movimiento;
@@ -2341,6 +2844,7 @@ export interface InformeApartamentoData {
   pagosMes: number;
   gastosComunesMes: number;
   fondoReservaMes: number;
+  otrosGastosMes: number;
   saldoActual: number;
 }
 
@@ -2381,6 +2885,7 @@ export interface InformeData {
     totalPagosMes: number;
     totalGastosComunesMes: number;
     totalFondoReservaMes: number;
+    totalOtrosGastosMes: number;
     totalSaldoActual: number;
   };
   avisos: AvisoInforme[];
@@ -2399,6 +2904,7 @@ export interface InformeApartamentoCombinado {
   saldoMesAnterior: number;
   gastosComunesMesCorriente: number;
   fondoReservaMesCorriente: number;
+  otrosGastosMesCorriente: number;
   saldoActual: number;
 }
 
@@ -2415,6 +2921,7 @@ export interface InformeCombinado {
       totalPagosMes: number;
       totalGastosComunesMes: number;
       totalFondoReservaMes: number;
+      totalOtrosGastosMes: number;
       totalSaldoActual: number;
     };
   };
@@ -2423,6 +2930,7 @@ export interface InformeCombinado {
     totalSaldoMesAnterior: number;
     totalGastosComunesMesCorriente: number;
     totalFondoReservaMesCorriente: number;
+    totalOtrosGastosMesCorriente: number;
     totalSaldoActual: number;
   };
   avisos: AvisoInforme[];
@@ -2438,6 +2946,7 @@ export interface PagoDetalladoInforme {
   monto: number;
   montoGastoComun: number;
   montoFondoReserva: number;
+  montoOtrosGastos: number;
   metodoPago: string | null;
   referencia: string | null;
 }
@@ -2449,6 +2958,7 @@ export interface InformeCompleto extends InformeCombinado {
     totalMonto: number;
     totalGastosComunes: number;
     totalFondoReserva: number;
+    totalOtrosGastos: number;
   };
 }
 
@@ -2513,7 +3023,17 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
       )
       .reduce((sum, t) => sum + t.monto, 0);
 
-    const saldoActual = saldoAnterior + gastosComunesMes + fondoReservaMes - pagosMes;
+    // Calcular otros gastos del mes
+    const otrosGastosMes = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'OTROS_GASTOS' &&
+        new Date(t.fecha) >= fechaInicio &&
+        new Date(t.fecha) <= fechaFin
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    const saldoActual = saldoAnterior + gastosComunesMes + fondoReservaMes + otrosGastosMes - pagosMes;
 
     informeApartamentos.push({
       apartamentoId: apt.id,
@@ -2527,6 +3047,7 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
       pagosMes,
       gastosComunesMes,
       fondoReservaMes,
+      otrosGastosMes,
       saldoActual,
     });
   }
@@ -2559,9 +3080,12 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
     const tieneMovimiento = movimientosBancarios.some(m => m.transaccionId === recibo.id);
     if (!tieneMovimiento) continue;
 
+    // Los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva
     if (recibo.clasificacionPago === 'GASTO_COMUN') {
       ingresoGastosComunes += recibo.monto;
     } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      ingresoFondoReserva += recibo.monto;
+    } else if (recibo.clasificacionPago === 'OTROS_GASTOS') {
       ingresoFondoReserva += recibo.monto;
     } else {
       if (recibo.montoGastoComun) {
@@ -2570,7 +3094,10 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
       if (recibo.montoFondoReserva) {
         ingresoFondoReserva += recibo.montoFondoReserva;
       }
-      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+      if (recibo.montoOtrosGastos) {
+        ingresoFondoReserva += recibo.montoOtrosGastos;
+      }
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.montoOtrosGastos && !recibo.clasificacionPago) {
         ingresoGastosComunes += recibo.monto;
       }
     }
@@ -2632,6 +3159,7 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
     totalPagosMes: informeApartamentos.reduce((s, a) => s + a.pagosMes, 0),
     totalGastosComunesMes: informeApartamentos.reduce((s, a) => s + a.gastosComunesMes, 0),
     totalFondoReservaMes: informeApartamentos.reduce((s, a) => s + a.fondoReservaMes, 0),
+    totalOtrosGastosMes: informeApartamentos.reduce((s, a) => s + a.otrosGastosMes, 0),
     totalSaldoActual: informeApartamentos.reduce((s, a) => s + a.saldoActual, 0),
   };
 
@@ -2733,8 +3261,17 @@ export async function getInformeCombinado(
       )
       .reduce((sum, t) => sum + t.monto, 0);
 
+    const ogMesAnterior = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'OTROS_GASTOS' &&
+        new Date(t.fecha) >= fechaInicioAnterior &&
+        new Date(t.fecha) <= fechaFinAnterior
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
     // 4. Saldo al FINAL del mes anterior
-    const saldoMesAnterior = saldoAntesDelMesAnterior + gcMesAnterior + frMesAnterior - pagosMesAnterior;
+    const saldoMesAnterior = saldoAntesDelMesAnterior + gcMesAnterior + frMesAnterior + ogMesAnterior - pagosMesAnterior;
 
     // 5. Ventas/Deudas del mes CORRIENTE
     const gastosComunesMesCorriente = transaccionesApt
@@ -2755,8 +3292,17 @@ export async function getInformeCombinado(
       )
       .reduce((sum, t) => sum + t.monto, 0);
 
+    const otrosGastosMesCorriente = transaccionesApt
+      .filter(t =>
+        t.tipo === 'VENTA_CREDITO' &&
+        t.categoria === 'OTROS_GASTOS' &&
+        new Date(t.fecha) >= fechaInicioCorriente &&
+        new Date(t.fecha) <= fechaFinCorriente
+      )
+      .reduce((sum, t) => sum + t.monto, 0);
+
     // 6. Saldo actual = Saldo mes anterior + ventas mes corriente
-    const saldoActual = saldoMesAnterior + gastosComunesMesCorriente + fondoReservaMesCorriente;
+    const saldoActual = saldoMesAnterior + gastosComunesMesCorriente + fondoReservaMesCorriente + otrosGastosMesCorriente;
 
     apartamentosCombinados.push({
       apartamentoId: apt.id,
@@ -2770,6 +3316,7 @@ export async function getInformeCombinado(
       saldoMesAnterior,
       gastosComunesMesCorriente,
       fondoReservaMesCorriente,
+      otrosGastosMesCorriente,
       saldoActual,
     });
   }
@@ -2801,9 +3348,12 @@ export async function getInformeCombinado(
     const tieneMovimiento = movimientosBancarios.some(m => m.transaccionId === recibo.id);
     if (!tieneMovimiento) continue;
 
+    // Los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva
     if (recibo.clasificacionPago === 'GASTO_COMUN') {
       ingresoGastosComunesAnterior += recibo.monto;
     } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      ingresoFondoReservaAnterior += recibo.monto;
+    } else if (recibo.clasificacionPago === 'OTROS_GASTOS') {
       ingresoFondoReservaAnterior += recibo.monto;
     } else {
       if (recibo.montoGastoComun) {
@@ -2812,7 +3362,10 @@ export async function getInformeCombinado(
       if (recibo.montoFondoReserva) {
         ingresoFondoReservaAnterior += recibo.montoFondoReserva;
       }
-      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+      if (recibo.montoOtrosGastos) {
+        ingresoFondoReservaAnterior += recibo.montoOtrosGastos;
+      }
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.montoOtrosGastos && !recibo.clasificacionPago) {
         ingresoGastosComunesAnterior += recibo.monto;
       }
     }
@@ -2901,7 +3454,16 @@ export async function getInformeCombinado(
     )
     .reduce((sum, t) => sum + t.monto, 0);
 
-  const totalSaldoActualMesAnterior = totalSaldoAnteriorDelMesAnterior + totalGcMesAnterior + totalFrMesAnterior - totalPagosMesAnterior;
+  const totalOgMesAnterior = todasTransacciones
+    .filter(t =>
+      t.tipo === 'VENTA_CREDITO' &&
+      t.categoria === 'OTROS_GASTOS' &&
+      new Date(t.fecha) >= fechaInicioAnterior &&
+      new Date(t.fecha) <= fechaFinAnterior
+    )
+    .reduce((sum, t) => sum + t.monto, 0);
+
+  const totalSaldoActualMesAnterior = totalSaldoAnteriorDelMesAnterior + totalGcMesAnterior + totalFrMesAnterior + totalOgMesAnterior - totalPagosMesAnterior;
 
   // Ordenar egresos por fecha
   detalleEgresosAnterior.sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
@@ -2933,6 +3495,7 @@ export async function getInformeCombinado(
         totalPagosMes: totalPagosMesAnterior,
         totalGastosComunesMes: totalGcMesAnterior,
         totalFondoReservaMes: totalFrMesAnterior,
+        totalOtrosGastosMes: totalOgMesAnterior,
         totalSaldoActual: totalSaldoActualMesAnterior,
       },
     },
@@ -2941,6 +3504,7 @@ export async function getInformeCombinado(
       totalSaldoMesAnterior: apartamentosCombinados.reduce((s, a) => s + a.saldoMesAnterior, 0),
       totalGastosComunesMesCorriente: apartamentosCombinados.reduce((s, a) => s + a.gastosComunesMesCorriente, 0),
       totalFondoReservaMesCorriente: apartamentosCombinados.reduce((s, a) => s + a.fondoReservaMesCorriente, 0),
+      totalOtrosGastosMesCorriente: apartamentosCombinados.reduce((s, a) => s + a.otrosGastosMesCorriente, 0),
       totalSaldoActual: apartamentosCombinados.reduce((s, a) => s + a.saldoActual, 0),
     },
     avisos,
@@ -2980,6 +3544,7 @@ export async function getInformeCompleto(
   let totalMonto = 0;
   let totalGastosComunes = 0;
   let totalFondoReserva = 0;
+  let totalOtrosGastos = 0;
 
   for (const t of todasTransacciones) {
     if (t.tipo !== 'RECIBO_PAGO') continue;
@@ -2993,14 +3558,18 @@ export async function getInformeCompleto(
     // Calcular montos por concepto
     let montoGC = 0;
     let montoFR = 0;
+    let montoOG = 0;
 
     if (t.clasificacionPago === 'GASTO_COMUN') {
       montoGC = t.monto;
     } else if (t.clasificacionPago === 'FONDO_RESERVA') {
       montoFR = t.monto;
-    } else if (t.montoGastoComun || t.montoFondoReserva) {
+    } else if (t.clasificacionPago === 'OTROS_GASTOS') {
+      montoOG = t.monto;
+    } else if (t.montoGastoComun || t.montoFondoReserva || t.montoOtrosGastos) {
       montoGC = t.montoGastoComun || 0;
       montoFR = t.montoFondoReserva || 0;
+      montoOG = t.montoOtrosGastos || 0;
     } else {
       // Si no tiene clasificación, asignar todo a gastos comunes
       montoGC = t.monto;
@@ -3015,6 +3584,7 @@ export async function getInformeCompleto(
       monto: t.monto,
       montoGastoComun: montoGC,
       montoFondoReserva: montoFR,
+      montoOtrosGastos: montoOG,
       metodoPago: t.metodoPago || null,
       referencia: t.referencia || null,
     });
@@ -3022,6 +3592,7 @@ export async function getInformeCompleto(
     totalMonto += t.monto;
     totalGastosComunes += montoGC;
     totalFondoReserva += montoFR;
+    totalOtrosGastos += montoOG;
   }
 
   // Ordenar por fecha y apartamento
@@ -3038,6 +3609,7 @@ export async function getInformeCompleto(
       totalMonto,
       totalGastosComunes,
       totalFondoReserva,
+      totalOtrosGastos,
     },
   };
 }
@@ -3086,9 +3658,12 @@ export async function getInformeAcumulado(
   let recibosFondoReserva = 0;
 
   for (const recibo of recibos) {
+    // Los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva
     if (recibo.clasificacionPago === 'GASTO_COMUN') {
       recibosGastosComunes += recibo.monto;
     } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      recibosFondoReserva += recibo.monto;
+    } else if (recibo.clasificacionPago === 'OTROS_GASTOS') {
       recibosFondoReserva += recibo.monto;
     } else {
       if (recibo.montoGastoComun) {
@@ -3097,7 +3672,10 @@ export async function getInformeAcumulado(
       if (recibo.montoFondoReserva) {
         recibosFondoReserva += recibo.montoFondoReserva;
       }
-      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+      if (recibo.montoOtrosGastos) {
+        recibosFondoReserva += recibo.montoOtrosGastos;
+      }
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.montoOtrosGastos && !recibo.clasificacionPago) {
         recibosGastosComunes += recibo.monto;
       }
     }
@@ -3242,15 +3820,18 @@ export interface DashboardData {
   transaccionesRecientes: TransaccionConApartamento[];
   apartamentos: Apartamento[];
   saldos: Record<string, number>;
+  cuentasBancarias: { id: string; banco: string; tipoCuenta: string; numeroCuenta: string; titular: string | null; porDefecto: boolean; activa: boolean; saldo: number }[];
+  totalBancario: number;
 }
 
 export async function getDashboardData(): Promise<DashboardData> {
   // Ejecutar todas las queries en paralelo
-  const [apartamentos, todasTransacciones, transaccionesRecientes, saldos] = await Promise.all([
+  const [apartamentos, todasTransacciones, transaccionesRecientes, saldos, cuentasConMov] = await Promise.all([
     getApartamentosOrdenados(),
     getTransacciones(),
     getTransaccionesRecientes(10),
-    obtenerSaldosCuentaCorriente()
+    obtenerSaldosCuentaCorriente(),
+    getCuentasBancariasConMovimientos()
   ]);
 
   // Contar unidades únicas y tipos
@@ -3321,6 +3902,7 @@ export async function getDashboardData(): Promise<DashboardData> {
     .reduce((acc, t) => acc + (t.monto - (t.montoPagado || 0)), 0);
 
   // Calcular totales recaudados por tipo de pago (del mes actual)
+  // Los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva
   let recaudadoGastosComunes = 0;
   let recaudadoFondoReserva = 0;
 
@@ -3328,6 +3910,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     if (recibo.clasificacionPago === 'GASTO_COMUN') {
       recaudadoGastosComunes += recibo.monto;
     } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+      recaudadoFondoReserva += recibo.monto;
+    } else if (recibo.clasificacionPago === 'OTROS_GASTOS') {
       recaudadoFondoReserva += recibo.monto;
     } else {
       // Clasificación MIXTO o tiene montos específicos
@@ -3337,14 +3921,28 @@ export async function getDashboardData(): Promise<DashboardData> {
       if (recibo.montoFondoReserva) {
         recaudadoFondoReserva += recibo.montoFondoReserva;
       }
+      if (recibo.montoOtrosGastos) {
+        recaudadoFondoReserva += recibo.montoOtrosGastos;
+      }
       // Si no hay clasificación ni montos específicos, asumir gasto común
-      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.clasificacionPago) {
+      if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.montoOtrosGastos && !recibo.clasificacionPago) {
         recaudadoGastosComunes += recibo.monto;
       }
     }
   }
 
   const balance = ingresos - egresos;
+
+  // Calcular saldos de cuentas bancarias
+  const cuentasBancarias = cuentasConMov.filter(c => c.activa).map(cuenta => {
+    let saldoCuenta = cuenta.saldoInicial;
+    for (const mov of cuenta.movimientos) {
+      if (mov.tipo === 'INGRESO') saldoCuenta += mov.monto;
+      else saldoCuenta -= mov.monto;
+    }
+    return { id: cuenta.id, banco: cuenta.banco, tipoCuenta: cuenta.tipoCuenta, numeroCuenta: cuenta.numeroCuenta, titular: cuenta.titular, porDefecto: cuenta.porDefecto, activa: cuenta.activa, saldo: saldoCuenta };
+  });
+  const totalBancario = cuentasBancarias.reduce((acc, c) => acc + c.saldo, 0);
 
   return {
     totalUnidades,
@@ -3366,6 +3964,8 @@ export async function getDashboardData(): Promise<DashboardData> {
     transaccionesRecientes,
     apartamentos,
     saldos,
+    cuentasBancarias,
+    totalBancario,
   };
 }
 
@@ -3813,4 +4413,1086 @@ export async function getAnalisisDetalladoPorServicioMes(
     totalesPorMes,
     totalGeneral: egresosDelPeriodo.reduce((sum, e) => sum + e.monto, 0)
   };
+}
+
+// ==================== REPORTE DE GASTOS ====================
+
+export interface ReporteGastosMesItem {
+  mes: number;
+  anio: number;
+  mesLabel: string;
+  cargosGC: number;
+  cargosFR: number;
+  cargosTotal: number;
+  cobradoGC: number;
+  cobradoFR: number;
+  cobradoTotal: number;
+  pendiente: number;
+  tasaCobro: number;
+}
+
+export interface ProyeccionMesItem {
+  mes: number;
+  anio: number;
+  mesLabel: string;
+  cargosProyectados: number;
+  cobrosProyectados: number;
+  pendienteAcumulado: number;
+}
+
+export interface ReporteGastosData {
+  fechaInicio: string;
+  fechaFin: string;
+  resumen: {
+    totalCargosGC: number;
+    totalCargosFR: number;
+    totalCargos: number;
+    totalCobradoGC: number;
+    totalCobradoFR: number;
+    totalCobrado: number;
+    totalPendiente: number;
+    tasaCobroGeneral: number;
+  };
+  meses: ReporteGastosMesItem[];
+}
+
+export async function getReporteGastosData(
+  fechaInicioStr: string,
+  fechaFinStr: string
+): Promise<ReporteGastosData> {
+  const transacciones = await getTransacciones();
+
+  const fechaInicio = new Date(fechaInicioStr);
+  const fechaFin = new Date(fechaFinStr);
+
+  // Generar lista de meses en el rango
+  const mesesEnRango: { mes: number; anio: number; label: string }[] = [];
+  const current = new Date(fechaInicio.getFullYear(), fechaInicio.getMonth(), 1);
+  while (current <= fechaFin) {
+    mesesEnRango.push({
+      mes: current.getMonth() + 1,
+      anio: current.getFullYear(),
+      label: `${mesesNombres[current.getMonth()]} ${current.getFullYear()}`
+    });
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  // Para cada mes, calcular cargos y cobros
+  const meses: ReporteGastosMesItem[] = mesesEnRango.map(m => {
+    const inicioMes = new Date(m.anio, m.mes - 1, 1);
+    const finMes = new Date(m.anio, m.mes, 0, 23, 59, 59, 999);
+
+    const enEsteMes = (fecha: string) => {
+      const f = new Date(fecha);
+      return f >= inicioMes && f <= finMes;
+    };
+
+    // Cargos generados (VENTA_CREDITO)
+    const ventasDelMes = transacciones.filter(
+      t => t.tipo === 'VENTA_CREDITO' && enEsteMes(t.fecha)
+    );
+    const cargosGC = ventasDelMes
+      .filter(t => t.categoria === 'GASTOS_COMUNES')
+      .reduce((sum, t) => sum + t.monto, 0);
+    // Otros Gastos se contabiliza junto a Fondo de Reserva (mismo concepto contable)
+    const cargosFR = ventasDelMes
+      .filter(t => t.categoria === 'FONDO_RESERVA' || t.categoria === 'OTROS_GASTOS')
+      .reduce((sum, t) => sum + t.monto, 0);
+
+    // Cobros recibidos (RECIBO_PAGO)
+    const recibosDelMes = transacciones.filter(
+      t => t.tipo === 'RECIBO_PAGO' && enEsteMes(t.fecha)
+    );
+    let cobradoGC = 0;
+    let cobradoFR = 0;
+    // Los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva
+    for (const recibo of recibosDelMes) {
+      if (recibo.clasificacionPago === 'GASTO_COMUN') {
+        cobradoGC += recibo.monto;
+      } else if (recibo.clasificacionPago === 'FONDO_RESERVA') {
+        cobradoFR += recibo.monto;
+      } else if (recibo.clasificacionPago === 'OTROS_GASTOS') {
+        cobradoFR += recibo.monto;
+      } else {
+        if (recibo.montoGastoComun) cobradoGC += recibo.montoGastoComun;
+        if (recibo.montoFondoReserva) cobradoFR += recibo.montoFondoReserva;
+        if (recibo.montoOtrosGastos) cobradoFR += recibo.montoOtrosGastos;
+        if (!recibo.montoGastoComun && !recibo.montoFondoReserva && !recibo.montoOtrosGastos && !recibo.clasificacionPago) {
+          cobradoGC += recibo.monto;
+        }
+      }
+    }
+
+    const cargosTotal = cargosGC + cargosFR;
+    const cobradoTotal = cobradoGC + cobradoFR;
+    const pendiente = cargosTotal - cobradoTotal;
+    const tasaCobro = cargosTotal > 0 ? (cobradoTotal / cargosTotal) * 100 : 0;
+
+    return {
+      mes: m.mes, anio: m.anio, mesLabel: m.label,
+      cargosGC, cargosFR, cargosTotal,
+      cobradoGC, cobradoFR, cobradoTotal,
+      pendiente, tasaCobro
+    };
+  });
+
+  // Totales del período
+  const totalCargosGC = meses.reduce((s, m) => s + m.cargosGC, 0);
+  const totalCargosFR = meses.reduce((s, m) => s + m.cargosFR, 0);
+  const totalCargos = totalCargosGC + totalCargosFR;
+  const totalCobradoGC = meses.reduce((s, m) => s + m.cobradoGC, 0);
+  const totalCobradoFR = meses.reduce((s, m) => s + m.cobradoFR, 0);
+  const totalCobrado = totalCobradoGC + totalCobradoFR;
+  const totalPendiente = totalCargos - totalCobrado;
+  const tasaCobroGeneral = totalCargos > 0 ? (totalCobrado / totalCargos) * 100 : 0;
+
+  return {
+    fechaInicio: fechaInicioStr,
+    fechaFin: fechaFinStr,
+    resumen: {
+      totalCargosGC, totalCargosFR, totalCargos,
+      totalCobradoGC, totalCobradoFR, totalCobrado,
+      totalPendiente, tasaCobroGeneral
+    },
+    meses
+  };
+}
+
+// ==================== PROYECTOS ====================
+
+export interface Proyecto {
+  id: string;
+  nombre: string;
+  presupuesto: number;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  observaciones: string;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProyectoDB {
+  id: string;
+  nombre: string;
+  presupuesto: number;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  observaciones: string;
+  activo: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getProyectos(): Promise<Proyecto[]> {
+  const database = await getDatabase();
+  const result = await database.select<ProyectoDB[]>('SELECT * FROM Proyecto ORDER BY activo DESC, nombre');
+  return result.map(p => ({ ...p, activo: Boolean(p.activo) }));
+}
+
+export async function getProyectosActivos(): Promise<Proyecto[]> {
+  const database = await getDatabase();
+  const result = await database.select<ProyectoDB[]>('SELECT * FROM Proyecto WHERE activo = 1 ORDER BY nombre');
+  return result.map(p => ({ ...p, activo: Boolean(p.activo) }));
+}
+
+export async function getProyectoById(id: string): Promise<Proyecto | null> {
+  const database = await getDatabase();
+  const result = await database.select<ProyectoDB[]>('SELECT * FROM Proyecto WHERE id = ?', [id]);
+  if (!result[0]) return null;
+  return { ...result[0], activo: Boolean(result[0].activo) };
+}
+
+export async function createProyecto(data: Omit<Proyecto, 'id' | 'createdAt' | 'updatedAt' | 'activo'>): Promise<Proyecto> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+
+  await database.execute(
+    `INSERT INTO Proyecto (id, nombre, presupuesto, fechaInicio, fechaFin, observaciones, activo, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    [id, data.nombre, data.presupuesto, data.fechaInicio, data.fechaFin, data.observaciones || '', now, now]
+  );
+
+  return (await getProyectoById(id))!;
+}
+
+export async function updateProyecto(id: string, data: Partial<Omit<Proyecto, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Proyecto> {
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value !== undefined) {
+      fields.push(`${key} = ?`);
+      if (key === 'activo') {
+        values.push(value ? 1 : 0);
+      } else {
+        values.push(value);
+      }
+    }
+  });
+
+  fields.push('updatedAt = ?');
+  values.push(now);
+  values.push(id);
+
+  await database.execute(
+    `UPDATE Proyecto SET ${fields.join(', ')} WHERE id = ?`,
+    values
+  );
+
+  return (await getProyectoById(id))!;
+}
+
+export async function deleteProyecto(id: string): Promise<void> {
+  const database = await getDatabase();
+  // Desvincular movimientos bancarios asociados
+  await database.execute('UPDATE MovimientoBancario SET proyectoId = NULL WHERE proyectoId = ?', [id]);
+  await database.execute('DELETE FROM Proyecto WHERE id = ?', [id]);
+}
+
+// Obtener datos de reporte por proyecto
+export interface ReporteProyectoMovimiento {
+  id: string;
+  tipo: 'INGRESO' | 'EGRESO';
+  monto: number;
+  fecha: string;
+  descripcion: string;
+  referencia: string | null;
+  numeroDocumento: string | null;
+  cuentaBancaria: string;
+  numeroCuenta: string;
+}
+
+export interface ReporteProyectoData {
+  proyecto: Proyecto;
+  movimientos: ReporteProyectoMovimiento[];
+  totalIngresos: number;
+  totalEgresos: number;
+  balance: number;
+  presupuesto: number;
+  ejecutado: number;
+  porcentajeEjecutado: number;
+}
+
+export async function getReporteProyecto(proyectoId: string): Promise<ReporteProyectoData | null> {
+  const proyecto = await getProyectoById(proyectoId);
+  if (!proyecto) return null;
+
+  const database = await getDatabase();
+  const movimientosDB = await database.select<(MovimientoBancarioDB & { banco: string; numeroCuenta: string })[]>(
+    `SELECT m.*, c.banco, c.numeroCuenta
+     FROM MovimientoBancario m
+     JOIN CuentaBancaria c ON m.cuentaBancariaId = c.id
+     WHERE m.proyectoId = ?
+     ORDER BY m.fecha ASC`,
+    [proyectoId]
+  );
+
+  const movimientos: ReporteProyectoMovimiento[] = movimientosDB.map(m => ({
+    id: m.id,
+    tipo: m.tipo,
+    monto: m.monto,
+    fecha: m.fecha,
+    descripcion: m.descripcion,
+    referencia: m.referencia,
+    numeroDocumento: m.numeroDocumento,
+    cuentaBancaria: m.banco,
+    numeroCuenta: m.numeroCuenta,
+  }));
+
+  const totalIngresos = movimientos.filter(m => m.tipo === 'INGRESO').reduce((sum, m) => sum + m.monto, 0);
+  const totalEgresos = movimientos.filter(m => m.tipo === 'EGRESO').reduce((sum, m) => sum + m.monto, 0);
+  const ejecutado = totalEgresos;
+  const porcentajeEjecutado = proyecto.presupuesto > 0 ? (ejecutado / proyecto.presupuesto) * 100 : 0;
+
+  return {
+    proyecto,
+    movimientos,
+    totalIngresos,
+    totalEgresos,
+    balance: totalIngresos - totalEgresos,
+    presupuesto: proyecto.presupuesto,
+    ejecutado,
+    porcentajeEjecutado,
+  };
+}
+
+// ==================== FLUJO DE CAJA ====================
+
+export interface FlujoCajaMesColumna {
+  mes: number;
+  anio: number;
+  label: string;
+  esProyeccion: boolean;
+}
+
+export interface FlujoCajaServicioFila {
+  servicioId: string;
+  servicioNombre: string;
+  montosPorMes: (number | null)[]; // null = sin dato real
+  promedio: number;
+  maximo: number;
+}
+
+export interface FlujoCajaData {
+  columnas: FlujoCajaMesColumna[];
+  // Ingresos (Cargos Mensuales)
+  cargosGCPorMes: number[];
+  cargosFRPorMes: number[];
+  cargosTotalPorMes: number[];
+  // Egresos por servicio/proveedor
+  servicios: FlujoCajaServicioFila[];
+  // Totales egresos
+  totalEgresosPorMes: number[];
+  // Balance
+  balancePorMes: number[];
+  // Promedios y máximos globales
+  promedioEgresosGlobal: number;
+  promedioCargosGlobal: number;
+  maximoEgresosGlobal: number;
+  maximoCargosGlobal: number;
+  clasificacionFiltro: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS';
+  // Gasto Comun unitario por apartamento
+  gastoComunUnitarioPorMes: number[];
+  egresoGCUnitarioPorMes: number[];
+  cantApartamentosGC: number;
+  gastoComUnActual: number;
+  // Overrides guardados (key: "anio-mes:concepto")
+  overrides: Record<string, number>;
+}
+
+// ============ FLUJO CAJA OVERRIDES ============
+
+interface FlujoCajaOverrideDB {
+  id: string;
+  mes: number;
+  anio: number;
+  concepto: string;
+  valor: number;
+  clasificacion: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function overrideKey(anio: number, mes: number, concepto: string): string {
+  return `${anio}-${mes}:${concepto}`;
+}
+
+async function getFlujoCajaOverrides(
+  mesesProy: { mes: number; anio: number }[],
+  clasificacion: string
+): Promise<Record<string, number>> {
+  if (mesesProy.length === 0) return {};
+  const database = await getDatabase();
+  const conditions = mesesProy.map(() => '(mes = ? AND anio = ?)').join(' OR ');
+  const params: (string | number)[] = [];
+  for (const m of mesesProy) {
+    params.push(m.mes, m.anio);
+  }
+  params.push(clasificacion);
+  const rows = await database.select<FlujoCajaOverrideDB[]>(
+    `SELECT * FROM FlujoCajaOverride WHERE (${conditions}) AND clasificacion = ?`,
+    params
+  );
+  const map: Record<string, number> = {};
+  for (const row of rows) {
+    map[overrideKey(row.anio, row.mes, row.concepto)] = row.valor;
+  }
+  return map;
+}
+
+export async function saveFlujoCajaOverride(
+  mes: number,
+  anio: number,
+  concepto: string,
+  valor: number,
+  clasificacion: string
+): Promise<void> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+  await database.execute(
+    `INSERT INTO FlujoCajaOverride (id, mes, anio, concepto, valor, clasificacion, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(mes, anio, concepto, clasificacion) DO UPDATE SET valor = ?, updatedAt = ?`,
+    [id, mes, anio, concepto, valor, clasificacion, now, now, valor, now]
+  );
+}
+
+export async function deleteFlujoCajaOverrides(
+  mesesProy: { mes: number; anio: number }[],
+  clasificacion: string
+): Promise<void> {
+  if (mesesProy.length === 0) return;
+  const database = await getDatabase();
+  const conditions = mesesProy.map(() => '(mes = ? AND anio = ?)').join(' OR ');
+  const params: (string | number)[] = [];
+  for (const m of mesesProy) {
+    params.push(m.mes, m.anio);
+  }
+  params.push(clasificacion);
+  await database.execute(
+    `DELETE FROM FlujoCajaOverride WHERE (${conditions}) AND clasificacion = ?`,
+    params
+  );
+}
+
+export async function getFlujoCajaData(
+  fechaInicioStr: string,
+  fechaFinStr: string,
+  mesesProyeccion: number,
+  clasificacion: 'GASTO_COMUN' | 'FONDO_RESERVA' | 'AMBOS' = 'AMBOS'
+): Promise<FlujoCajaData> {
+  const roundTo2 = (n: number) => Math.round(n * 100) / 100;
+  const database = await getDatabase();
+
+  const fechaInicio = new Date(fechaInicioStr);
+  const fechaFin = new Date(fechaFinStr);
+
+  // Generar columnas de meses reales
+  const mesesReales: FlujoCajaMesColumna[] = [];
+  const current = new Date(fechaInicio.getFullYear(), fechaInicio.getMonth(), 1);
+  while (current <= fechaFin) {
+    mesesReales.push({
+      mes: current.getMonth() + 1,
+      anio: current.getFullYear(),
+      label: `${mesesNombres[current.getMonth()]} ${current.getFullYear()}`,
+      esProyeccion: false,
+    });
+    current.setMonth(current.getMonth() + 1);
+  }
+
+  // Generar columnas de proyeccion
+  const mesesProy: FlujoCajaMesColumna[] = [];
+  const lastReal = mesesReales[mesesReales.length - 1];
+  if (lastReal && mesesProyeccion > 0) {
+    const proyCurrent = new Date(lastReal.anio, lastReal.mes - 1, 1);
+    for (let i = 0; i < mesesProyeccion; i++) {
+      proyCurrent.setMonth(proyCurrent.getMonth() + 1);
+      mesesProy.push({
+        mes: proyCurrent.getMonth() + 1,
+        anio: proyCurrent.getFullYear(),
+        label: `${mesesNombres[proyCurrent.getMonth()]} ${proyCurrent.getFullYear()}`,
+        esProyeccion: true,
+      });
+    }
+  }
+
+  const columnas = [...mesesReales, ...mesesProy];
+
+  // Cargar overrides para meses de proyeccion
+  const overrides = await getFlujoCajaOverrides(mesesProy, clasificacion);
+
+  // Obtener datos
+  const [transacciones, movimientos, servicios, apartamentosGC] = await Promise.all([
+    database.select<Transaccion[]>('SELECT * FROM Transaccion'),
+    database.select<(MovimientoBancarioDB & { servicioNombre: string | null })[]>(
+      `SELECT m.*, s.nombre as servicioNombre
+       FROM MovimientoBancario m
+       LEFT JOIN Servicio s ON m.servicioId = s.id
+       WHERE m.tipo = 'EGRESO'
+       ORDER BY m.fecha`
+    ),
+    database.select<ServicioDB[]>('SELECT * FROM Servicio ORDER BY nombre'),
+    database.select<{ cnt: number }[]>(
+      `SELECT COUNT(*) as cnt FROM Apartamento WHERE gastosComunes > 0`
+    ),
+  ]);
+
+  const cantApartamentosGC = apartamentosGC[0]?.cnt || 0;
+
+  const totalMesesReales = mesesReales.length;
+
+  // Helper: verificar si fecha esta en un mes
+  const enMes = (fecha: string, mes: number, anio: number) => {
+    const f = new Date(fecha);
+    return f.getMonth() + 1 === mes && f.getFullYear() === anio;
+  };
+
+  // ---- INGRESOS (Cargos Mensuales = VENTA_CREDITO) ----
+  const cargosGCPorMes: number[] = [];
+  const cargosFRPorMes: number[] = [];
+  const cargosTotalPorMes: number[] = [];
+
+  // Calcular cargos reales
+  for (const col of mesesReales) {
+    const ventasMes = transacciones.filter(
+      t => t.tipo === 'VENTA_CREDITO' && enMes(t.fecha, col.mes, col.anio)
+    );
+    const gc = clasificacion === 'FONDO_RESERVA' ? 0 : ventasMes
+      .filter(t => t.categoria === 'GASTOS_COMUNES')
+      .reduce((s, t) => s + t.monto, 0);
+    const fr = clasificacion === 'GASTO_COMUN' ? 0 : ventasMes
+      .filter(t => t.categoria === 'FONDO_RESERVA')
+      .reduce((s, t) => s + t.monto, 0);
+    cargosGCPorMes.push(gc);
+    cargosFRPorMes.push(fr);
+    cargosTotalPorMes.push(gc + fr);
+  }
+
+  // Promedio de cargos para proyeccion
+  const promedioCargosGC = totalMesesReales > 0
+    ? cargosGCPorMes.reduce((s, v) => s + v, 0) / totalMesesReales : 0;
+  const promedioCargossFR = totalMesesReales > 0
+    ? cargosFRPorMes.reduce((s, v) => s + v, 0) / totalMesesReales : 0;
+
+  for (let i = 0; i < mesesProyeccion; i++) {
+    const col = mesesProy[i];
+    const ovCargos = overrides[overrideKey(col.anio, col.mes, 'cargos_mensuales')];
+    if (ovCargos !== undefined) {
+      // Override es el total; distribuir proporcionalmente entre GC y FR
+      const totalProm = promedioCargosGC + promedioCargossFR;
+      const ratioGC = totalProm > 0 ? promedioCargosGC / totalProm : 1;
+      cargosGCPorMes.push(roundTo2(ovCargos * ratioGC));
+      cargosFRPorMes.push(roundTo2(ovCargos * (1 - ratioGC)));
+      cargosTotalPorMes.push(roundTo2(ovCargos));
+    } else {
+      cargosGCPorMes.push(roundTo2(promedioCargosGC));
+      cargosFRPorMes.push(roundTo2(promedioCargossFR));
+      cargosTotalPorMes.push(roundTo2(promedioCargosGC + promedioCargossFR));
+    }
+  }
+
+  // ---- GASTO COMUN UNITARIO por mes ----
+  const gastoComunUnitarioPorMes: number[] = cargosGCPorMes.map(gc =>
+    cantApartamentosGC > 0 ? roundTo2(gc / cantApartamentosGC) : 0
+  );
+  const gastoComUnActual = cantApartamentosGC > 0 && cargosGCPorMes.length > 0
+    ? roundTo2(cargosGCPorMes.filter((_, i) => i < totalMesesReales && cargosGCPorMes[i] > 0).slice(-1)[0] / cantApartamentosGC || 0)
+    : 0;
+
+  // ---- EGRESOS GC UNITARIO (siempre solo GASTO_COMUN, independiente del filtro) ----
+  const movGCOnly = movimientos.filter(m => m.clasificacion === 'GASTO_COMUN');
+  const egresosGCPorMes: number[] = [];
+  for (const col of mesesReales) {
+    const total = movGCOnly
+      .filter(m => enMes(m.fecha, col.mes, col.anio))
+      .reduce((s, m) => s + m.monto, 0);
+    egresosGCPorMes.push(total);
+  }
+  // Promedio de egresos GC reales para proyeccion
+  const promedioEgresosGC = totalMesesReales > 0
+    ? egresosGCPorMes.reduce((s, v) => s + v, 0) / totalMesesReales : 0;
+  for (let i = 0; i < mesesProyeccion; i++) {
+    const col = mesesProy[i];
+    const ovEgGC = overrides[overrideKey(col.anio, col.mes, 'egreso_gc_unitario')];
+    if (ovEgGC !== undefined && cantApartamentosGC > 0) {
+      // Override es unitario, guardar total
+      egresosGCPorMes.push(roundTo2(ovEgGC * cantApartamentosGC));
+    } else {
+      egresosGCPorMes.push(roundTo2(promedioEgresosGC));
+    }
+  }
+  // Unitario por apartamento
+  const egresoGCUnitarioPorMes: number[] = egresosGCPorMes.map(eg =>
+    cantApartamentosGC > 0 ? roundTo2(eg / cantApartamentosGC) : 0
+  );
+
+  // ---- EGRESOS por servicio ----
+  // Filtrar movimientos por clasificacion
+  const movFiltrados = movimientos.filter(m => {
+    if (clasificacion === 'AMBOS') return m.clasificacion === 'GASTO_COMUN' || m.clasificacion === 'FONDO_RESERVA';
+    return m.clasificacion === clasificacion;
+  });
+
+  // Agrupar por servicio
+  const servicioMap = new Map<string, { nombre: string; montosPorMes: (number | null)[] }>();
+
+  // Incluir "Sin servicio" para egresos sin servicioId
+  const SIN_SERVICIO_KEY = '__sin_servicio__';
+
+  for (const mov of movFiltrados) {
+    const key = mov.servicioId || SIN_SERVICIO_KEY;
+    const nombre = mov.servicioNombre || 'Sin proveedor';
+    if (!servicioMap.has(key)) {
+      servicioMap.set(key, {
+        nombre,
+        montosPorMes: new Array(totalMesesReales).fill(null),
+      });
+    }
+    // Encontrar indice del mes
+    const mesIdx = mesesReales.findIndex(c => enMes(mov.fecha, c.mes, c.anio));
+    if (mesIdx >= 0) {
+      const entry = servicioMap.get(key)!;
+      entry.montosPorMes[mesIdx] = (entry.montosPorMes[mesIdx] || 0) + mov.monto;
+    }
+  }
+
+  // Construir filas de servicios con proyeccion
+  const servicioFilas: FlujoCajaServicioFila[] = [];
+  servicioMap.forEach((data, servicioId) => {
+    const mesesConDato = data.montosPorMes.filter(v => v !== null) as number[];
+    const sumaTotal = mesesConDato.reduce((s, v) => s + v, 0);
+    const promedio = totalMesesReales > 0
+      ? sumaTotal / totalMesesReales : 0;
+    const maximo = mesesConDato.length > 0 ? Math.max(...mesesConDato) : 0;
+
+    // Agregar proyeccion (con posible override)
+    const conceptoKey = `servicio:${servicioId}`;
+    const montosCompletos = [...data.montosPorMes];
+    for (let i = 0; i < mesesProyeccion; i++) {
+      const col = mesesProy[i];
+      const ov = overrides[overrideKey(col.anio, col.mes, conceptoKey)];
+      // null = usar promedio en UI, number = override guardado
+      montosCompletos.push(ov !== undefined ? ov : null);
+    }
+
+    servicioFilas.push({
+      servicioId: servicioId === SIN_SERVICIO_KEY ? '' : servicioId,
+      servicioNombre: data.nombre,
+      montosPorMes: montosCompletos,
+      promedio: roundTo2(promedio),
+      maximo: roundTo2(maximo),
+    });
+  });
+
+  // Ordenar por nombre
+  servicioFilas.sort((a, b) => a.servicioNombre.localeCompare(b.servicioNombre));
+
+  // ---- TOTALES EGRESOS por mes ----
+  const totalEgresosPorMes: number[] = [];
+  for (let i = 0; i < columnas.length; i++) {
+    if (i < totalMesesReales) {
+      // Mes real: sumar datos reales de todos los servicios
+      let total = 0;
+      for (const s of servicioFilas) {
+        total += s.montosPorMes[i] || 0;
+      }
+      totalEgresosPorMes.push(total);
+    } else {
+      // Mes proyectado: usar override si existe, sino promedio
+      let total = 0;
+      for (const s of servicioFilas) {
+        // Si el valor en montosPorMes[i] es un numero, es un override
+        const val = s.montosPorMes[i];
+        total += val !== null ? val : s.promedio;
+      }
+      totalEgresosPorMes.push(roundTo2(total));
+    }
+  }
+
+  // Promedio global de egresos
+  const mesesRealesConEgresos = totalEgresosPorMes.slice(0, totalMesesReales).filter(v => v > 0);
+  const promedioEgresosGlobal = mesesRealesConEgresos.length > 0
+    ? mesesRealesConEgresos.reduce((s, v) => s + v, 0) / mesesRealesConEgresos.length : 0;
+
+  // ---- BALANCE ----
+  const balancePorMes = columnas.map((_, i) =>
+    roundTo2(cargosTotalPorMes[i] - totalEgresosPorMes[i])
+  );
+
+  const promedioCargosGlobal = totalMesesReales > 0
+    ? cargosTotalPorMes.slice(0, totalMesesReales).reduce((s, v) => s + v, 0) / totalMesesReales : 0;
+
+  const cargosReales = cargosTotalPorMes.slice(0, totalMesesReales);
+  const maximoCargosGlobal = cargosReales.length > 0 ? Math.max(...cargosReales) : 0;
+
+  const egresosReales = totalEgresosPorMes.slice(0, totalMesesReales).filter(v => v > 0);
+  const maximoEgresosGlobal = egresosReales.length > 0 ? Math.max(...egresosReales) : 0;
+
+  return {
+    columnas,
+    cargosGCPorMes,
+    cargosFRPorMes,
+    cargosTotalPorMes,
+    servicios: servicioFilas,
+    totalEgresosPorMes,
+    balancePorMes,
+    promedioEgresosGlobal: roundTo2(promedioEgresosGlobal),
+    promedioCargosGlobal: roundTo2(promedioCargosGlobal),
+    maximoEgresosGlobal: roundTo2(maximoEgresosGlobal),
+    maximoCargosGlobal: roundTo2(maximoCargosGlobal),
+    clasificacionFiltro: clasificacion,
+    gastoComunUnitarioPorMes,
+    egresoGCUnitarioPorMes,
+    cantApartamentosGC,
+    gastoComUnActual,
+    overrides,
+  };
+}
+
+// ============ CONTACTOS LIBRES ============
+
+export interface ContactoLibre {
+  id: string;
+  nombre: string;
+  apellido: string | null;
+  celular: string | null;
+  email: string | null;
+  notas: string | null;
+  activo: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ContactoLibreDB {
+  id: string;
+  nombre: string;
+  apellido: string | null;
+  celular: string | null;
+  email: string | null;
+  notas: string | null;
+  activo: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getContactosLibres(): Promise<ContactoLibre[]> {
+  const database = await getDatabase();
+  const result = await database.select<ContactoLibreDB[]>(
+    'SELECT * FROM ContactoLibre WHERE activo = 1 ORDER BY nombre'
+  );
+  return result.map(c => ({ ...c, activo: Boolean(c.activo) }));
+}
+
+export async function getContactoLibreById(id: string): Promise<ContactoLibre | null> {
+  const database = await getDatabase();
+  const result = await database.select<ContactoLibreDB[]>(
+    'SELECT * FROM ContactoLibre WHERE id = ?', [id]
+  );
+  if (!result[0]) return null;
+  return { ...result[0], activo: Boolean(result[0].activo) };
+}
+
+export async function createContactoLibre(data: Omit<ContactoLibre, 'id' | 'createdAt' | 'updatedAt' | 'activo'>): Promise<ContactoLibre> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+
+  await database.execute(
+    `INSERT INTO ContactoLibre (id, nombre, apellido, celular, email, notas, activo, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    [id, data.nombre, data.apellido, data.celular, data.email, data.notas, now, now]
+  );
+
+  return (await getContactoLibreById(id))!;
+}
+
+export async function updateContactoLibre(id: string, data: Partial<Omit<ContactoLibre, 'id' | 'createdAt' | 'updatedAt'>>): Promise<ContactoLibre> {
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value !== undefined) {
+      fields.push(`${key} = ?`);
+      values.push(key === 'activo' ? (value ? 1 : 0) : value);
+    }
+  });
+
+  fields.push('updatedAt = ?');
+  values.push(now);
+  values.push(id);
+
+  await database.execute(
+    `UPDATE ContactoLibre SET ${fields.join(', ')} WHERE id = ?`,
+    values
+  );
+
+  return (await getContactoLibreById(id))!;
+}
+
+export async function deleteContactoLibre(id: string): Promise<void> {
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+  await database.execute(
+    'UPDATE ContactoLibre SET activo = 0, updatedAt = ? WHERE id = ?',
+    [now, id]
+  );
+}
+
+// ============ PLANTILLAS DE MENSAJE ============
+
+export interface PlantillaMensaje {
+  id: string;
+  nombre: string;
+  asunto: string | null;
+  cuerpo: string;
+  canal: 'WHATSAPP' | 'EMAIL' | 'AMBOS';
+  predefinida: boolean;
+  activo: boolean;
+  prioridad: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface PlantillaMensajeDB {
+  id: string;
+  nombre: string;
+  asunto: string | null;
+  cuerpo: string;
+  canal: 'WHATSAPP' | 'EMAIL' | 'AMBOS';
+  predefinida: number;
+  activo: number;
+  prioridad: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const PLANTILLAS_DEFAULT = [
+  {
+    nombre: 'Aviso de mora',
+    asunto: 'Aviso de mora - Apartamento {apartamento}',
+    cuerpo: 'Estimado/a {nombre},\n\nLe informamos que el Apartamento {apartamento} presenta un saldo pendiente de {saldo}.\n\nLe solicitamos regularizar su situación a la brevedad.\n\nSaludos cordiales.',
+    canal: 'AMBOS' as const,
+  },
+  {
+    nombre: 'Recordatorio de pago',
+    asunto: 'Recordatorio de pago - Apartamento {apartamento}',
+    cuerpo: 'Estimado/a {nombre},\n\nLe recordamos que el pago mensual de gastos comunes del Apartamento {apartamento} se encuentra próximo a vencer.\n\nSaldo actual: {saldo}\n\nSaludos cordiales.',
+    canal: 'AMBOS' as const,
+  },
+  {
+    nombre: 'Aviso de mantenimiento',
+    asunto: 'Aviso de mantenimiento - Edificio',
+    cuerpo: 'Estimado/a {nombre},\n\nLe informamos que se realizará un mantenimiento en el edificio.\n\nFecha: {fecha}\n\nPor favor tome las precauciones necesarias.\n\nSaludos cordiales.',
+    canal: 'AMBOS' as const,
+  },
+  {
+    nombre: 'Convocatoria a reunión',
+    asunto: 'Convocatoria a reunión de copropietarios',
+    cuerpo: 'Estimado/a {nombre},\n\nSe convoca a reunión de copropietarios.\n\nFecha: {fecha}\n\nSu asistencia es importante.\n\nSaludos cordiales.',
+    canal: 'AMBOS' as const,
+  },
+];
+
+export async function initPlantillasDefault(): Promise<void> {
+  const database = await getDatabase();
+  const existentes = await database.select<{ count: number }[]>(
+    'SELECT COUNT(*) as count FROM PlantillaMensaje'
+  );
+
+  if (existentes[0]?.count === 0) {
+    const now = getCurrentTimestamp();
+    for (const plantilla of PLANTILLAS_DEFAULT) {
+      const id = generateId();
+      await database.execute(
+        `INSERT INTO PlantillaMensaje (id, nombre, asunto, cuerpo, canal, predefinida, activo, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, 1, 1, ?, ?)`,
+        [id, plantilla.nombre, plantilla.asunto, plantilla.cuerpo, plantilla.canal, now, now]
+      );
+    }
+  }
+}
+
+export async function getPlantillas(): Promise<PlantillaMensaje[]> {
+  const database = await getDatabase();
+  const result = await database.select<PlantillaMensajeDB[]>(
+    'SELECT * FROM PlantillaMensaje WHERE activo = 1 ORDER BY prioridad DESC, predefinida DESC, nombre'
+  );
+  return result.map(p => ({ ...p, predefinida: Boolean(p.predefinida), activo: Boolean(p.activo) }));
+}
+
+export async function getPlantillaById(id: string): Promise<PlantillaMensaje | null> {
+  const database = await getDatabase();
+  const result = await database.select<PlantillaMensajeDB[]>(
+    'SELECT * FROM PlantillaMensaje WHERE id = ?', [id]
+  );
+  if (!result[0]) return null;
+  return { ...result[0], predefinida: Boolean(result[0].predefinida), activo: Boolean(result[0].activo) };
+}
+
+export async function createPlantilla(data: Omit<PlantillaMensaje, 'id' | 'createdAt' | 'updatedAt' | 'predefinida' | 'activo'>): Promise<PlantillaMensaje> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+
+  await database.execute(
+    `INSERT INTO PlantillaMensaje (id, nombre, asunto, cuerpo, canal, predefinida, activo, prioridad, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, 0, 1, ?, ?, ?)`,
+    [id, data.nombre, data.asunto, data.cuerpo, data.canal, data.prioridad || 0, now, now]
+  );
+
+  return (await getPlantillaById(id))!;
+}
+
+export async function updatePlantilla(id: string, data: Partial<Omit<PlantillaMensaje, 'id' | 'createdAt' | 'updatedAt' | 'predefinida'>>): Promise<PlantillaMensaje> {
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  Object.entries(data).forEach(([key, value]) => {
+    if (value !== undefined) {
+      fields.push(`${key} = ?`);
+      values.push(key === 'activo' ? (value ? 1 : 0) : value);
+    }
+  });
+
+  fields.push('updatedAt = ?');
+  values.push(now);
+  values.push(id);
+
+  await database.execute(
+    `UPDATE PlantillaMensaje SET ${fields.join(', ')} WHERE id = ?`,
+    values
+  );
+
+  return (await getPlantillaById(id))!;
+}
+
+export async function deletePlantilla(id: string): Promise<boolean> {
+  const plantilla = await getPlantillaById(id);
+  if (!plantilla) return false;
+  if (plantilla.predefinida) return false; // No se pueden eliminar plantillas predefinidas
+
+  const database = await getDatabase();
+  const now = getCurrentTimestamp();
+  await database.execute(
+    'UPDATE PlantillaMensaje SET activo = 0, updatedAt = ? WHERE id = ?',
+    [now, id]
+  );
+  return true;
+}
+
+// ============ HISTORIAL DE MENSAJES ============
+
+export interface HistorialMensaje {
+  id: string;
+  destinatarioNombre: string;
+  destinatarioContacto: string | null;
+  destinatarioTipo: 'PROPIETARIO' | 'INQUILINO' | 'SERVICIO' | 'LIBRE';
+  canal: 'WHATSAPP' | 'EMAIL';
+  asunto: string | null;
+  contenido: string;
+  estado: 'PENDIENTE' | 'ENVIADO' | 'ERROR';
+  plantillaId: string | null;
+  apartamentoId: string | null;
+  servicioId: string | null;
+  contactoLibreId: string | null;
+  createdAt: string;
+}
+
+export async function createHistorialMensaje(data: Omit<HistorialMensaje, 'id' | 'createdAt'>): Promise<HistorialMensaje> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+
+  await database.execute(
+    `INSERT INTO HistorialMensaje (id, destinatarioNombre, destinatarioContacto, destinatarioTipo, canal, asunto, contenido, estado, plantillaId, apartamentoId, servicioId, contactoLibreId, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.destinatarioNombre, data.destinatarioContacto, data.destinatarioTipo, data.canal, data.asunto, data.contenido, data.estado, data.plantillaId, data.apartamentoId, data.servicioId, data.contactoLibreId, now]
+  );
+
+  return {
+    id,
+    ...data,
+    createdAt: now,
+  };
+}
+
+export interface HistorialFiltros {
+  desde?: string;
+  hasta?: string;
+  canal?: 'WHATSAPP' | 'EMAIL';
+  tipo?: 'PROPIETARIO' | 'INQUILINO' | 'SERVICIO' | 'LIBRE';
+}
+
+export async function getHistorialMensajes(filtros?: HistorialFiltros): Promise<HistorialMensaje[]> {
+  const database = await getDatabase();
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (filtros?.desde) {
+    conditions.push('createdAt >= ?');
+    params.push(filtros.desde);
+  }
+  if (filtros?.hasta) {
+    conditions.push('createdAt <= ?');
+    params.push(filtros.hasta);
+  }
+  if (filtros?.canal) {
+    conditions.push('canal = ?');
+    params.push(filtros.canal);
+  }
+  if (filtros?.tipo) {
+    conditions.push('destinatarioTipo = ?');
+    params.push(filtros.tipo);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  return database.select<HistorialMensaje[]>(
+    `SELECT * FROM HistorialMensaje ${where} ORDER BY createdAt DESC LIMIT 500`,
+    params
+  );
+}
+
+// ============ DESTINATARIOS UNIFICADOS ============
+
+export interface Destinatario {
+  id: string;
+  nombre: string;
+  apellido: string | null;
+  celular: string | null;
+  email: string | null;
+  tipo: 'PROPIETARIO' | 'INQUILINO' | 'SERVICIO' | 'LIBRE';
+  apartamentoNumero?: string;
+  apartamentoPiso?: number | null;
+  apartamentoId?: string;
+  servicioId?: string;
+  contactoLibreId?: string;
+  saldo?: number;
+}
+
+export async function getDestinatariosMensajes(): Promise<Destinatario[]> {
+  const destinatarios: Destinatario[] = [];
+
+  // Apartamentos (propietarios e inquilinos)
+  const apartamentos = await getApartamentos();
+  const saldos = await obtenerSaldosCuentaCorriente();
+
+  for (const apt of apartamentos) {
+    if (apt.contactoNombre) {
+      destinatarios.push({
+        id: `apt_${apt.id}`,
+        nombre: apt.contactoNombre,
+        apellido: apt.contactoApellido,
+        celular: apt.contactoCelular,
+        email: apt.contactoEmail,
+        tipo: apt.tipoOcupacion === 'INQUILINO' ? 'INQUILINO' : 'PROPIETARIO',
+        apartamentoNumero: apt.numero,
+        apartamentoPiso: apt.piso,
+        apartamentoId: apt.id,
+        saldo: saldos[apt.id] || 0,
+      });
+    }
+  }
+
+  // Servicios activos
+  const servicios = await getServiciosActivos();
+  for (const serv of servicios) {
+    destinatarios.push({
+      id: `serv_${serv.id}`,
+      nombre: serv.nombre,
+      apellido: null,
+      celular: serv.celular,
+      email: serv.email,
+      tipo: 'SERVICIO',
+      servicioId: serv.id,
+    });
+  }
+
+  // Contactos libres
+  const contactosLibres = await getContactosLibres();
+  for (const cl of contactosLibres) {
+    destinatarios.push({
+      id: `libre_${cl.id}`,
+      nombre: cl.nombre,
+      apellido: cl.apellido,
+      celular: cl.celular,
+      email: cl.email,
+      tipo: 'LIBRE',
+      contactoLibreId: cl.id,
+    });
+  }
+
+  return destinatarios;
 }

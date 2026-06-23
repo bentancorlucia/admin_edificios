@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { BackToHome } from "@/components/back-to-home"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -14,17 +15,35 @@ import {
   RefreshCw,
   ExternalLink,
   Clock,
-  FolderSync
+  FolderSync,
+  RotateCcw,
+  Upload,
+  AlertTriangle,
 } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { join } from "@tauri-apps/api/path"
+import { relaunch } from "@tauri-apps/plugin-process"
 import {
   checkGoogleDriveStatus,
   backupToGoogleDrive,
   backupToSelectedFolder,
   selectBackupFolder,
+  selectBackupFile,
+  restoreBackup,
   getBackupHistory,
   diagnosticGoogleDrivePaths,
   type DriveStatus,
-  type BackupResult
+  type BackupResult,
+  type RestoreResult,
 } from "@/lib/backup"
 
 export function RespaldosClient() {
@@ -134,6 +153,63 @@ export function RespaldosClient() {
     checkStatus()
   }
 
+  // ============ RESTAURACIÓN ============
+  const [restoreTarget, setRestoreTarget] = useState<{ path: string; displayName: string; isExternal: boolean } | null>(null)
+  const [restoreConfirmed, setRestoreConfirmed] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [restoreResult, setRestoreResult] = useState<RestoreResult | null>(null)
+
+  const folderActiva = useCustomPath && customPath ? customPath : driveStatus?.backupFolder
+
+  const handleRestoreFromHistory = async (backupName: string) => {
+    if (!folderActiva) return
+    const path = await join(folderActiva, backupName)
+    setRestoreTarget({ path, displayName: backupName, isExternal: false })
+    setRestoreConfirmed(false)
+    setRestoreResult(null)
+  }
+
+  const handleRestoreFromFile = async () => {
+    const file = await selectBackupFile()
+    if (!file) return
+    const displayName = file.split(/[\\/]/).pop() || file
+    setRestoreTarget({ path: file, displayName, isExternal: true })
+    setRestoreConfirmed(false)
+    setRestoreResult(null)
+  }
+
+  const handleConfirmRestore = async () => {
+    if (!restoreTarget) return
+    setRestoring(true)
+    setRestoreResult(null)
+    try {
+      const result = await restoreBackup(restoreTarget.path)
+      setRestoreResult(result)
+      if (result.success) {
+        // Reiniciar la app después de 3 segundos para que cargue la DB nueva
+        setTimeout(async () => {
+          try {
+            await relaunch()
+          } catch (e) {
+            console.error("Error al reiniciar:", e)
+          }
+        }, 3000)
+      }
+    } catch (error) {
+      setRestoreResult({ success: false, error: String(error) })
+    } finally {
+      setRestoring(false)
+    }
+  }
+
+  const closeRestoreDialog = () => {
+    if (restoring) return
+    if (restoreResult?.success) return // mientras se reinicia, no permitir cerrar
+    setRestoreTarget(null)
+    setRestoreConfirmed(false)
+    setRestoreResult(null)
+  }
+
   if (loading) {
     return (
       <div className="p-6">
@@ -148,6 +224,7 @@ export function RespaldosClient() {
   return (
     <div className="p-6 space-y-6">
       <div>
+        <BackToHome />
         <h1 className="text-2xl font-bold">Respaldos</h1>
         <p className="text-slate-500">Respalda tu base de datos a Google Drive</p>
       </div>
@@ -404,42 +481,168 @@ export function RespaldosClient() {
         </CardContent>
       </Card>
 
-      {/* Historial de respaldos */}
-      {driveStatus?.detected && backupHistory.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Historial de Respaldos</CardTitle>
-            <CardDescription>
-              Los últimos respaldos realizados
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
+      {/* Historial de respaldos + Restauración */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg">Historial y Restauración</CardTitle>
+              <CardDescription>
+                Restaurá la base de datos desde un respaldo previo. Se hará un backup automático de la DB actual antes de pisarla.
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={handleRestoreFromFile}>
+              <Upload className="h-4 w-4 mr-2" />
+              Restaurar desde archivo...
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {backupHistory.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              No hay respaldos previos en la carpeta configurada. Podés restaurar desde un archivo externo (.db) con el botón de arriba.
+            </p>
+          ) : (
             <div className="space-y-2">
-              {backupHistory.slice(0, 5).map((backup, index) => (
+              {backupHistory.slice(0, 10).map((backup, index) => (
                 <div
                   key={backup.name}
                   className="flex items-center justify-between p-3 bg-slate-50 rounded-lg"
                 >
-                  <div className="flex items-center gap-3">
-                    <HardDrive className="h-4 w-4 text-slate-400" />
-                    <span className="text-sm font-mono">{backup.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500">
-                      {backup.date.toLocaleString('es-ES')}
-                    </span>
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <HardDrive className="h-4 w-4 text-slate-400 shrink-0" />
+                    <span className="text-sm font-mono truncate">{backup.name}</span>
                     {index === 0 && (
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="text-xs shrink-0">
                         Más reciente
                       </Badge>
                     )}
                   </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <span className="text-sm text-slate-500">
+                      {backup.date.toLocaleString('es-ES')}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRestoreFromHistory(backup.name)}
+                      className="text-amber-600 hover:text-amber-700 hover:bg-amber-50"
+                      title="Restaurar este respaldo"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                      Restaurar
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
-          </CardContent>
-        </Card>
-      )}
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Diálogo de confirmación de restauración */}
+      <AlertDialog open={!!restoreTarget} onOpenChange={(open) => { if (!open) closeRestoreDialog() }}>
+        <AlertDialogContent className="max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 text-amber-700">
+              <AlertTriangle className="h-5 w-5" />
+              Confirmar restauración
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm">
+                <p>
+                  Vas a restaurar la base de datos desde:
+                </p>
+                <div className="bg-slate-50 p-2 rounded font-mono text-xs break-all">
+                  {restoreTarget?.displayName}
+                  {restoreTarget?.isExternal && (
+                    <Badge variant="secondary" className="ml-2 text-xs">Archivo externo</Badge>
+                  )}
+                </div>
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Esto reemplazará la base de datos actual</AlertTitle>
+                  <AlertDescription>
+                    Todos los datos actuales se reemplazarán con los del respaldo. Antes de hacerlo se creará un backup automático "pre-restore" de la DB actual en el AppData de la app.
+                    <br /><br />
+                    <strong>La aplicación se reiniciará automáticamente</strong> al completar la restauración.
+                  </AlertDescription>
+                </Alert>
+
+                {!restoreResult && (
+                  <label className="flex items-start gap-2 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={restoreConfirmed}
+                      onChange={(e) => setRestoreConfirmed(e.target.checked)}
+                      className="mt-1 h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                    />
+                    <span>
+                      Entiendo que la base de datos actual será reemplazada y que la app se reiniciará.
+                    </span>
+                  </label>
+                )}
+
+                {restoreResult?.success && (
+                  <Alert>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <AlertTitle>Restauración exitosa</AlertTitle>
+                    <AlertDescription>
+                      La DB fue restaurada correctamente. La app se reiniciará en unos segundos…
+                      {restoreResult.preRestoreBackupPath && (
+                        <>
+                          <br /><br />
+                          <span className="text-xs text-slate-500">
+                            Backup pre-restore: <code>{restoreResult.preRestoreBackupPath.split(/[\\/]/).pop()}</code>
+                          </span>
+                        </>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {restoreResult && !restoreResult.success && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>Error al restaurar</AlertTitle>
+                    <AlertDescription>{restoreResult.error}</AlertDescription>
+                  </Alert>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={restoring || restoreResult?.success}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault()
+                handleConfirmRestore()
+              }}
+              disabled={!restoreConfirmed || restoring || !!restoreResult?.success}
+              className="bg-amber-600 hover:bg-amber-700"
+            >
+              {restoring ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Restaurando...
+                </>
+              ) : restoreResult?.success ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Reiniciando...
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="h-4 w-4 mr-2" />
+                  Restaurar
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Información */}
       <Card>

@@ -7,6 +7,7 @@ export type Apartamento = {
   alicuota: number
   gastosComunes: number
   fondoReserva: number
+  otrosGastos?: number
   tipoOcupacion: "PROPIETARIO" | "INQUILINO" | "AMBOS"
   contactoNombre: string | null
   contactoApellido: string | null
@@ -85,9 +86,13 @@ export function generateApartamentoPDF(apt: Apartamento) {
   addLine("Número", apt.numero)
   addLine("Piso", apt.piso?.toString() || "N/A")
   addLine("Tipo", tipoOcupacionLabels[apt.tipoOcupacion] || apt.tipoOcupacion)
-  addLine("Gastos Comunes", `$ ${apt.gastosComunes.toLocaleString()}`)
-  addLine("Fondo Reserva", `$ ${apt.fondoReserva.toLocaleString()}`)
-  addLine("Total Mensual", `$ ${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`)
+  addLine("Gastos Comunes", `$ ${apt.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+  addLine("Fondo Reserva", `$ ${apt.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+  if (apt.otrosGastos && apt.otrosGastos > 0) {
+    addLine("Otros Gastos", `$ ${apt.otrosGastos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
+  }
+  const totalMensual = apt.gastosComunes + apt.fondoReserva + (apt.otrosGastos || 0)
+  addLine("Total Mensual", `$ ${totalMensual.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 
   y += 5
   doc.setFont("helvetica", "bold")
@@ -122,7 +127,9 @@ export function generateApartamentoPDF(apt: Apartamento) {
     align: "center",
   })
 
-  doc.save(`apartamento-${apt.numero}.pdf`)
+  const fileName = `apartamento-${apt.numero}.pdf`
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 // Tipo para generar PDFs con información agrupada
@@ -202,28 +209,35 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
   doc.setFontSize(9)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "normal")
-  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString()}`, 15, y)
-  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString()}`, 15, y + 5)
+  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y)
+  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + 5)
+  let totalOffsetProp = 12
+  if (apt.otrosGastos && apt.otrosGastos > 0) {
+    doc.text(`Otros: $${apt.otrosGastos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + 10)
+    totalOffsetProp = 17
+  }
 
   doc.setFont("helvetica", "bold")
   doc.setTextColor(37, 99, 235)
-  doc.text(`Total: $${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, 15, y + 12)
+  const totalProp = apt.gastosComunes + apt.fondoReserva + (apt.otrosGastos || 0)
+  doc.text(`Total: $${totalProp.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + totalOffsetProp)
 
-  // Estado de cuenta compacto (cuadro más pequeño)
-  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
+  // Estado de cuenta compacto (cuadro más pequeño) - colores pastel
+  const estadoBgColor = saldo > 0 ? [254, 226, 226] : saldo < 0 ? [220, 252, 231] : [241, 245, 249]
+  const estadoTextColor = saldo > 0 ? [153, 27, 27] : saldo < 0 ? [21, 128, 61] : [71, 85, 105]
   const estadoTexto = saldo > 0 ? "DEUDOR" : saldo < 0 ? "A FAVOR" : "AL DÍA"
 
-  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
+  doc.setFillColor(estadoBgColor[0], estadoBgColor[1], estadoBgColor[2])
   doc.roundedRect(15 + halfWidth + 10, y - 2, halfWidth, 18, 2, 2, "F")
 
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(estadoTextColor[0], estadoTextColor[1], estadoTextColor[2])
   doc.setFontSize(8)
   doc.setFont("helvetica", "normal")
   doc.text(estadoTexto, 15 + halfWidth + 10 + halfWidth / 2, y + 4, { align: "center" })
 
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(saldo).toLocaleString()}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
+  doc.text(`$${Math.abs(saldo).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
 
   y += 22
 
@@ -309,10 +323,10 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
       // Monto con color según tipo
       if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
         doc.setTextColor(22, 163, 74)
-        doc.text(`+$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
+        doc.text(`+$${trans.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 17, y, { align: "right" })
       } else {
         doc.setTextColor(220, 38, 38)
-        doc.text(`$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
+        doc.text(`$${trans.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 17, y, { align: "right" })
       }
 
       y += 5
@@ -325,7 +339,9 @@ export function generatePropietarioPDF(grupo: ApartamentoAgrupado, saldos?: Sald
   doc.setFont("helvetica", "normal")
   doc.text("EdificioApp", pageWidth / 2, pageHeight - 5, { align: "center" })
 
-  doc.save(`apto-${grupo.numero}-propietario.pdf`)
+  const fileName = `apto-${grupo.numero}-propietario.pdf`
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 // PDF para Inquilino - Compacto
@@ -394,28 +410,35 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
   doc.setFontSize(9)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "normal")
-  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString()}`, 15, y)
-  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString()}`, 15, y + 5)
+  doc.text(`Comunes: $${apt.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y)
+  doc.text(`Reserva: $${apt.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + 5)
+  let totalOffsetInq = 12
+  if (apt.otrosGastos && apt.otrosGastos > 0) {
+    doc.text(`Otros: $${apt.otrosGastos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + 10)
+    totalOffsetInq = 17
+  }
 
   doc.setFont("helvetica", "bold")
   doc.setTextColor(147, 51, 234)
-  doc.text(`Total: $${(apt.gastosComunes + apt.fondoReserva).toLocaleString()}`, 15, y + 12)
+  const totalInq = apt.gastosComunes + apt.fondoReserva + (apt.otrosGastos || 0)
+  doc.text(`Total: $${totalInq.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15, y + totalOffsetInq)
 
-  // Estado de cuenta compacto (cuadro más pequeño)
-  const estadoColor = saldo > 0 ? [220, 38, 38] : saldo < 0 ? [22, 163, 74] : [100, 116, 139]
+  // Estado de cuenta compacto (cuadro más pequeño) - colores pastel
+  const estadoBgColor = saldo > 0 ? [254, 226, 226] : saldo < 0 ? [220, 252, 231] : [241, 245, 249]
+  const estadoTextColor = saldo > 0 ? [153, 27, 27] : saldo < 0 ? [21, 128, 61] : [71, 85, 105]
   const estadoTexto = saldo > 0 ? "DEUDOR" : saldo < 0 ? "A FAVOR" : "AL DÍA"
 
-  doc.setFillColor(estadoColor[0], estadoColor[1], estadoColor[2])
+  doc.setFillColor(estadoBgColor[0], estadoBgColor[1], estadoBgColor[2])
   doc.roundedRect(15 + halfWidth + 10, y - 2, halfWidth, 18, 2, 2, "F")
 
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(estadoTextColor[0], estadoTextColor[1], estadoTextColor[2])
   doc.setFontSize(8)
   doc.setFont("helvetica", "normal")
   doc.text(estadoTexto, 15 + halfWidth + 10 + halfWidth / 2, y + 4, { align: "center" })
 
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(saldo).toLocaleString()}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
+  doc.text(`$${Math.abs(saldo).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 15 + halfWidth + 10 + halfWidth / 2, y + 12, { align: "center" })
 
   y += 22
 
@@ -501,10 +524,10 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
       // Monto con color según tipo
       if (trans.tipo === "RECIBO_PAGO" || trans.tipo === "INGRESO") {
         doc.setTextColor(22, 163, 74)
-        doc.text(`+$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
+        doc.text(`+$${trans.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 17, y, { align: "right" })
       } else {
         doc.setTextColor(220, 38, 38)
-        doc.text(`$${trans.monto.toLocaleString()}`, pageWidth - 17, y, { align: "right" })
+        doc.text(`$${trans.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 17, y, { align: "right" })
       }
 
       y += 5
@@ -517,7 +540,9 @@ export function generateInquilinoPDF(grupo: ApartamentoAgrupado, saldos?: Saldos
   doc.setFont("helvetica", "normal")
   doc.text("EdificioApp", pageWidth / 2, pageHeight - 5, { align: "center" })
 
-  doc.save(`apto-${grupo.numero}-inquilino.pdf`)
+  const fileName = `apto-${grupo.numero}-inquilino.pdf`
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 // Tipo para Estado de Cuenta Bancario
@@ -612,7 +637,7 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   doc.text(
-    `$${data.resumen.saldoInicial.toLocaleString()}`,
+    `$${data.resumen.saldoInicial.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     startX + boxWidth / 2,
     y + 24,
     { align: "center" }
@@ -630,7 +655,7 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
   doc.text(
-    `+$${data.resumen.totalIngresos.toLocaleString()}`,
+    `+$${data.resumen.totalIngresos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     startX + boxWidth + 3 + boxWidth / 2,
     y + 24,
     { align: "center" }
@@ -648,19 +673,21 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
   doc.text(
-    `-$${data.resumen.totalEgresos.toLocaleString()}`,
+    `-$${data.resumen.totalEgresos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     startX + (boxWidth + 3) * 2 + boxWidth / 2,
     y + 24,
     { align: "center" }
   )
 
-  // Saldo Final
-  const saldoColor =
-    data.resumen.saldoFinal >= 0 ? [30, 64, 175] : [220, 38, 38]
-  doc.setFillColor(saldoColor[0], saldoColor[1], saldoColor[2])
+  // Saldo Final - colores pastel
+  const saldoFinalBg =
+    data.resumen.saldoFinal >= 0 ? [219, 234, 254] : [254, 226, 226]
+  const saldoFinalText =
+    data.resumen.saldoFinal >= 0 ? [30, 64, 175] : [153, 27, 27]
+  doc.setFillColor(saldoFinalBg[0], saldoFinalBg[1], saldoFinalBg[2])
   doc.roundedRect(startX + (boxWidth + 3) * 3, y, boxWidth, boxHeight, 2, 2, "F")
   doc.setFontSize(8)
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(saldoFinalText[0], saldoFinalText[1], saldoFinalText[2])
   doc.setFont("helvetica", "normal")
   doc.text("Saldo Final", startX + (boxWidth + 3) * 3 + boxWidth / 2, y + 10, {
     align: "center",
@@ -668,7 +695,7 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.setFontSize(12)
   doc.setFont("helvetica", "bold")
   doc.text(
-    `$${data.resumen.saldoFinal.toLocaleString()}`,
+    `$${data.resumen.saldoFinal.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
     startX + (boxWidth + 3) * 3 + boxWidth / 2,
     y + 24,
     { align: "center" }
@@ -734,7 +761,7 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
   doc.text("-", colX[2], y, { align: "right" })
   doc.text("-", colX[3], y, { align: "right" })
   doc.setTextColor(30, 41, 59)
-  doc.text(`$${data.resumen.saldoInicial.toLocaleString()}`, colX[4], y, {
+  doc.text(`$${data.resumen.saldoInicial.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, colX[4], y, {
     align: "right",
   })
   y += 8
@@ -767,20 +794,20 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
     // Ingreso
     if (mov.tipo === "INGRESO") {
       doc.setTextColor(22, 163, 74)
-      doc.text(`+$${mov.monto.toLocaleString()}`, colX[2], y, { align: "right" })
+      doc.text(`+$${mov.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, colX[2], y, { align: "right" })
       doc.setTextColor(71, 85, 105)
       doc.text("-", colX[3], y, { align: "right" })
     } else {
       doc.setTextColor(71, 85, 105)
       doc.text("-", colX[2], y, { align: "right" })
       doc.setTextColor(220, 38, 38)
-      doc.text(`-$${mov.monto.toLocaleString()}`, colX[3], y, { align: "right" })
+      doc.text(`-$${mov.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, colX[3], y, { align: "right" })
     }
 
     // Saldo
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
-    doc.text(`$${mov.saldoAcumulado.toLocaleString()}`, colX[4], y, {
+    doc.text(`$${mov.saldoAcumulado.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, colX[4], y, {
       align: "right",
     })
 
@@ -805,7 +832,9 @@ export function generateEstadoCuentaPDF(data: EstadoCuentaData) {
     align: "center",
   })
 
-  doc.save(`estado-cuenta-${data.cuenta.banco.toLowerCase().replace(/\s/g, "-")}.pdf`)
+  const fileName = `estado-cuenta-${data.cuenta.banco.toLowerCase().replace(/\s/g, "-")}.pdf`
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 // Tipo para recibo de pago
@@ -818,9 +847,12 @@ export type ReciboPagoData = {
   conceptos: {
     gastosComunes: number
     fondoReserva: number
+    otrosGastos?: number
   }
   saldoFinal: number
   tipoOcupacion?: "PROPIETARIO" | "INQUILINO" | "AMBOS"
+  contactoNombre?: string | null
+  contactoApellido?: string | null
   mesCorrespondiente?: string // Ej: "Febrero 2026"
 }
 
@@ -847,9 +879,13 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
 
   let y = 45
 
-  // Información compacta del apartamento, tipo y fecha
+  // Información compacta del apartamento, tipo, contacto y fecha (3 filas)
+  const nombreCompleto = [data.contactoNombre, data.contactoApellido].filter(Boolean).join(" ").trim()
+  const tieneContacto = !!nombreCompleto
+  const cardHeight = tieneContacto ? 31 : 22
+
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(15, y - 3, pageWidth - 30, 22, 2, 2, "F")
+  doc.roundedRect(15, y - 3, pageWidth - 30, cardHeight, 2, 2, "F")
 
   doc.setFontSize(9)
   doc.setTextColor(71, 85, 105)
@@ -889,10 +925,22 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
   })
   doc.text(fechaFormateada, 140, y + 4)
 
-  // Fila 2: Forma de pago y referencia
+  // Fila 2 (opcional): Contacto
+  if (tieneContacto) {
+    doc.setTextColor(71, 85, 105)
+    doc.setFont("helvetica", "normal")
+    doc.text("Contacto:", 20, y + 13)
+    doc.setTextColor(30, 41, 59)
+    doc.setFont("helvetica", "bold")
+    const nombreTruncado = nombreCompleto.length > 60 ? nombreCompleto.substring(0, 57) + "..." : nombreCompleto
+    doc.text(nombreTruncado, 45, y + 13)
+  }
+
+  // Fila pago (Y depende de si hay contacto)
+  const yPago = tieneContacto ? y + 22 : y + 13
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Pago:", 20, y + 13)
+  doc.text("Pago:", 20, yPago)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const metodoPagoLabel: Record<string, string> = {
@@ -902,19 +950,19 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
     CHEQUE: "Cheque",
     OTRO: "Otro"
   }
-  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, y + 13)
+  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, yPago)
 
   if (data.referencia) {
     doc.setTextColor(71, 85, 105)
     doc.setFont("helvetica", "normal")
-    doc.text("Ref:", 90, y + 13)
+    doc.text("Ref:", 90, yPago)
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
     const refTruncada = data.referencia.length > 25 ? data.referencia.substring(0, 22) + "..." : data.referencia
-    doc.text(refTruncada, 102, y + 13)
+    doc.text(refTruncada, 102, yPago)
   }
 
-  y += 28
+  y += tieneContacto ? 37 : 28
 
   // Conceptos abonados - más compacto
   doc.setFontSize(10)
@@ -934,7 +982,7 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
   doc.text("Concepto", 20, y + 5.5)
   doc.text("Importe", pageWidth - 20, y + 5.5, { align: "right" })
 
-  y += 10
+  y += 14
 
   doc.setFont("helvetica", "normal")
   doc.setTextColor(30, 41, 59)
@@ -945,22 +993,29 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
   // Gastos Comunes con mes
   if (data.conceptos.gastosComunes > 0) {
     doc.text(`Gastos Comunes${mesTexto}`, 20, y)
-    doc.text(`$${data.conceptos.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.conceptos.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Fondo de Reserva con mes
   if (data.conceptos.fondoReserva > 0) {
     doc.text(`Fondo de Reserva${mesTexto}`, 20, y)
-    doc.text(`$${data.conceptos.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.conceptos.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
+  }
+
+  // Otros Gastos con mes
+  if (data.conceptos.otrosGastos && data.conceptos.otrosGastos > 0) {
+    doc.text(`Otros Gastos${mesTexto}`, 20, y)
+    doc.text(`$${data.conceptos.otrosGastos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Si el pago no tiene desglose, mostrar solo el total
-  if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0) {
+  if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0 && (!data.conceptos.otrosGastos || data.conceptos.otrosGastos === 0)) {
     doc.text(`Pago a cuenta${mesTexto}`, 20, y)
-    doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Línea divisoria
@@ -978,24 +1033,26 @@ export function generateReciboPagoPDF(data: ReciboPagoData): Blob {
   doc.setFont("helvetica", "bold")
   doc.text("TOTAL ABONADO", 20, y + 10)
   doc.setFontSize(14)
-  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 10, { align: "right" })
+  doc.text(`$${data.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y + 10, { align: "right" })
 
   y += 24
 
   // Saldo de cuenta - compacto
-  const saldoColor = data.saldoFinal > 0 ? [220, 38, 38] : data.saldoFinal < 0 ? [22, 163, 74] : [71, 85, 105]
+  // Saldo con colores pastel
+  const saldoBgColor = data.saldoFinal > 0 ? [254, 226, 226] : data.saldoFinal < 0 ? [220, 252, 231] : [241, 245, 249]
+  const saldoTextColor = data.saldoFinal > 0 ? [153, 27, 27] : data.saldoFinal < 0 ? [21, 128, 61] : [71, 85, 105]
   const saldoTexto = data.saldoFinal > 0 ? "SALDO DEUDOR" : data.saldoFinal < 0 ? "SALDO A FAVOR" : "CUENTA AL DÍA"
 
-  doc.setFillColor(saldoColor[0], saldoColor[1], saldoColor[2])
+  doc.setFillColor(saldoBgColor[0], saldoBgColor[1], saldoBgColor[2])
   doc.roundedRect(15, y, pageWidth - 30, 18, 2, 2, "F")
 
   doc.setFontSize(9)
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(saldoTextColor[0], saldoTextColor[1], saldoTextColor[2])
   doc.setFont("helvetica", "normal")
   doc.text(saldoTexto, 20, y + 8)
   doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 12, { align: "right" })
+  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y + 12, { align: "right" })
 
   // Footer
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -1030,9 +1087,13 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
 
   let y = 45
 
-  // Información compacta del apartamento, tipo y fecha
+  // Información compacta del apartamento, tipo, contacto y fecha (3 filas)
+  const nombreCompleto = [data.contactoNombre, data.contactoApellido].filter(Boolean).join(" ").trim()
+  const tieneContacto = !!nombreCompleto
+  const cardHeight = tieneContacto ? 31 : 22
+
   doc.setFillColor(248, 250, 252)
-  doc.roundedRect(15, y - 3, pageWidth - 30, 22, 2, 2, "F")
+  doc.roundedRect(15, y - 3, pageWidth - 30, cardHeight, 2, 2, "F")
 
   doc.setFontSize(9)
   doc.setTextColor(71, 85, 105)
@@ -1072,10 +1133,22 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   })
   doc.text(fechaFormateada, 140, y + 4)
 
-  // Fila 2: Forma de pago y referencia
+  // Fila 2 (opcional): Contacto
+  if (tieneContacto) {
+    doc.setTextColor(71, 85, 105)
+    doc.setFont("helvetica", "normal")
+    doc.text("Contacto:", 20, y + 13)
+    doc.setTextColor(30, 41, 59)
+    doc.setFont("helvetica", "bold")
+    const nombreTruncado = nombreCompleto.length > 60 ? nombreCompleto.substring(0, 57) + "..." : nombreCompleto
+    doc.text(nombreTruncado, 45, y + 13)
+  }
+
+  // Fila pago (Y depende de si hay contacto)
+  const yPago = tieneContacto ? y + 22 : y + 13
   doc.setTextColor(71, 85, 105)
   doc.setFont("helvetica", "normal")
-  doc.text("Pago:", 20, y + 13)
+  doc.text("Pago:", 20, yPago)
   doc.setTextColor(30, 41, 59)
   doc.setFont("helvetica", "bold")
   const metodoPagoLabel: Record<string, string> = {
@@ -1085,19 +1158,19 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
     CHEQUE: "Cheque",
     OTRO: "Otro"
   }
-  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, y + 13)
+  doc.text(metodoPagoLabel[data.metodoPago] || data.metodoPago, 38, yPago)
 
   if (data.referencia) {
     doc.setTextColor(71, 85, 105)
     doc.setFont("helvetica", "normal")
-    doc.text("Ref:", 90, y + 13)
+    doc.text("Ref:", 90, yPago)
     doc.setTextColor(30, 41, 59)
     doc.setFont("helvetica", "bold")
     const refTruncada = data.referencia.length > 25 ? data.referencia.substring(0, 22) + "..." : data.referencia
-    doc.text(refTruncada, 102, y + 13)
+    doc.text(refTruncada, 102, yPago)
   }
 
-  y += 28
+  y += tieneContacto ? 37 : 28
 
   // Conceptos abonados - más compacto
   doc.setFontSize(10)
@@ -1117,7 +1190,7 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   doc.text("Concepto", 20, y + 5.5)
   doc.text("Importe", pageWidth - 20, y + 5.5, { align: "right" })
 
-  y += 10
+  y += 14
 
   doc.setFont("helvetica", "normal")
   doc.setTextColor(30, 41, 59)
@@ -1128,22 +1201,29 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   // Gastos Comunes con mes
   if (data.conceptos.gastosComunes > 0) {
     doc.text(`Gastos Comunes${mesTexto}`, 20, y)
-    doc.text(`$${data.conceptos.gastosComunes.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.conceptos.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Fondo de Reserva con mes
   if (data.conceptos.fondoReserva > 0) {
     doc.text(`Fondo de Reserva${mesTexto}`, 20, y)
-    doc.text(`$${data.conceptos.fondoReserva.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.conceptos.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
+  }
+
+  // Otros Gastos con mes
+  if (data.conceptos.otrosGastos && data.conceptos.otrosGastos > 0) {
+    doc.text(`Otros Gastos${mesTexto}`, 20, y)
+    doc.text(`$${data.conceptos.otrosGastos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Si el pago no tiene desglose, mostrar solo el total
-  if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0) {
+  if (data.conceptos.gastosComunes === 0 && data.conceptos.fondoReserva === 0 && (!data.conceptos.otrosGastos || data.conceptos.otrosGastos === 0)) {
     doc.text(`Pago a cuenta${mesTexto}`, 20, y)
-    doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y, { align: "right" })
-    y += 8
+    doc.text(`$${data.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y, { align: "right" })
+    y += 9
   }
 
   // Línea divisoria
@@ -1161,24 +1241,26 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   doc.setFont("helvetica", "bold")
   doc.text("TOTAL ABONADO", 20, y + 10)
   doc.setFontSize(14)
-  doc.text(`$${data.monto.toLocaleString()}`, pageWidth - 20, y + 10, { align: "right" })
+  doc.text(`$${data.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y + 10, { align: "right" })
 
   y += 24
 
   // Saldo de cuenta - compacto
-  const saldoColor = data.saldoFinal > 0 ? [220, 38, 38] : data.saldoFinal < 0 ? [22, 163, 74] : [71, 85, 105]
+  // Saldo con colores pastel
+  const saldoBgColor = data.saldoFinal > 0 ? [254, 226, 226] : data.saldoFinal < 0 ? [220, 252, 231] : [241, 245, 249]
+  const saldoTextColor = data.saldoFinal > 0 ? [153, 27, 27] : data.saldoFinal < 0 ? [21, 128, 61] : [71, 85, 105]
   const saldoTexto = data.saldoFinal > 0 ? "SALDO DEUDOR" : data.saldoFinal < 0 ? "SALDO A FAVOR" : "CUENTA AL DÍA"
 
-  doc.setFillColor(saldoColor[0], saldoColor[1], saldoColor[2])
+  doc.setFillColor(saldoBgColor[0], saldoBgColor[1], saldoBgColor[2])
   doc.roundedRect(15, y, pageWidth - 30, 18, 2, 2, "F")
 
   doc.setFontSize(9)
-  doc.setTextColor(255, 255, 255)
+  doc.setTextColor(saldoTextColor[0], saldoTextColor[1], saldoTextColor[2])
   doc.setFont("helvetica", "normal")
   doc.text(saldoTexto, 20, y + 8)
   doc.setFontSize(14)
   doc.setFont("helvetica", "bold")
-  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString()}`, pageWidth - 20, y + 12, { align: "right" })
+  doc.text(`$${Math.abs(data.saldoFinal).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, pageWidth - 20, y + 12, { align: "right" })
 
   // Footer
   const pageHeight = doc.internal.pageSize.getHeight()
@@ -1188,7 +1270,9 @@ export function downloadReciboPagoPDF(data: ReciboPagoData) {
   doc.text("Comprobante válido como constancia de pago · EdificioApp", pageWidth / 2, pageHeight - 8, { align: "center" })
 
   const fechaFile = new Date(data.fecha).toISOString().split("T")[0]
-  doc.save(`recibo-apto-${data.apartamentoNumero}-${fechaFile}.pdf`)
+  const fileName = `recibo-apto-${data.apartamentoNumero}-${fechaFile}.pdf`
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: string = "Reporte de Transacciones") {
@@ -1229,13 +1313,13 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
 
   doc.setFont("helvetica", "normal")
   doc.setTextColor(34, 197, 94)
-  doc.text(`Ingresos: $ ${ingresos.toLocaleString()}`, 20, y)
+  doc.text(`Ingresos: $ ${ingresos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 20, y)
   y += 8
   doc.setTextColor(239, 68, 68)
-  doc.text(`Egresos: $ ${egresos.toLocaleString()}`, 20, y)
+  doc.text(`Egresos: $ ${egresos.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 20, y)
   y += 8
   doc.setTextColor(30, 41, 59)
-  doc.text(`Balance: $ ${(ingresos - egresos).toLocaleString()}`, 20, y)
+  doc.text(`Balance: $ ${(ingresos - egresos).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 20, y)
   y += 15
 
   // Definir columnas escaladas al ancho de página
@@ -1295,7 +1379,7 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
     } else {
       doc.setTextColor(34, 197, 94)
     }
-    doc.text(`$ ${t.monto.toLocaleString()}`, colX[3], y, { align: "right" })
+    doc.text(`$ ${t.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, colX[3], y, { align: "right" })
     doc.setTextColor(30, 41, 59)
 
     y += 8
@@ -1309,5 +1393,7 @@ export function generateTransaccionesPDF(transacciones: Transaccion[], titulo: s
     align: "center",
   })
 
-  doc.save("transacciones.pdf")
+  const fileName = "transacciones.pdf"
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }

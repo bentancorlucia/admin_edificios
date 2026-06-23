@@ -27,7 +27,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   const margin = 20
 
   const formatCurrency = (val: number) =>
-    `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    `$ ${val.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   // Helper para agregar el header en cada página
   const drawPageHeader = () => {
@@ -67,12 +67,16 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   // =====================================================
   y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
 
-  const tableHeaders = ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Saldo Actual"]
-  const colWidths = [1, 1, 1, 1, 1, 1, 1]
+  const hasOtrosGastos = data.totales.totalOtrosGastosMes > 0
+  const tableHeaders = hasOtrosGastos
+    ? ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Otros Gastos", "Saldo Actual"]
+    : ["Apto", "Tipo", "Saldo Ant.", "Pagos Mes", "G. Comunes", "F. Reserva", "Saldo Actual"]
+  const colWidths = hasOtrosGastos ? [1, 1, 1, 1, 1, 1, 1, 1] : [1, 1, 1, 1, 1, 1, 1]
   const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
   const scaleFactor = availableWidth / totalColWidth
   const scaledColWidths = colWidths.map(w => w * scaleFactor)
   const tableWidth = availableWidth
+  const lastColIdx = tableHeaders.length - 1
 
   // Header de tabla - AZUL
   doc.setFillColor(...colors.blue)
@@ -85,7 +89,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   let colX = tableX + 4
   tableHeaders.forEach((header, i) => {
     const align = i > 1 ? "right" : "left"
-    const textX = i === 6 ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
+    const textX = i === lastColIdx ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
     doc.text(header, textX, y + 6, { align })
     colX += scaledColWidths[i]
   })
@@ -114,7 +118,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
       colX = tableX + 4
       tableHeaders.forEach((header, idx) => {
         const align = idx > 1 ? "right" : "left"
-        const textX = idx === 6 ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
+        const textX = idx === lastColIdx ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
         doc.text(header, textX, y + 6, { align })
         colX += scaledColWidths[idx]
       })
@@ -164,6 +168,12 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     doc.text(formatCurrency(apt.fondoReservaMes), colX + scaledColWidths[5] - 8, rowY, { align: "right" })
     colX += scaledColWidths[5]
 
+    // Otros Gastos (condicional)
+    if (hasOtrosGastos) {
+      doc.text(formatCurrency(apt.otrosGastosMes), colX + scaledColWidths[6] - 8, rowY, { align: "right" })
+      colX += scaledColWidths[6]
+    }
+
     // Saldo Actual
     doc.setFont("helvetica", "bold")
     doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
@@ -203,6 +213,12 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
 
   doc.text(formatCurrency(data.totales.totalFondoReservaMes), colX + scaledColWidths[5] - 8, y + 5.5, { align: "right" })
   colX += scaledColWidths[5]
+
+  // Total Otros Gastos (condicional)
+  if (hasOtrosGastos) {
+    doc.text(formatCurrency(data.totales.totalOtrosGastosMes), colX + scaledColWidths[6] - 8, y + 5.5, { align: "right" })
+    colX += scaledColWidths[6]
+  }
 
   doc.setTextColor(data.totales.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
                    data.totales.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
@@ -263,22 +279,25 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     { label: "Pagos del Mes", value: data.totales.totalPagosMes, type: "positive" },
     { label: "Gastos Comunes", value: data.totales.totalGastosComunesMes, type: "neutral" },
     { label: "Fondo Reserva", value: data.totales.totalFondoReservaMes, type: "neutral" },
+    ...(hasOtrosGastos ? [{ label: "Otros Gastos", value: data.totales.totalOtrosGastosMes, type: "neutral" }] : []),
     { label: "Saldo Actual", value: data.totales.totalSaldoActual, type: data.totales.totalSaldoActual > 0 ? "negative" : "positive" },
   ]
 
+  const summaryCardWidth = (pageWidth - margin * 2 - cardGap * (summaryItems.length - 1)) / summaryItems.length
+
   summaryItems.forEach((item, index) => {
-    const x = margin + index * (cardWidth + cardGap)
+    const x = margin + index * (summaryCardWidth + cardGap)
 
     // Fondo de tarjeta
     doc.setFillColor(...colors.background)
     doc.setDrawColor(...colors.light)
-    doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "FD")
+    doc.roundedRect(x, y, summaryCardWidth, cardHeight, 2, 2, "FD")
 
     // Etiqueta
     doc.setFontSize(7)
     doc.setTextColor(...colors.secondary)
     doc.setFont("helvetica", "normal")
-    doc.text(item.label.toUpperCase(), x + cardWidth / 2, y + 8, { align: "center" })
+    doc.text(item.label.toUpperCase(), x + summaryCardWidth / 2, y + 8, { align: "center" })
 
     // Valor
     doc.setFontSize(10)
@@ -290,7 +309,7 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
     } else {
       doc.setTextColor(...colors.primary)
     }
-    doc.text(formatCurrency(item.value), x + cardWidth / 2, y + 17, { align: "center" })
+    doc.text(formatCurrency(item.value), x + summaryCardWidth / 2, y + 17, { align: "center" })
   })
 
   y += cardHeight + 16
@@ -496,7 +515,8 @@ export function generateInformePDF(data: InformeData, periodoLabel: string, pieP
   }
 
   const fileName = `Edificio Constituyente II – Gastos Comunes ${periodoLabel}.pdf`
-  doc.save(fileName)
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 function drawSectionTitle(doc: jsPDF, title: string, x: number, y: number): number {
@@ -745,7 +765,7 @@ function drawEgresosTable(
 }
 
 function formatCurrency(val: number): string {
-  return `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  return `$ ${val.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function generateInformeCombinado(data: InformeCombinado, piePagina?: string, avisoFinal?: string) {
@@ -756,7 +776,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   const margin = 20
 
   const formatCurrencyLocal = (val: number) =>
-    `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    `$ ${val.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   // Helper para agregar el header en cada página
   const drawPageHeader = () => {
@@ -797,14 +817,18 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
 
   // Headers con mes anterior y mes corriente dinámicos
+  const hasOtrosGastos = data.totalesCombinados.totalOtrosGastosMesCorriente > 0
   const mesAnteriorCorto = data.mesAnterior.label.split(' ')[0].substring(0, 3) + ' ' + data.mesAnterior.anio
   const mesCorrienteCorto = data.mesCorriente.label.split(' ')[0].substring(0, 3) + ' ' + data.mesCorriente.anio
-  const tableHeaders = ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", `Saldo ${mesCorrienteCorto}`]
-  const colWidths = [1, 1, 1, 1, 1, 1, 1]
+  const tableHeaders = hasOtrosGastos
+    ? ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", "Otros Gastos", `Saldo ${mesCorrienteCorto}`]
+    : ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", `Saldo ${mesCorrienteCorto}`]
+  const colWidths = hasOtrosGastos ? [1, 1, 1, 1, 1, 1, 1, 1] : [1, 1, 1, 1, 1, 1, 1]
   const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
   const scaleFactor = availableWidth / totalColWidth
   const scaledColWidths = colWidths.map(w => w * scaleFactor)
   const tableWidth = availableWidth
+  const lastColIdx = tableHeaders.length - 1
 
   // Header de tabla - AZUL
   doc.setFillColor(...colors.blue)
@@ -817,7 +841,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   let colX = tableX + 4
   tableHeaders.forEach((header, i) => {
     const align = i > 1 ? "right" : "left"
-    const textX = i === 6 ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
+    const textX = i === lastColIdx ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
     doc.text(header, textX, y + 6, { align })
     colX += scaledColWidths[i]
   })
@@ -846,7 +870,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
       colX = tableX + 4
       tableHeaders.forEach((header, idx) => {
         const align = idx > 1 ? "right" : "left"
-        const textX = idx === 6 ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
+        const textX = idx === lastColIdx ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
         doc.text(header, textX, y + 6, { align })
         colX += scaledColWidths[idx]
       })
@@ -896,6 +920,12 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
     doc.text(formatCurrencyLocal(apt.fondoReservaMesCorriente), colX + scaledColWidths[5] - 8, rowY, { align: "right" })
     colX += scaledColWidths[5]
 
+    // Otros Gastos (mes corriente, condicional)
+    if (hasOtrosGastos) {
+      doc.text(formatCurrencyLocal(apt.otrosGastosMesCorriente), colX + scaledColWidths[6] - 8, rowY, { align: "right" })
+      colX += scaledColWidths[6]
+    }
+
     // Saldo Actual
     doc.setFont("helvetica", "bold")
     doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
@@ -935,6 +965,11 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
 
   doc.text(formatCurrencyLocal(data.totalesCombinados.totalFondoReservaMesCorriente), colX + scaledColWidths[5] - 8, y + 5.5, { align: "right" })
   colX += scaledColWidths[5]
+
+  if (hasOtrosGastos) {
+    doc.text(formatCurrencyLocal(data.totalesCombinados.totalOtrosGastosMesCorriente), colX + scaledColWidths[6] - 8, y + 5.5, { align: "right" })
+    colX += scaledColWidths[6]
+  }
 
   doc.setTextColor(data.totalesCombinados.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
                    data.totalesCombinados.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
@@ -990,25 +1025,29 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
 
   y = drawSectionTitle(doc, `Resumen General - ${data.mesAnterior.label}`, margin, y)
 
+  const hasOtrosGastosAnterior = data.datosAnterior.totales.totalOtrosGastosMes > 0
   const summaryItems = [
     { label: "Saldo Anterior", value: data.datosAnterior.totales.totalSaldoAnterior, type: "neutral" },
     { label: "Pagos del Mes", value: data.datosAnterior.totales.totalPagosMes, type: "positive" },
     { label: "Gastos Comunes", value: data.datosAnterior.totales.totalGastosComunesMes, type: "neutral" },
     { label: "Fondo Reserva", value: data.datosAnterior.totales.totalFondoReservaMes, type: "neutral" },
+    ...(hasOtrosGastosAnterior ? [{ label: "Otros Gastos", value: data.datosAnterior.totales.totalOtrosGastosMes, type: "neutral" }] : []),
     { label: "Saldo Actual", value: data.datosAnterior.totales.totalSaldoActual, type: data.datosAnterior.totales.totalSaldoActual > 0 ? "negative" : "positive" },
   ]
 
+  const summaryCardWidth = (pageWidth - margin * 2 - cardGap * (summaryItems.length - 1)) / summaryItems.length
+
   summaryItems.forEach((item, index) => {
-    const x = margin + index * (cardWidth + cardGap)
+    const x = margin + index * (summaryCardWidth + cardGap)
 
     doc.setFillColor(...colors.background)
     doc.setDrawColor(...colors.light)
-    doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "FD")
+    doc.roundedRect(x, y, summaryCardWidth, cardHeight, 2, 2, "FD")
 
     doc.setFontSize(7)
     doc.setTextColor(...colors.secondary)
     doc.setFont("helvetica", "normal")
-    doc.text(item.label.toUpperCase(), x + cardWidth / 2, y + 8, { align: "center" })
+    doc.text(item.label.toUpperCase(), x + summaryCardWidth / 2, y + 8, { align: "center" })
 
     doc.setFontSize(10)
     doc.setFont("helvetica", "bold")
@@ -1019,7 +1058,7 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
     } else {
       doc.setTextColor(...colors.primary)
     }
-    doc.text(formatCurrencyLocal(item.value), x + cardWidth / 2, y + 17, { align: "center" })
+    doc.text(formatCurrencyLocal(item.value), x + summaryCardWidth / 2, y + 17, { align: "center" })
   })
 
   y += cardHeight + 16
@@ -1222,7 +1261,8 @@ export function generateInformeCombinado(data: InformeCombinado, piePagina?: str
   }
 
   const fileName = `Edificio Constituyente II – Informe Mensual ${data.mesCorriente.label}.pdf`
-  doc.save(fileName)
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }
 
 // Función auxiliar para dibujar la tabla de pagos detallados
@@ -1238,9 +1278,16 @@ function drawPagosTable(
   let y = startY
   const tableX = margin
 
+  // Mostrar columna OG sólo si algún pago tiene monto OG > 0
+  const hasOtrosGastos = pagos.some(p => p.montoOtrosGastos > 0)
+
   // Headers de la tabla de pagos
-  const pagosHeaders = ["Fecha", "Apto", "Tipo", "Nombre", "Monto", "G.C.", "F.R."]
-  const pagosColBase = [22, 18, 25, 55, 28, 28, 28]
+  const pagosHeaders = hasOtrosGastos
+    ? ["Fecha", "Apto", "Tipo", "Nombre", "Monto", "G.C.", "F.R.", "O.G."]
+    : ["Fecha", "Apto", "Tipo", "Nombre", "Monto", "G.C.", "F.R."]
+  const pagosColBase = hasOtrosGastos
+    ? [22, 18, 25, 51, 26, 26, 26, 26]
+    : [22, 18, 25, 55, 28, 28, 28]
   const pagosTotalBase = pagosColBase.reduce((a, b) => a + b, 0)
   const pagosScaleFactor = availableWidth / pagosTotalBase
   const pagosColWidths = pagosColBase.map(w => w * pagosScaleFactor)
@@ -1267,6 +1314,7 @@ function drawPagosTable(
   let totalMonto = 0
   let totalGC = 0
   let totalFR = 0
+  let totalOG = 0
 
   doc.setFont("helvetica", "normal")
   doc.setFontSize(7)
@@ -1354,10 +1402,17 @@ function drawPagosTable(
 
     // Monto F.R.
     doc.text(formatCurrency(pago.montoFondoReserva), colX + pagosColWidths[6] - 4, rowY, { align: "right" })
+    colX += pagosColWidths[6]
+
+    // Monto O.G. (condicional)
+    if (hasOtrosGastos) {
+      doc.text(formatCurrency(pago.montoOtrosGastos), colX + pagosColWidths[7] - 4, rowY, { align: "right" })
+    }
 
     totalMonto += pago.monto
     totalGC += pago.montoGastoComun
     totalFR += pago.montoFondoReserva
+    totalOG += pago.montoOtrosGastos
     y += 7
   }
 
@@ -1385,6 +1440,11 @@ function drawPagosTable(
   totalColX += pagosColWidths[5]
 
   doc.text(formatCurrency(totalFR), totalColX + pagosColWidths[6] - 4, y + 5.5, { align: "right" })
+  totalColX += pagosColWidths[6]
+
+  if (hasOtrosGastos) {
+    doc.text(formatCurrency(totalOG), totalColX + pagosColWidths[7] - 4, y + 5.5, { align: "right" })
+  }
 
   return y + 8
 }
@@ -1397,7 +1457,7 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
   const margin = 20
 
   const formatCurrencyLocal = (val: number) =>
-    `$ ${val.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    `$ ${val.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
   // Helper para agregar el header en cada página
   const drawPageHeader = () => {
@@ -1437,14 +1497,18 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
   // =====================================================
   y = drawSectionTitle(doc, "Desglose por Apartamento", margin, y)
 
+  const hasOtrosGastos = data.totalesCombinados.totalOtrosGastosMesCorriente > 0
   const mesAnteriorCorto = data.mesAnterior.label.split(' ')[0].substring(0, 3) + ' ' + data.mesAnterior.anio
   const mesCorrienteCorto = data.mesCorriente.label.split(' ')[0].substring(0, 3) + ' ' + data.mesCorriente.anio
-  const tableHeaders = ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", `Saldo ${mesCorrienteCorto}`]
-  const colWidths = [1, 1, 1, 1, 1, 1, 1]
+  const tableHeaders = hasOtrosGastos
+    ? ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", "Otros Gastos", `Saldo ${mesCorrienteCorto}`]
+    : ["Apto", "Tipo", `Pago ${mesAnteriorCorto}`, `Saldo ${mesAnteriorCorto}`, "G. Comunes", "F. Reserva", `Saldo ${mesCorrienteCorto}`]
+  const colWidths = hasOtrosGastos ? [1, 1, 1, 1, 1, 1, 1, 1] : [1, 1, 1, 1, 1, 1, 1]
   const totalColWidth = colWidths.reduce((a, b) => a + b, 0)
   const scaleFactor = availableWidth / totalColWidth
   const scaledColWidths = colWidths.map(w => w * scaleFactor)
   const tableWidth = availableWidth
+  const lastColIdx = tableHeaders.length - 1
 
   // Header de tabla - AZUL
   doc.setFillColor(...colors.blue)
@@ -1457,7 +1521,7 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
   let colX = tableX + 4
   tableHeaders.forEach((header, i) => {
     const align = i > 1 ? "right" : "left"
-    const textX = i === 6 ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
+    const textX = i === lastColIdx ? tableX + tableWidth - 8 : (i > 1 ? colX + scaledColWidths[i] - 8 : colX)
     doc.text(header, textX, y + 6, { align })
     colX += scaledColWidths[i]
   })
@@ -1485,7 +1549,7 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
       colX = tableX + 4
       tableHeaders.forEach((header, idx) => {
         const align = idx > 1 ? "right" : "left"
-        const textX = idx === 6 ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
+        const textX = idx === lastColIdx ? tableX + tableWidth - 8 : (idx > 1 ? colX + scaledColWidths[idx] - 8 : colX)
         doc.text(header, textX, y + 6, { align })
         colX += scaledColWidths[idx]
       })
@@ -1534,6 +1598,12 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
     doc.text(formatCurrencyLocal(apt.fondoReservaMesCorriente), colX + scaledColWidths[5] - 8, rowY, { align: "right" })
     colX += scaledColWidths[5]
 
+    // Otros Gastos (condicional)
+    if (hasOtrosGastos) {
+      doc.text(formatCurrencyLocal(apt.otrosGastosMesCorriente), colX + scaledColWidths[6] - 8, rowY, { align: "right" })
+      colX += scaledColWidths[6]
+    }
+
     // Saldo Actual
     doc.setFont("helvetica", "bold")
     doc.setTextColor(apt.saldoActual > 0 ? colors.negative[0] : colors.positive[0],
@@ -1573,6 +1643,11 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
 
   doc.text(formatCurrencyLocal(data.totalesCombinados.totalFondoReservaMesCorriente), colX + scaledColWidths[5] - 8, y + 5.5, { align: "right" })
   colX += scaledColWidths[5]
+
+  if (hasOtrosGastos) {
+    doc.text(formatCurrencyLocal(data.totalesCombinados.totalOtrosGastosMesCorriente), colX + scaledColWidths[6] - 8, y + 5.5, { align: "right" })
+    colX += scaledColWidths[6]
+  }
 
   doc.setTextColor(data.totalesCombinados.totalSaldoActual > 0 ? colors.negative[0] : colors.positive[0],
                    data.totalesCombinados.totalSaldoActual > 0 ? colors.negative[1] : colors.positive[1],
@@ -1627,25 +1702,29 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
 
   y = drawSectionTitle(doc, `Resumen General - ${data.mesAnterior.label}`, margin, y)
 
+  const hasOtrosGastosAnterior = data.datosAnterior.totales.totalOtrosGastosMes > 0
   const summaryItems = [
     { label: "Saldo Anterior", value: data.datosAnterior.totales.totalSaldoAnterior, type: "neutral" },
     { label: "Pagos del Mes", value: data.datosAnterior.totales.totalPagosMes, type: "positive" },
     { label: "Gastos Comunes", value: data.datosAnterior.totales.totalGastosComunesMes, type: "neutral" },
     { label: "Fondo Reserva", value: data.datosAnterior.totales.totalFondoReservaMes, type: "neutral" },
+    ...(hasOtrosGastosAnterior ? [{ label: "Otros Gastos", value: data.datosAnterior.totales.totalOtrosGastosMes, type: "neutral" }] : []),
     { label: "Saldo Actual", value: data.datosAnterior.totales.totalSaldoActual, type: data.datosAnterior.totales.totalSaldoActual > 0 ? "negative" : "positive" },
   ]
 
+  const summaryCardWidth = (pageWidth - margin * 2 - cardGap * (summaryItems.length - 1)) / summaryItems.length
+
   summaryItems.forEach((item, index) => {
-    const x = margin + index * (cardWidth + cardGap)
+    const x = margin + index * (summaryCardWidth + cardGap)
 
     doc.setFillColor(...colors.background)
     doc.setDrawColor(...colors.light)
-    doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "FD")
+    doc.roundedRect(x, y, summaryCardWidth, cardHeight, 2, 2, "FD")
 
     doc.setFontSize(7)
     doc.setTextColor(...colors.secondary)
     doc.setFont("helvetica", "normal")
-    doc.text(item.label.toUpperCase(), x + cardWidth / 2, y + 8, { align: "center" })
+    doc.text(item.label.toUpperCase(), x + summaryCardWidth / 2, y + 8, { align: "center" })
 
     doc.setFontSize(10)
     doc.setFont("helvetica", "bold")
@@ -1656,7 +1735,7 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
     } else {
       doc.setTextColor(...colors.primary)
     }
-    doc.text(formatCurrencyLocal(item.value), x + cardWidth / 2, y + 17, { align: "center" })
+    doc.text(formatCurrencyLocal(item.value), x + summaryCardWidth / 2, y + 17, { align: "center" })
   })
 
   y += cardHeight + 16
@@ -1867,5 +1946,6 @@ export function generateInformeDetalleMensual(data: InformeCompleto, piePagina?:
   }
 
   const fileName = `Edificio Constituyente II – Detalle Mensual ${data.mesCorriente.label}.pdf`
-  doc.save(fileName)
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }

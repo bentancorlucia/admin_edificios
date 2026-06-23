@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Admin Edificios",
-  "version": "1.3.3",
+  "version": "1.4.2",
   "identifier": "com.adminedificios.desktop",
   "plugins": {},
   "build": {
@@ -15,7 +15,7 @@
       {
         "title": "Admin Edificios",
         "width": 1280,
-        "height": 800,
+        "height": 700,
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,

@@ -15,8 +15,12 @@ import {
   ClipboardList,
   PieChart,
   HardDrive,
+  FolderKanban,
   ChevronLeft,
   ChevronRight,
+  HandCoins,
+  LineChart,
+  MessageSquare,
 } from "lucide-react"
 import {
   Tooltip,
@@ -26,14 +30,18 @@ import {
 } from "@/components/ui/tooltip"
 
 const navigation = [
-  { name: "Dashboard", href: "/", icon: LayoutDashboard },
+  { name: "Principal", href: "/", icon: LayoutDashboard },
   { name: "Apartamentos", href: "/apartamentos", icon: Building2 },
   { name: "Servicios", href: "/servicios", icon: Wrench },
+  { name: "Registro de Pagos", href: "/registro-pagos", icon: HandCoins },
   { name: "Transacciones", href: "/transacciones", icon: ArrowUpDown },
   { name: "Bancos", href: "/bancos", icon: Landmark },
+  { name: "Proyectos", href: "/proyectos", icon: FolderKanban },
   { name: "Bitácora", href: "/bitacora", icon: ClipboardList },
   { name: "Informes", href: "/informes", icon: FileBarChart },
+  { name: "Flujo de Caja", href: "/flujo-caja", icon: LineChart },
   { name: "Análisis", href: "/analisis", icon: PieChart },
+  { name: "Mensajes", href: "/mensajes", icon: MessageSquare },
   { name: "Respaldos", href: "/respaldos", icon: HardDrive },
 ]
 

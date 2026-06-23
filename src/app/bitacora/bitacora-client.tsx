@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { BackToHome } from "@/components/back-to-home"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -39,6 +40,8 @@ import {
   type Registro as RegistroType,
 } from "@/lib/database"
 import { generateBitacoraPDF } from "@/lib/bitacora-pdf"
+import { savePDFWithDialog } from "@/lib/save-pdf"
+import { exportToExcel } from "@/lib/excel-export"
 import { toast } from "@/hooks/use-toast"
 
 type TipoRegistro =
@@ -251,7 +254,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
     }
   }
 
-  const handleExportCSV = () => {
+  const handleExportCSV = async () => {
     const headers = ["Fecha", "Tipo", "Detalle", "Observaciones", "Situación"]
     const rows = registros.map((reg) => [
       formatDate(reg.fecha),
@@ -261,27 +264,28 @@ export function BitacoraClient({ initialRegistros }: Props) {
       situacionLabels[reg.situacion as SituacionRegistro],
     ])
 
-    const csvContent = [headers, ...rows].map((row) => row.map(cell => `"${cell}"`).join(",")).join("\n")
-    const blob = new Blob([csvContent], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "bitacora.csv"
-    a.click()
+    await exportToExcel({
+      filename: "bitacora",
+      sheetName: "Bitácora",
+      headers,
+      rows,
+    })
+
     toast({
-      title: "CSV descargado",
+      title: "Excel descargado",
       description: "Bitácora exportada correctamente",
       variant: "success",
     })
   }
 
-  const handleExportPDF = () => {
-    generateBitacoraPDF(registros)
-    toast({
-      title: "PDF descargado",
-      description: "Bitácora exportada correctamente",
-      variant: "success",
-    })
+  const handleExportPDF = async () => {
+    try {
+      const result = generateBitacoraPDF(registros)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: "Bitácora exportada correctamente", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
+    }
   }
 
   // Contadores para el resumen
@@ -297,6 +301,7 @@ export function BitacoraClient({ initialRegistros }: Props) {
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
+            <BackToHome dark />
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
                 <ClipboardList className="h-6 w-6 text-white" />

@@ -1,6 +1,64 @@
 use tauri_plugin_sql::{Migration, MigrationKind};
 use tauri::Manager;
 use std::fs;
+use std::path::PathBuf;
+
+/// Devuelve el nombre del archivo de base de datos según el entorno
+fn get_db_filename() -> &'static str {
+    if cfg!(debug_assertions) {
+        "database_dev.db"
+    } else {
+        "database.db"
+    }
+}
+
+/// Devuelve el connection string para el plugin SQL
+fn get_db_connection_string() -> String {
+    format!("sqlite:{}", get_db_filename())
+}
+
+/// Devuelve la ruta completa a un archivo de DB dentro del app_data_dir
+fn get_db_path(app_data_dir: &PathBuf, filename: &str) -> PathBuf {
+    app_data_dir.join(filename)
+}
+
+#[tauri::command]
+fn is_dev_mode() -> bool {
+    cfg!(debug_assertions)
+}
+
+#[tauri::command]
+fn get_dev_db_name() -> String {
+    get_db_filename().to_string()
+}
+
+#[tauri::command]
+fn sync_dev_from_prod(app_handle: tauri::AppHandle) -> Result<String, String> {
+    if !cfg!(debug_assertions) {
+        return Err("Solo se puede sincronizar en modo desarrollo".to_string());
+    }
+
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("No se pudo obtener el directorio de datos: {}", e))?;
+
+    let prod_db = get_db_path(&app_data_dir, "database.db");
+    let dev_db = get_db_path(&app_data_dir, "database_dev.db");
+
+    if !prod_db.exists() {
+        return Err("No se encontró la base de datos de producción (database.db)".to_string());
+    }
+
+    fs::copy(&prod_db, &dev_db)
+        .map_err(|e| format!("Error al copiar la base de datos: {}", e))?;
+
+    let size = fs::metadata(&dev_db)
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    Ok(format!("Base de datos sincronizada correctamente ({:.2} MB)", size as f64 / 1_048_576.0))
+}
 
 // SQL para inicializar las tablas
 const INIT_SQL: &str = r#"
@@ -171,13 +229,17 @@ CREATE INDEX IF NOT EXISTS idx_aviso_mes_anio ON AvisoInforme(mes, anio);
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let db_conn = get_db_connection_string();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
-        .setup(|app| {
+        .invoke_handler(tauri::generate_handler![is_dev_mode, get_dev_db_name, sync_dev_from_prod])
+        .setup(move |app| {
             // Crear el directorio de datos de la aplicación si no existe
             let app_data_dir = app.path().app_data_dir().expect("No se pudo obtener el directorio de datos de la app");
 
@@ -195,10 +257,11 @@ pub fn run() {
                 },
             ];
 
-            // Registrar el plugin SQL después de asegurar que el directorio existe
+            // Registrar el plugin SQL con el nombre de DB según entorno
+            // Dev: database_dev.db | Prod: database.db
             app.handle().plugin(
                 tauri_plugin_sql::Builder::default()
-                    .add_migrations("sqlite:database.db", migrations)
+                    .add_migrations(&db_conn, migrations)
                     .build(),
             )?;
 
@@ -208,6 +271,7 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+                println!("🔧 Modo DESARROLLO - Base de datos: {}", get_db_filename());
             }
             Ok(())
         })

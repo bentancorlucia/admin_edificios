@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo, useCallback } from "react"
+import { BackToHome } from "@/components/back-to-home"
 import { open } from "@tauri-apps/plugin-shell"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -52,6 +53,7 @@ import {
   FileText,
 } from "lucide-react"
 import { formatCurrency, formatDate, formatPhoneForWhatsApp } from "@/lib/utils"
+import { exportToExcel } from "@/lib/excel-export"
 import {
   createTransaccion,
   createVentaCredito,
@@ -70,12 +72,14 @@ import {
   type InfoBancoVinculado,
 } from "@/lib/database"
 import { generateTransaccionesPDF, downloadReciboPagoPDF, type ReciboPagoData } from "@/lib/pdf"
+import { savePDFWithDialog } from "@/lib/save-pdf"
 import { toast } from "@/hooks/use-toast"
 
 type Apartamento = {
   id: string
   numero: string
   tipoOcupacion: "PROPIETARIO" | "INQUILINO"
+  otrosGastos: number
   contactoNombre?: string | null
   contactoApellido?: string | null
   contactoCelular?: string | null
@@ -88,6 +92,7 @@ type CuentaBancaria = {
   tipoCuenta: string
   numeroCuenta: string
   porDefecto?: boolean
+  activa: boolean
 }
 
 type Transaccion = {
@@ -107,6 +112,7 @@ type Transaccion = {
   clasificacionPago?: string | null
   montoGastoComun?: number | null
   montoFondoReserva?: number | null
+  montoOtrosGastos?: number | null
   cuentaBancariaId?: string | null
 }
 
@@ -176,7 +182,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     fecha: new Date().toISOString().split("T")[0],
     descripcion: "Gastos Comunes",
     notas: "",
-    categoria: "GASTOS_COMUNES" as "GASTOS_COMUNES" | "FONDO_RESERVA",
+    categoria: "GASTOS_COMUNES" as "GASTOS_COMUNES" | "FONDO_RESERVA" | "OTROS_GASTOS",
   })
 
   // Obtener la cuenta bancaria por defecto
@@ -190,13 +196,63 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     cuentaBancariaId: "",
     referencia: "",
     notas: "",
-    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
-    excedentePara: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
+    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS",
+    excedentePara: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS",
   })
 
   // Estados para deudas y distribución automática
   const [deudaApartamento, setDeudaApartamento] = useState<DeudasPorConcepto | null>(null)
   const [distribucionPago, setDistribucionPago] = useState<DistribucionPago | null>(null)
+
+  // Distribución manual: cuando está activa, el usuario edita los 3 montos directamente
+  const [distribucionManual, setDistribucionManual] = useState(false)
+  const [montoManualGC, setMontoManualGC] = useState("0")
+  const [montoManualFR, setMontoManualFR] = useState("0")
+  const [montoManualOG, setMontoManualOG] = useState("0")
+
+  const sumManualRP = (parseFloat(montoManualGC) || 0) + (parseFloat(montoManualFR) || 0) + (parseFloat(montoManualOG) || 0)
+  const montoTotalRP = parseFloat(reciboPagoForm.monto) || 0
+  const diferenciaManualRP = montoTotalRP - sumManualRP
+  const sumaCuadraRP = Math.abs(diferenciaManualRP) < 0.01
+
+  const excedeDeudaRP = (() => {
+    if (!distribucionManual || !deudaApartamento) return null
+    const overGC = (parseFloat(montoManualGC) || 0) > deudaApartamento.gastosComunes
+    const overFR = (parseFloat(montoManualFR) || 0) > deudaApartamento.fondoReserva
+    const overOG = (parseFloat(montoManualOG) || 0) > deudaApartamento.otrosGastos
+    if (overGC || overFR || overOG) {
+      const overs: string[] = []
+      if (overGC) overs.push(`GC (deuda ${formatCurrency(deudaApartamento.gastosComunes)})`)
+      if (overFR) overs.push(`FR (deuda ${formatCurrency(deudaApartamento.fondoReserva)})`)
+      if (overOG) overs.push(`OG (deuda ${formatCurrency(deudaApartamento.otrosGastos)})`)
+      return overs
+    }
+    return null
+  })()
+
+  const handleToggleManualRP = (activo: boolean) => {
+    setDistribucionManual(activo)
+    if (activo) {
+      const tieneDeuda = !!(deudaApartamento && deudaApartamento.total > 0)
+      if (tieneDeuda && distribucionPago) {
+        let gc = distribucionPago.aplicadoGastosComunes
+        let fr = distribucionPago.aplicadoFondoReserva
+        let og = distribucionPago.aplicadoOtrosGastos
+        if (distribucionPago.excedente > 0) {
+          if (reciboPagoForm.excedentePara === "GASTO_COMUN") gc += distribucionPago.excedente
+          else if (reciboPagoForm.excedentePara === "FONDO_RESERVA") fr += distribucionPago.excedente
+          else og += distribucionPago.excedente
+        }
+        setMontoManualGC(gc.toFixed(2))
+        setMontoManualFR(fr.toFixed(2))
+        setMontoManualOG(og.toFixed(2))
+      } else {
+        setMontoManualGC("0")
+        setMontoManualFR("0")
+        setMontoManualOG("0")
+      }
+    }
+  }
   const [cargandoDeuda, setCargandoDeuda] = useState(false)
 
   // Estado para saldos de cuenta corriente (para recibos de pago)
@@ -285,7 +341,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     descripcion: "",
     referencia: "",
     notas: "",
-    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA",
+    clasificacionPago: "GASTO_COMUN" as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS",
     cuentaBancariaId: "",
   })
 
@@ -328,19 +384,26 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
   const hayFiltroApartamento = filterApartamento !== "todos"
 
   // Memoizar cálculos de estadísticas
-  const { ingresosGastosComunes, ingresosFondoReserva, totalIngresos, creditosPendientes } = useMemo(() => {
+  const { ingresosGastosComunes, ingresosFondoReserva, ingresosOtrosGastos, totalIngresos, creditosPendientes } = useMemo(() => {
     let gastosComunes = 0
     let fondoReserva = 0
+    let otrosGastos = 0
     let total = 0
     let pendientes = 0
 
     for (const t of transacciones) {
       if (t.tipo === "RECIBO_PAGO") {
         total += t.monto
-        if (t.clasificacionPago === "GASTO_COMUN") {
+        if (t.clasificacionPago === "MIXTO") {
+          gastosComunes += t.montoGastoComun || 0
+          fondoReserva += t.montoFondoReserva || 0
+          otrosGastos += t.montoOtrosGastos || 0
+        } else if (t.clasificacionPago === "GASTO_COMUN") {
           gastosComunes += t.monto
         } else if (t.clasificacionPago === "FONDO_RESERVA") {
           fondoReserva += t.monto
+        } else if (t.clasificacionPago === "OTROS_GASTOS") {
+          otrosGastos += t.monto
         }
       } else if (t.tipo === "VENTA_CREDITO" && t.estadoCredito !== "PAGADO") {
         pendientes += t.monto - (t.montoPagado || 0)
@@ -350,6 +413,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     return {
       ingresosGastosComunes: gastosComunes,
       ingresosFondoReserva: fondoReserva,
+      ingresosOtrosGastos: otrosGastos,
       totalIngresos: total,
       creditosPendientes: pendientes
     }
@@ -405,6 +469,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         clasificacionPago: null,
         montoGastoComun: null,
         montoFondoReserva: null,
+        montoOtrosGastos: null,
       }
 
       const created = await createTransaccion(data)
@@ -447,12 +512,19 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
         12, 0, 0
       ))
 
+      const descripcionDefault =
+        ventaCreditoForm.categoria === "GASTOS_COMUNES"
+          ? "Gastos Comunes"
+          : ventaCreditoForm.categoria === "FONDO_RESERVA"
+          ? "Fondo de Reserva"
+          : "Otros Gastos"
+
       const data = {
         monto: parseFloat(ventaCreditoForm.monto),
         apartamentoId: ventaCreditoForm.apartamentoId,
         fecha: fechaCorrecta.toISOString(),
         categoria: ventaCreditoForm.categoria,
-        descripcion: ventaCreditoForm.descripcion || (ventaCreditoForm.categoria === "GASTOS_COMUNES" ? "Gastos Comunes" : "Fondo de Reserva"),
+        descripcion: ventaCreditoForm.descripcion || descripcionDefault,
       }
 
       const created = await createVentaCredito(data)
@@ -488,6 +560,11 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       return
     }
 
+    if (distribucionManual && !sumaCuadraRP) {
+      alert(`La suma de GC + FR + OG (${formatCurrency(sumManualRP)}) difiere del monto total (${formatCurrency(montoTotalRP)}) en ${formatCurrency(Math.abs(diferenciaManualRP))}.`)
+      return
+    }
+
     setIsLoading(true)
 
     try {
@@ -504,19 +581,33 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       const tieneDeuda = !!(deudaApartamento && deudaApartamento.total > 0)
       const tieneExcedente = !!(distribucionPago && distribucionPago.excedente > 0)
 
-      const data = {
-        monto: parseFloat(reciboPagoForm.monto),
-        apartamentoId: reciboPagoForm.apartamentoId,
-        fecha: fechaCorrecta.toISOString(),
-        metodoPago: reciboPagoForm.metodoPago,
-        cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
-        referencia: reciboPagoForm.referencia || null,
-        notas: reciboPagoForm.notas || null,
-        clasificacionPago: reciboPagoForm.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA",
-        // Usar distribución automática si hay deuda pendiente
-        usarDistribucionAutomatica: tieneDeuda,
-        excedentePara: tieneExcedente ? reciboPagoForm.excedentePara : undefined,
-      }
+      const data = distribucionManual
+        ? {
+            monto: parseFloat(reciboPagoForm.monto),
+            apartamentoId: reciboPagoForm.apartamentoId,
+            fecha: fechaCorrecta.toISOString(),
+            metodoPago: reciboPagoForm.metodoPago,
+            cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
+            referencia: reciboPagoForm.referencia || null,
+            notas: reciboPagoForm.notas || null,
+            clasificacionPago: reciboPagoForm.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS",
+            distribucionManual: true,
+            montoGastoComun: parseFloat(montoManualGC) || 0,
+            montoFondoReserva: parseFloat(montoManualFR) || 0,
+            montoOtrosGastos: parseFloat(montoManualOG) || 0,
+          }
+        : {
+            monto: parseFloat(reciboPagoForm.monto),
+            apartamentoId: reciboPagoForm.apartamentoId,
+            fecha: fechaCorrecta.toISOString(),
+            metodoPago: reciboPagoForm.metodoPago,
+            cuentaBancariaId: reciboPagoForm.cuentaBancariaId || null,
+            referencia: reciboPagoForm.referencia || null,
+            notas: reciboPagoForm.notas || null,
+            clasificacionPago: reciboPagoForm.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS",
+            usarDistribucionAutomatica: tieneDeuda,
+            excedentePara: tieneExcedente ? reciboPagoForm.excedentePara : undefined,
+          }
 
       const created = await createReciboPago(data)
       const aptData = apartamentos.find(a => a.id === reciboPagoForm.apartamentoId) || null
@@ -543,16 +634,17 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
     }
   }
 
-  const handleExport = useCallback(() => {
-    generateTransaccionesPDF(filteredTransacciones)
-    toast({
-      title: "PDF descargado",
-      description: "Reporte de transacciones descargado correctamente",
-      variant: "success",
-    })
+  const handleExport = useCallback(async () => {
+    try {
+      const result = generateTransaccionesPDF(filteredTransacciones)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "PDF guardado", description: "Reporte de transacciones guardado correctamente", variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el PDF", variant: "destructive" })
+    }
   }, [filteredTransacciones])
 
-  const handleExportCSV = useCallback(() => {
+  const handleExportCSV = useCallback(async () => {
     const headers = ["Fecha", "Tipo", "Categoría", "Apartamento", "Descripción", "Método de Pago", "Referencia", "Monto"]
 
     const rows = filteredTransacciones.map((t) => {
@@ -567,26 +659,18 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       const referencia = t.referencia || ""
       const monto = t.tipo === "EGRESO" ? -t.monto : t.monto
 
-      return [fecha, tipo, categoria, apartamento, descripcion, metodoPago, referencia, monto.toFixed(2)]
+      return [fecha, tipo, categoria, apartamento, descripcion, metodoPago, referencia, monto]
     })
 
-    const csvContent = [
-      headers.join(","),
-      ...rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    ].join("\n")
-
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    link.href = url
-    link.download = `transacciones_${new Date().toISOString().split("T")[0]}.csv`
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    URL.revokeObjectURL(url)
+    await exportToExcel({
+      filename: `transacciones_${new Date().toISOString().split("T")[0]}`,
+      sheetName: "Transacciones",
+      headers,
+      rows,
+    })
 
     toast({
-      title: "CSV descargado",
+      title: "Excel descargado",
       description: "Transacciones exportadas correctamente",
       variant: "success",
     })
@@ -611,7 +695,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       descripcion: transaccion.descripcion || "",
       referencia: transaccion.referencia || "",
       notas: transaccion.notas || "",
-      clasificacionPago: (transaccion.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA") || "GASTO_COMUN",
+      clasificacionPago: (transaccion.clasificacionPago as "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS") || "GASTO_COMUN",
       cuentaBancariaId: transaccion.cuentaBancariaId || "",
     })
 
@@ -656,7 +740,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
           monto: parseFloat(editForm.monto),
           apartamentoId: editForm.apartamentoId || undefined,
           fecha: fechaCorrecta.toISOString(),
-          categoria: editForm.categoria as "GASTOS_COMUNES" | "FONDO_RESERVA" || undefined,
+          categoria: editForm.categoria as "GASTOS_COMUNES" | "FONDO_RESERVA" | "OTROS_GASTOS" || undefined,
         })
       } else {
         const data = {
@@ -755,28 +839,29 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       conceptos: {
         gastosComunes: t.montoGastoComun || (t.clasificacionPago === "GASTO_COMUN" ? t.monto : 0),
         fondoReserva: t.montoFondoReserva || (t.clasificacionPago === "FONDO_RESERVA" ? t.monto : 0),
+        otrosGastos: t.montoOtrosGastos || (t.clasificacionPago === "OTROS_GASTOS" ? t.monto : 0),
       },
       saldoFinal,
+      tipoOcupacion: aptData.tipoOcupacion,
+      contactoNombre: aptData.contactoNombre,
+      contactoApellido: aptData.contactoApellido,
     }
   }, [apartamentos, saldosCuentaCorriente])
 
   // Función para descargar el recibo en PDF
-  const handleDownloadRecibo = useCallback((t: Transaccion) => {
+  const handleDownloadRecibo = useCallback(async (t: Transaccion) => {
     const reciboData = prepareReciboData(t)
     if (!reciboData) {
-      toast({
-        title: "Error",
-        description: "No se pudo generar el recibo",
-        variant: "destructive",
-      })
+      toast({ title: "Error", description: "No se pudo generar el recibo", variant: "destructive" })
       return
     }
-    downloadReciboPagoPDF(reciboData)
-    toast({
-      title: "Recibo descargado",
-      description: `Comprobante de pago del Apto ${reciboData.apartamentoNumero}`,
-      variant: "success",
-    })
+    try {
+      const result = downloadReciboPagoPDF(reciboData)
+      const saved = await savePDFWithDialog(result)
+      if (saved) toast({ title: "Recibo guardado", description: `Comprobante de pago del Apto ${reciboData.apartamentoNumero}`, variant: "success" })
+    } catch {
+      toast({ title: "Error", description: "No se pudo generar el recibo", variant: "destructive" })
+    }
   }, [prepareReciboData])
 
   // Función para enviar recibo por WhatsApp
@@ -807,10 +892,10 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
 
     const message = `${fechaFormateada} - Apartamento (${reciboData.apartamentoNumero}). Estimada/o ${nombre},
 
-Se ha acreditado el importe de $${reciboData.monto.toLocaleString()} correspondiente al pago realizado:
-Gastos Comunes: $${gastosComunes.toLocaleString()}
-Fondo de Reserva: $${fondoReserva.toLocaleString()}
-Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
+Se ha acreditado el importe de $${reciboData.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} correspondiente al pago realizado:
+Gastos Comunes: $${gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+Fondo de Reserva: $${fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+Saldo actual: $${reciboData.saldoFinal.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 
     const phone = formatPhoneForWhatsApp(aptData.contactoCelular)
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
@@ -846,25 +931,25 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
     })
 
     const saldoTexto = reciboData.saldoFinal > 0
-      ? `Saldo deudor: $${reciboData.saldoFinal.toLocaleString()}`
+      ? `Saldo deudor: $${reciboData.saldoFinal.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       : reciboData.saldoFinal < 0
-        ? `Saldo a favor: $${Math.abs(reciboData.saldoFinal).toLocaleString()}`
+        ? `Saldo a favor: $${Math.abs(reciboData.saldoFinal).toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         : "Cuenta al día"
 
     // Construir detalle de conceptos
     let conceptosTexto = ""
     if (reciboData.conceptos.gastosComunes > 0) {
-      conceptosTexto += `- Gastos Comunes: $${reciboData.conceptos.gastosComunes.toLocaleString()}%0D%0A`
+      conceptosTexto += `- Gastos Comunes: $${reciboData.conceptos.gastosComunes.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%0D%0A`
     }
     if (reciboData.conceptos.fondoReserva > 0) {
-      conceptosTexto += `- Fondo de Reserva: $${reciboData.conceptos.fondoReserva.toLocaleString()}%0D%0A`
+      conceptosTexto += `- Fondo de Reserva: $${reciboData.conceptos.fondoReserva.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%0D%0A`
     }
     if (!conceptosTexto) {
-      conceptosTexto = `- Pago a cuenta: $${reciboData.monto.toLocaleString()}%0D%0A`
+      conceptosTexto = `- Pago a cuenta: $${reciboData.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%0D%0A`
     }
 
     const subject = encodeURIComponent(`Comprobante de Pago - Apto ${reciboData.apartamentoNumero} - ${fechaFormateada}`)
-    const body = `COMPROBANTE DE PAGO%0D%0AEdificio Constituyente II%0D%0A%0D%0AApartamento: ${reciboData.apartamentoNumero}%0D%0AFecha: ${fechaFormateada}%0D%0A%0D%0AConceptos abonados:%0D%0A${conceptosTexto}%0D%0ATotal abonado: $${reciboData.monto.toLocaleString()}%0D%0A%0D%0A${saldoTexto}%0D%0A%0D%0AEste correo es un comprobante de pago.`
+    const body = `COMPROBANTE DE PAGO%0D%0AEdificio Constituyente II%0D%0A%0D%0AApartamento: ${reciboData.apartamentoNumero}%0D%0AFecha: ${fechaFormateada}%0D%0A%0D%0AConceptos abonados:%0D%0A${conceptosTexto}%0D%0ATotal abonado: $${reciboData.monto.toLocaleString("es-CO", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%0D%0A%0D%0A${saldoTexto}%0D%0A%0D%0AEste correo es un comprobante de pago.`
 
     window.open(`mailto:${aptData.contactoEmail}?subject=${subject}&body=${body}`, "_blank")
 
@@ -882,6 +967,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
         <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiNmZmZmZmYiIGZpbGwtb3BhY2l0eT0iMC4wNCI+PHBhdGggZD0iTTM2IDM0djZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6bTEwIDEwdjZoNnYtNmgtNnptMC0xMHY2aDZ2LTZoLTZ6Ii8+PC9nPjwvZz48L3N2Zz4=')] opacity-50"></div>
         <div className="relative flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
+            <BackToHome dark />
             <div className="flex items-center gap-3 mb-2">
               <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
                 <TrendingUp className="h-6 w-6 text-white" />
@@ -922,7 +1008,13 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
             </Button>
             <Button
               variant="secondary"
-              onClick={() => setIsReciboPagoDialogOpen(true)}
+              onClick={() => {
+                setDistribucionManual(false)
+                setMontoManualGC("0")
+                setMontoManualFR("0")
+                setMontoManualOG("0")
+                setIsReciboPagoDialogOpen(true)
+              }}
               className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
             >
               <Receipt className="h-4 w-4 mr-2" />
@@ -933,7 +1025,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
       </div>
 
       {/* Stats - Desglose de Ingresos */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="border-0 shadow-md bg-gradient-to-br from-green-50 to-emerald-50">
           <CardContent className="p-4">
             <p className="text-sm text-green-600 font-medium">Total Recibos</p>
@@ -952,10 +1044,16 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
             <p className="text-2xl font-bold text-purple-700">{formatCurrency(ingresosFondoReserva)}</p>
           </CardContent>
         </Card>
-        <Card className="border-0 shadow-md bg-gradient-to-br from-amber-50 to-yellow-50">
+        <Card className="border-0 shadow-md bg-gradient-to-br from-amber-50 to-orange-50">
           <CardContent className="p-4">
-            <p className="text-sm text-amber-600 font-medium">Créditos Pendientes</p>
-            <p className="text-2xl font-bold text-amber-700">{formatCurrency(creditosPendientes)}</p>
+            <p className="text-sm text-amber-600 font-medium">Otros Gastos</p>
+            <p className="text-2xl font-bold text-amber-700">{formatCurrency(ingresosOtrosGastos)}</p>
+          </CardContent>
+        </Card>
+        <Card className="border-0 shadow-md bg-gradient-to-br from-rose-50 to-yellow-50">
+          <CardContent className="p-4">
+            <p className="text-sm text-rose-600 font-medium">Créditos Pendientes</p>
+            <p className="text-2xl font-bold text-rose-700">{formatCurrency(creditosPendientes)}</p>
           </CardContent>
         </Card>
       </div>
@@ -1114,9 +1212,15 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                           <Badge variant="outline" className={
                             t.categoria === "GASTOS_COMUNES"
                               ? "border-blue-200 bg-blue-50 text-blue-700"
-                              : "border-purple-200 bg-purple-50 text-purple-700"
+                              : t.categoria === "FONDO_RESERVA"
+                              ? "border-purple-200 bg-purple-50 text-purple-700"
+                              : "border-amber-200 bg-amber-50 text-amber-700"
                           }>
-                            {t.categoria === "GASTOS_COMUNES" ? "Gasto Común" : "Fondo Reserva"}
+                            {t.categoria === "GASTOS_COMUNES"
+                              ? "Gasto Común"
+                              : t.categoria === "FONDO_RESERVA"
+                              ? "Fondo Reserva"
+                              : "Otros Gastos"}
                           </Badge>
                         )}
                         {t.tipo === "RECIBO_PAGO" && t.clasificacionPago && (
@@ -1125,9 +1229,17 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                               ? "border-blue-200 bg-blue-50 text-blue-700"
                               : t.clasificacionPago === "MIXTO"
                               ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+                              : t.clasificacionPago === "OTROS_GASTOS"
+                              ? "border-amber-200 bg-amber-50 text-amber-700"
                               : "border-purple-200 bg-purple-50 text-purple-700"
                           }>
-                            {t.clasificacionPago === "GASTO_COMUN" ? "Gasto Común" : t.clasificacionPago === "MIXTO" ? "Mixto" : "Fondo Reserva"}
+                            {t.clasificacionPago === "GASTO_COMUN"
+                              ? "Gasto Común"
+                              : t.clasificacionPago === "MIXTO"
+                              ? "Mixto"
+                              : t.clasificacionPago === "OTROS_GASTOS"
+                              ? "Otros Gastos"
+                              : "Fondo Reserva"}
                           </Badge>
                         )}
                       </div>
@@ -1156,16 +1268,22 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                         {t.tipo === "EGRESO" ? "-" : "+"}{formatCurrency(t.monto)}
                       </p>
                       {/* Desglose para pagos mixtos */}
-                      {t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "MIXTO" && (t.montoGastoComun || t.montoFondoReserva) && (
+                      {t.tipo === "RECIBO_PAGO" && t.clasificacionPago === "MIXTO" && (t.montoGastoComun || t.montoFondoReserva || t.montoOtrosGastos) && (
                         <div className="text-xs text-slate-500 mt-0.5">
                           {t.montoGastoComun && t.montoGastoComun > 0 && (
                             <span className="text-blue-600">GC: {formatCurrency(t.montoGastoComun)}</span>
                           )}
-                          {t.montoGastoComun && t.montoGastoComun > 0 && t.montoFondoReserva && t.montoFondoReserva > 0 && (
+                          {t.montoGastoComun && t.montoGastoComun > 0 && (t.montoFondoReserva || t.montoOtrosGastos) && (
                             <span className="mx-1">|</span>
                           )}
                           {t.montoFondoReserva && t.montoFondoReserva > 0 && (
                             <span className="text-purple-600">FR: {formatCurrency(t.montoFondoReserva)}</span>
+                          )}
+                          {t.montoFondoReserva && t.montoFondoReserva > 0 && t.montoOtrosGastos && t.montoOtrosGastos > 0 && (
+                            <span className="mx-1">|</span>
+                          )}
+                          {t.montoOtrosGastos && t.montoOtrosGastos > 0 && (
+                            <span className="text-amber-600">OG: {formatCurrency(t.montoOtrosGastos)}</span>
                           )}
                         </div>
                       )}
@@ -1403,7 +1521,14 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                 <Label>Apartamento *</Label>
                 <Select
                   value={ventaCreditoForm.apartamentoId}
-                  onValueChange={(value) => setVentaCreditoForm({ ...ventaCreditoForm, apartamentoId: value })}
+                  onValueChange={(value) => {
+                    const apt = apartamentos.find((a) => a.id === value)
+                    let nuevoMonto = ventaCreditoForm.monto
+                    if (apt && ventaCreditoForm.categoria === "OTROS_GASTOS" && apt.otrosGastos > 0) {
+                      nuevoMonto = String(apt.otrosGastos)
+                    }
+                    setVentaCreditoForm({ ...ventaCreditoForm, apartamentoId: value, monto: nuevoMonto })
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar" />
@@ -1442,11 +1567,27 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                 <Label>Clasificación *</Label>
                 <Select
                   value={ventaCreditoForm.categoria}
-                  onValueChange={(value: "GASTOS_COMUNES" | "FONDO_RESERVA") => setVentaCreditoForm({
-                    ...ventaCreditoForm,
-                    categoria: value,
-                    descripcion: value === "GASTOS_COMUNES" ? "Gastos Comunes" : "Fondo de Reserva"
-                  })}
+                  onValueChange={(value: "GASTOS_COMUNES" | "FONDO_RESERVA" | "OTROS_GASTOS") => {
+                    const descripcion =
+                      value === "GASTOS_COMUNES"
+                        ? "Gastos Comunes"
+                        : value === "FONDO_RESERVA"
+                        ? "Fondo de Reserva"
+                        : "Otros Gastos"
+                    let nuevoMonto = ventaCreditoForm.monto
+                    if (value === "OTROS_GASTOS" && ventaCreditoForm.apartamentoId) {
+                      const apt = apartamentos.find((a) => a.id === ventaCreditoForm.apartamentoId)
+                      if (apt && apt.otrosGastos > 0) {
+                        nuevoMonto = String(apt.otrosGastos)
+                      }
+                    }
+                    setVentaCreditoForm({
+                      ...ventaCreditoForm,
+                      categoria: value,
+                      descripcion,
+                      monto: nuevoMonto,
+                    })
+                  }}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -1454,6 +1595,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                   <SelectContent>
                     <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
                     <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                    <SelectItem value="OTROS_GASTOS">Otros Gastos</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -1526,7 +1668,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                   ) : deudaApartamento ? (
                     <div className="space-y-1">
                       <p className="text-sm font-medium text-amber-800">Deuda actual:</p>
-                      <div className="grid grid-cols-3 gap-2 text-sm">
+                      <div className="grid grid-cols-2 gap-2 text-sm">
                         <div>
                           <span className="text-amber-600">Gastos Comunes:</span>
                           <p className="font-semibold text-amber-900">{formatCurrency(deudaApartamento.gastosComunes)}</p>
@@ -1534,6 +1676,10 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                         <div>
                           <span className="text-amber-600">Fondo Reserva:</span>
                           <p className="font-semibold text-amber-900">{formatCurrency(deudaApartamento.fondoReserva)}</p>
+                        </div>
+                        <div>
+                          <span className="text-amber-600">Otros Gastos:</span>
+                          <p className="font-semibold text-amber-900">{formatCurrency(deudaApartamento.otrosGastos)}</p>
                         </div>
                         <div>
                           <span className="text-amber-600">Total:</span>
@@ -1563,38 +1709,85 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
               />
             </div>
 
-            {/* 4. Card de Distribución Automática */}
+            {/* 4. Card de Distribución (FIFO o Manual) */}
             {reciboPagoForm.apartamentoId && reciboPagoForm.monto && parseFloat(reciboPagoForm.monto) > 0 && distribucionPago && (
-              <Card className="border-blue-200 bg-blue-50/50">
+              <Card className={distribucionManual ? "border-amber-200 bg-amber-50/50" : "border-blue-200 bg-blue-50/50"}>
                 <CardContent className="p-3">
-                  <p className="text-sm font-medium text-blue-800 mb-2">Distribución del pago:</p>
-                  <div className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-blue-600">A Gastos Comunes:</span>
-                      <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoGastosComunes)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-blue-600">A Fondo de Reserva:</span>
-                      <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoFondoReserva)}</span>
-                    </div>
-                    {distribucionPago.excedente > 0 && (
-                      <div className="flex justify-between pt-1 border-t border-blue-200">
-                        <span className="text-green-600 font-medium">Excedente:</span>
-                        <span className="font-bold text-green-700">{formatCurrency(distribucionPago.excedente)}</span>
-                      </div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className={`text-sm font-medium ${distribucionManual ? "text-amber-800" : "text-blue-800"}`}>
+                      {distribucionManual ? "Distribución manual:" : "Distribución del pago (FIFO):"}
+                    </p>
+                    {!!deudaApartamento && deudaApartamento.total > 0 && (
+                      <label className="flex items-center gap-1.5 text-xs cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={distribucionManual}
+                          onChange={(e) => handleToggleManualRP(e.target.checked)}
+                          className="h-3.5 w-3.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                        />
+                        <span className="text-slate-600">Editar manualmente</span>
+                      </label>
                     )}
                   </div>
+
+                  {!distribucionManual ? (
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-blue-600">A Gastos Comunes:</span>
+                        <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoGastosComunes)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-blue-600">A Fondo de Reserva:</span>
+                        <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoFondoReserva)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-blue-600">A Otros Gastos:</span>
+                        <span className="font-semibold text-blue-900">{formatCurrency(distribucionPago.aplicadoOtrosGastos)}</span>
+                      </div>
+                      {distribucionPago.excedente > 0 && (
+                        <div className="flex justify-between pt-1 border-t border-blue-200">
+                          <span className="text-green-600 font-medium">Excedente:</span>
+                          <span className="font-bold text-green-700">{formatCurrency(distribucionPago.excedente)}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2 text-sm">
+                      <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                        <Label className="text-amber-800 text-xs">A Gastos Comunes</Label>
+                        <Input type="number" min="0" step="0.01" value={montoManualGC} onChange={(e) => setMontoManualGC(e.target.value)} className="h-8 w-32 text-right" />
+                        <Label className="text-amber-800 text-xs">A Fondo de Reserva</Label>
+                        <Input type="number" min="0" step="0.01" value={montoManualFR} onChange={(e) => setMontoManualFR(e.target.value)} className="h-8 w-32 text-right" />
+                        <Label className="text-amber-800 text-xs">A Otros Gastos</Label>
+                        <Input type="number" min="0" step="0.01" value={montoManualOG} onChange={(e) => setMontoManualOG(e.target.value)} className="h-8 w-32 text-right" />
+                      </div>
+                      <div className={`flex justify-between text-xs pt-2 border-t ${sumaCuadraRP ? "border-amber-200 text-slate-600" : "border-red-300 text-red-700"}`}>
+                        <span>Suma manual:</span>
+                        <span className="font-semibold">{formatCurrency(sumManualRP)}</span>
+                      </div>
+                      {!sumaCuadraRP && (
+                        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                          Diferencia: {diferenciaManualRP > 0 ? "+" : ""}{formatCurrency(diferenciaManualRP)} — la suma debe igualar {formatCurrency(montoTotalRP)}.
+                        </div>
+                      )}
+                      {excedeDeudaRP && excedeDeudaRP.length > 0 && (
+                        <div className="text-xs text-amber-800 bg-amber-100 border border-amber-300 rounded px-2 py-1">
+                          <strong>Atención:</strong> Asignás más que la deuda actual en {excedeDeudaRP.join(", ")}. El sobrante quedará como saldo a favor.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
 
-            {/* 5. Selector de Excedente (solo si hay excedente) */}
-            {distribucionPago && distribucionPago.excedente > 0 && (
+            {/* 5. Selector de Excedente (solo en modo automático) */}
+            {!distribucionManual && distribucionPago && distribucionPago.excedente > 0 && (
               <div className="space-y-2">
                 <Label>Asignar excedente a:</Label>
                 <Select
                   value={reciboPagoForm.excedentePara}
-                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, excedentePara: value })}
+                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS") => setReciboPagoForm({ ...reciboPagoForm, excedentePara: value })}
                 >
                   <SelectTrigger>
                     <SelectValue />
@@ -1602,6 +1795,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                   <SelectContent>
                     <SelectItem value="GASTO_COMUN">Gastos Comunes (saldo a favor)</SelectItem>
                     <SelectItem value="FONDO_RESERVA">Fondo de Reserva (saldo a favor)</SelectItem>
+                    <SelectItem value="OTROS_GASTOS">Otros Gastos (saldo a favor)</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-slate-500">
@@ -1610,23 +1804,30 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
               </div>
             )}
 
-            {/* 6. Clasificación manual (solo si NO hay deuda - modo legacy) */}
-            {(!deudaApartamento || deudaApartamento.total === 0) && (
-              <div className="space-y-2">
-                <Label>Clasificación del Pago *</Label>
-                <Select
-                  value={reciboPagoForm.clasificacionPago}
-                  onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setReciboPagoForm({ ...reciboPagoForm, clasificacionPago: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
-                    <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* 6. Sin deuda: distribución manual obligatoria con 3 inputs */}
+            {(!deudaApartamento || deudaApartamento.total === 0) && reciboPagoForm.apartamentoId && reciboPagoForm.monto && parseFloat(reciboPagoForm.monto) > 0 && (
+              <Card className="border-amber-200 bg-amber-50/50">
+                <CardContent className="p-3 space-y-2 text-sm">
+                  <p className="text-sm font-medium text-amber-800">Distribución del pago (sin deuda previa):</p>
+                  <div className="grid grid-cols-[1fr_auto] gap-2 items-center">
+                    <Label className="text-amber-800 text-xs">A Gastos Comunes</Label>
+                    <Input type="number" min="0" step="0.01" value={montoManualGC} onChange={(e) => { setDistribucionManual(true); setMontoManualGC(e.target.value) }} className="h-8 w-32 text-right" />
+                    <Label className="text-amber-800 text-xs">A Fondo de Reserva</Label>
+                    <Input type="number" min="0" step="0.01" value={montoManualFR} onChange={(e) => { setDistribucionManual(true); setMontoManualFR(e.target.value) }} className="h-8 w-32 text-right" />
+                    <Label className="text-amber-800 text-xs">A Otros Gastos</Label>
+                    <Input type="number" min="0" step="0.01" value={montoManualOG} onChange={(e) => { setDistribucionManual(true); setMontoManualOG(e.target.value) }} className="h-8 w-32 text-right" />
+                  </div>
+                  <div className={`flex justify-between text-xs pt-2 border-t ${sumaCuadraRP ? "border-amber-200 text-slate-600" : "border-red-300 text-red-700"}`}>
+                    <span>Suma manual:</span>
+                    <span className="font-semibold">{formatCurrency(sumManualRP)}</span>
+                  </div>
+                  {!sumaCuadraRP && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
+                      Diferencia: {diferenciaManualRP > 0 ? "+" : ""}{formatCurrency(diferenciaManualRP)} — la suma debe igualar {formatCurrency(montoTotalRP)}.
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             )}
 
             <div className="grid grid-cols-2 gap-4">
@@ -1670,7 +1871,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Sin asignar</SelectItem>
-                  {cuentasBancarias.map((cuenta) => (
+                  {cuentasBancarias.filter((c) => c.activa).map((cuenta) => (
                     <SelectItem key={cuenta.id} value={cuenta.id}>
                       {cuenta.banco} - {cuenta.tipoCuenta} ({cuenta.numeroCuenta.slice(-4)})
                       {cuenta.porDefecto && <Star className="inline h-3 w-3 ml-1 fill-amber-400 text-amber-400" />}
@@ -1709,7 +1910,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
               >
                 Cancelar
               </Button>
-              <Button type="submit" disabled={isLoading}>
+              <Button type="submit" disabled={isLoading || (distribucionManual && !sumaCuadraRP) || ((!deudaApartamento || deudaApartamento.total === 0) && !sumaCuadraRP && !!reciboPagoForm.monto && parseFloat(reciboPagoForm.monto) > 0)}>
                 {isLoading ? "Guardando..." : "Registrar Pago"}
               </Button>
             </div>
@@ -1878,7 +2079,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                   <Label>Clasificación del Pago *</Label>
                   <Select
                     value={editForm.clasificacionPago}
-                    onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA") => setEditForm({ ...editForm, clasificacionPago: value })}
+                    onValueChange={(value: "GASTO_COMUN" | "FONDO_RESERVA" | "OTROS_GASTOS") => setEditForm({ ...editForm, clasificacionPago: value })}
                   >
                     <SelectTrigger>
                       <SelectValue />
@@ -1886,6 +2087,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                     <SelectContent>
                       <SelectItem value="GASTO_COMUN">Gasto Común</SelectItem>
                       <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                      <SelectItem value="OTROS_GASTOS">Otros Gastos</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1901,7 +2103,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sin asignar</SelectItem>
-                      {cuentasBancarias.map((cuenta) => (
+                      {cuentasBancarias.filter((c) => c.activa).map((cuenta) => (
                         <SelectItem key={cuenta.id} value={cuenta.id}>
                           {cuenta.banco} - {cuenta.tipoCuenta} ({cuenta.numeroCuenta.slice(-4)})
                           {cuenta.porDefecto && <Star className="inline h-3 w-3 ml-1 fill-amber-400 text-amber-400" />}
@@ -1927,6 +2129,7 @@ Saldo actual: $${reciboData.saldoFinal.toLocaleString()}`
                   <SelectContent>
                     <SelectItem value="GASTOS_COMUNES">Gastos Comunes</SelectItem>
                     <SelectItem value="FONDO_RESERVA">Fondo de Reserva</SelectItem>
+                    <SelectItem value="OTROS_GASTOS">Otros Gastos</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

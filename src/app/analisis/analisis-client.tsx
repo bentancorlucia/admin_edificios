@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useTransition, useEffect, useMemo } from "react"
+import { BackToHome } from "@/components/back-to-home"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import {
@@ -36,18 +37,39 @@ import {
   PieChart,
   Calendar,
   CalendarRange,
-  BarChart3
+  BarChart3,
+  Receipt,
+  TrendingUp,
+  Target,
+  Percent
 } from "lucide-react"
+import {
+  ComposedChart,
+  Bar,
+  Line,
+  Area,
+  AreaChart,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts"
 import {
   getAnalisisData,
   getAnalisisDataPorRango,
   getServiciosConActividad,
   getAnalisisDetalladoPorServicioMes,
+  getReporteGastosData,
   type AnalisisData,
   type AnalisisDataRango,
   type AnalisisDetalladoServicios,
-  type TipoServicio
+  type TipoServicio,
+  type ReporteGastosData,
+  type ProyeccionMesItem,
 } from "@/lib/database"
+import { formatCurrency } from "@/lib/utils"
 
 const meses = [
   { value: 1, label: "Enero" },
@@ -104,6 +126,16 @@ export function AnalisisClient({
 
   const currentYear = new Date().getFullYear()
   const years = Array.from({ length: 5 }, (_, i) => currentYear - 2 + i)
+
+  // Estados para Reporte de Gastos
+  const [reporteMesInicio, setReporteMesInicio] = useState(1)
+  const [reporteAnioInicio, setReporteAnioInicio] = useState(currentYear)
+  const [reporteMesFin, setReporteMesFin] = useState(new Date().getMonth() + 1)
+  const [reporteAnioFin, setReporteAnioFin] = useState(currentYear)
+  const [reporteGastos, setReporteGastos] = useState<ReporteGastosData | null>(null)
+  const [loadingReporte, setLoadingReporte] = useState(false)
+  const [mesesProyeccion, setMesesProyeccion] = useState(6)
+  const [proyeccion, setProyeccion] = useState<ProyeccionMesItem[] | null>(null)
 
   // Cargar servicios con actividad cuando cambia el rango de fechas
   useEffect(() => {
@@ -242,6 +274,62 @@ export function AnalisisClient({
     }
   }
 
+  // Handler para generar reporte de gastos
+  const handleGenerarReporteGastos = async () => {
+    setLoadingReporte(true)
+    setProyeccion(null)
+    try {
+      const fi = new Date(reporteAnioInicio, reporteMesInicio - 1, 1).toISOString()
+      const ff = new Date(reporteAnioFin, reporteMesFin, 0, 23, 59, 59, 999).toISOString()
+      const result = await getReporteGastosData(fi, ff)
+      setReporteGastos(result)
+    } catch (error) {
+      console.error("Error generando reporte de gastos:", error)
+    } finally {
+      setLoadingReporte(false)
+    }
+  }
+
+  // Handler para calcular proyección (client-side)
+  const handleCalcularProyeccion = () => {
+    if (!reporteGastos || reporteGastos.meses.length === 0) return
+    const { resumen, meses: mesesData } = reporteGastos
+    const cantMeses = mesesData.length
+    const avgCargos = resumen.totalCargos / cantMeses
+    const avgCobros = resumen.totalCobrado / cantMeses
+
+    let pendienteAcumulado = resumen.totalPendiente
+    const result: ProyeccionMesItem[] = []
+
+    const ultimoMes = mesesData[mesesData.length - 1]
+    let mesActual = ultimoMes.mes
+    let anioActual = ultimoMes.anio
+
+    const mesesNombresCortos = [
+      'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ]
+
+    for (let i = 0; i < mesesProyeccion; i++) {
+      mesActual++
+      if (mesActual > 12) { mesActual = 1; anioActual++ }
+      pendienteAcumulado += (avgCargos - avgCobros)
+      result.push({
+        mes: mesActual,
+        anio: anioActual,
+        mesLabel: `${mesesNombresCortos[mesActual - 1]} ${anioActual}`,
+        cargosProyectados: avgCargos,
+        cobrosProyectados: avgCobros,
+        pendienteAcumulado: Math.max(0, pendienteAcumulado),
+      })
+    }
+    setProyeccion(result)
+  }
+
+  // Tooltip formatter para recharts
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const currencyFormatter = (value: any) => formatCurrency(Number(value || 0))
+
   // Calcular el máximo para la escala del gráfico de barras
   const maxMontoPorMes = useMemo(() => {
     if (!reporteDetallado) return 0
@@ -252,18 +340,21 @@ export function AnalisisClient({
     <div className="p-8">
       <div className="flex flex-col gap-6">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100">
-            <PieChart className="h-5 w-5 text-purple-600" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Análisis de Egresos</h1>
-            <p className="text-sm text-slate-500">Detalle y totalizador por servicio</p>
+        <div>
+          <BackToHome />
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-100">
+              <PieChart className="h-5 w-5 text-purple-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-slate-900">Análisis de Egresos</h1>
+              <p className="text-sm text-slate-500">Detalle y totalizador por servicio</p>
+            </div>
           </div>
         </div>
 
         <Tabs defaultValue="mensual" className="space-y-6">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsList className="grid w-full max-w-2xl grid-cols-3">
             <TabsTrigger value="mensual" className="gap-2">
               <Calendar className="h-4 w-4" />
               Por Mes
@@ -271,6 +362,10 @@ export function AnalisisClient({
             <TabsTrigger value="rango" className="gap-2">
               <CalendarRange className="h-4 w-4" />
               Por Rango de Fechas
+            </TabsTrigger>
+            <TabsTrigger value="reporte-gastos" className="gap-2">
+              <Receipt className="h-4 w-4" />
+              Reporte de Gastos
             </TabsTrigger>
           </TabsList>
 
@@ -943,6 +1038,414 @@ export function AnalisisClient({
                 <CalendarRange className="mb-3 h-10 w-10" />
                 <p className="font-medium">Selecciona un rango de fechas</p>
                 <p className="text-sm">Haz clic en &quot;Generar Análisis&quot; para ver los datos</p>
+              </div>
+            )}
+          </TabsContent>
+
+          {/* Tab: Reporte de Gastos */}
+          <TabsContent value="reporte-gastos" className="space-y-6">
+            {/* Selector de período */}
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex flex-wrap items-end gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Desde</p>
+                    <div className="flex gap-2">
+                      <Select value={reporteMesInicio.toString()} onValueChange={(v) => setReporteMesInicio(Number(v))}>
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {meses.map((m) => (
+                            <SelectItem key={m.value} value={m.value.toString()}>{m.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={reporteAnioInicio.toString()} onValueChange={(v) => setReporteAnioInicio(Number(v))}>
+                        <SelectTrigger className="w-[100px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {years.map((y) => (
+                            <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500 mb-1">Hasta</p>
+                    <div className="flex gap-2">
+                      <Select value={reporteMesFin.toString()} onValueChange={(v) => setReporteMesFin(Number(v))}>
+                        <SelectTrigger className="w-[140px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {meses.map((m) => (
+                            <SelectItem key={m.value} value={m.value.toString()}>{m.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select value={reporteAnioFin.toString()} onValueChange={(v) => setReporteAnioFin(Number(v))}>
+                        <SelectTrigger className="w-[100px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {years.map((y) => (
+                            <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button onClick={handleGenerarReporteGastos} disabled={loadingReporte}>
+                    {loadingReporte ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <BarChart3 className="h-4 w-4 mr-2" />}
+                    Generar Reporte
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {loadingReporte && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-slate-400" />
+              </div>
+            )}
+
+            {reporteGastos && !loadingReporte && (
+              <>
+                {/* Tarjetas resumen */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <Card>
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Total Cargos</p>
+                          <p className="text-xl font-bold text-slate-900">{formatCurrency(reporteGastos.resumen.totalCargos)}</p>
+                        </div>
+                        <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center">
+                          <Receipt className="h-5 w-5 text-blue-600" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Total Cobrado</p>
+                          <p className="text-xl font-bold text-green-600">{formatCurrency(reporteGastos.resumen.totalCobrado)}</p>
+                        </div>
+                        <div className="h-10 w-10 rounded-lg bg-green-50 flex items-center justify-center">
+                          <TrendingUp className="h-5 w-5 text-green-600" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Total Pendiente</p>
+                          <p className={`text-xl font-bold ${reporteGastos.resumen.totalPendiente > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatCurrency(reporteGastos.resumen.totalPendiente)}
+                          </p>
+                        </div>
+                        <div className="h-10 w-10 rounded-lg bg-red-50 flex items-center justify-center">
+                          <Target className="h-5 w-5 text-red-500" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent className="p-5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-xs text-slate-500 uppercase tracking-wide">Tasa de Cobro</p>
+                          <p className={`text-xl font-bold ${reporteGastos.resumen.tasaCobroGeneral >= 80 ? 'text-green-600' : reporteGastos.resumen.tasaCobroGeneral >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                            {reporteGastos.resumen.tasaCobroGeneral.toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="h-10 w-10 rounded-lg bg-amber-50 flex items-center justify-center">
+                          <Percent className="h-5 w-5 text-amber-600" />
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Gráfico Cargos vs Cobrado */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Cargos vs Cobrado por Mes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={320}>
+                      <ComposedChart data={reporteGastos.meses.map(m => ({
+                        name: m.mesLabel.split(' ')[0].substring(0, 3),
+                        'Gastos Comunes': m.cargosGC,
+                        'Fondo Reserva': m.cargosFR,
+                        'Cobrado': m.cobradoTotal,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip formatter={currencyFormatter} />
+                        <Legend />
+                        <Bar dataKey="Gastos Comunes" stackId="cargos" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+                        <Bar dataKey="Fondo Reserva" stackId="cargos" fill="#f97316" radius={[4, 4, 0, 0]} />
+                        <Line type="monotone" dataKey="Cobrado" stroke="#22c55e" strokeWidth={2.5} dot={{ fill: '#22c55e', r: 4 }} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Gráfico Morosidad */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Morosidad por Mes</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <ResponsiveContainer width="100%" height={240}>
+                      <AreaChart data={reporteGastos.meses.map(m => ({
+                        name: m.mesLabel.split(' ')[0].substring(0, 3),
+                        Pendiente: m.pendiente,
+                      }))}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                        <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip formatter={currencyFormatter} />
+                        <Area type="monotone" dataKey="Pendiente" fill="#fecaca" stroke="#ef4444" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+
+                {/* Tabla desglose mensual */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Desglose Mensual</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Mes</TableHead>
+                            <TableHead className="text-right">Cargos GC</TableHead>
+                            <TableHead className="text-right">Cargos FR</TableHead>
+                            <TableHead className="text-right">Total Cargos</TableHead>
+                            <TableHead className="text-right">Cobrado GC</TableHead>
+                            <TableHead className="text-right">Cobrado FR</TableHead>
+                            <TableHead className="text-right">Total Cobrado</TableHead>
+                            <TableHead className="text-right">Pendiente</TableHead>
+                            <TableHead className="text-right">% Cobro</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {reporteGastos.meses.map((m) => (
+                            <TableRow key={`${m.mes}-${m.anio}`}>
+                              <TableCell className="font-medium">{m.mesLabel}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(m.cargosGC)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(m.cargosFR)}</TableCell>
+                              <TableCell className="text-right font-semibold">{formatCurrency(m.cargosTotal)}</TableCell>
+                              <TableCell className="text-right text-green-600">{formatCurrency(m.cobradoGC)}</TableCell>
+                              <TableCell className="text-right text-green-600">{formatCurrency(m.cobradoFR)}</TableCell>
+                              <TableCell className="text-right font-semibold text-green-600">{formatCurrency(m.cobradoTotal)}</TableCell>
+                              <TableCell className={`text-right font-semibold ${m.pendiente > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                {formatCurrency(m.pendiente)}
+                              </TableCell>
+                              <TableCell className={`text-right ${m.tasaCobro >= 80 ? 'text-green-600' : m.tasaCobro >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                                {m.tasaCobro.toFixed(1)}%
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                          {/* Fila de totales */}
+                          <TableRow className="bg-slate-50 font-bold">
+                            <TableCell>TOTAL</TableCell>
+                            <TableCell className="text-right">{formatCurrency(reporteGastos.resumen.totalCargosGC)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(reporteGastos.resumen.totalCargosFR)}</TableCell>
+                            <TableCell className="text-right">{formatCurrency(reporteGastos.resumen.totalCargos)}</TableCell>
+                            <TableCell className="text-right text-green-600">{formatCurrency(reporteGastos.resumen.totalCobradoGC)}</TableCell>
+                            <TableCell className="text-right text-green-600">{formatCurrency(reporteGastos.resumen.totalCobradoFR)}</TableCell>
+                            <TableCell className="text-right text-green-600">{formatCurrency(reporteGastos.resumen.totalCobrado)}</TableCell>
+                            <TableCell className={`text-right ${reporteGastos.resumen.totalPendiente > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {formatCurrency(reporteGastos.resumen.totalPendiente)}
+                            </TableCell>
+                            <TableCell className={`text-right ${reporteGastos.resumen.tasaCobroGeneral >= 80 ? 'text-green-600' : 'text-amber-600'}`}>
+                              {reporteGastos.resumen.tasaCobroGeneral.toFixed(1)}%
+                            </TableCell>
+                          </TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Desglose GC vs FR */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Card className="border-l-4 border-l-blue-500">
+                    <CardContent className="p-5">
+                      <p className="text-xs font-semibold text-blue-700 mb-3 uppercase">Gastos Comunes</p>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-sm text-slate-600">Cargado</span>
+                          <span className="text-sm font-semibold">{formatCurrency(reporteGastos.resumen.totalCargosGC)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-slate-600">Cobrado</span>
+                          <span className="text-sm font-semibold text-green-600">{formatCurrency(reporteGastos.resumen.totalCobradoGC)}</span>
+                        </div>
+                        <div className="pt-2 border-t">
+                          <div className="flex justify-between">
+                            <span className="text-sm font-medium">Pendiente</span>
+                            <span className={`text-sm font-bold ${reporteGastos.resumen.totalCargosGC - reporteGastos.resumen.totalCobradoGC > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {formatCurrency(reporteGastos.resumen.totalCargosGC - reporteGastos.resumen.totalCobradoGC)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-xs text-slate-400">Tasa de cobro</span>
+                            <span className="text-xs text-slate-500">
+                              {reporteGastos.resumen.totalCargosGC > 0
+                                ? ((reporteGastos.resumen.totalCobradoGC / reporteGastos.resumen.totalCargosGC) * 100).toFixed(1)
+                                : '0.0'}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-l-4 border-l-orange-500">
+                    <CardContent className="p-5">
+                      <p className="text-xs font-semibold text-orange-700 mb-3 uppercase">Fondo de Reserva</p>
+                      <div className="space-y-2">
+                        <div className="flex justify-between">
+                          <span className="text-sm text-slate-600">Cargado</span>
+                          <span className="text-sm font-semibold">{formatCurrency(reporteGastos.resumen.totalCargosFR)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-sm text-slate-600">Cobrado</span>
+                          <span className="text-sm font-semibold text-green-600">{formatCurrency(reporteGastos.resumen.totalCobradoFR)}</span>
+                        </div>
+                        <div className="pt-2 border-t">
+                          <div className="flex justify-between">
+                            <span className="text-sm font-medium">Pendiente</span>
+                            <span className={`text-sm font-bold ${reporteGastos.resumen.totalCargosFR - reporteGastos.resumen.totalCobradoFR > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {formatCurrency(reporteGastos.resumen.totalCargosFR - reporteGastos.resumen.totalCobradoFR)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-xs text-slate-400">Tasa de cobro</span>
+                            <span className="text-xs text-slate-500">
+                              {reporteGastos.resumen.totalCargosFR > 0
+                                ? ((reporteGastos.resumen.totalCobradoFR / reporteGastos.resumen.totalCargosFR) * 100).toFixed(1)
+                                : '0.0'}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Proyección */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Proyección</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="flex items-end gap-4 mb-6">
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1">Meses a proyectar</p>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={24}
+                          value={mesesProyeccion}
+                          onChange={(e) => setMesesProyeccion(Math.max(1, Math.min(24, Number(e.target.value))))}
+                          className="w-[100px]"
+                        />
+                      </div>
+                      <Button variant="outline" onClick={handleCalcularProyeccion}>
+                        <TrendingUp className="h-4 w-4 mr-2" />
+                        Calcular Proyección
+                      </Button>
+                    </div>
+
+                    {proyeccion && (
+                      <div className="space-y-6">
+                        {/* Gráfico de proyección */}
+                        <ResponsiveContainer width="100%" height={320}>
+                          <ComposedChart data={[
+                            ...reporteGastos.meses.map(m => ({
+                              name: m.mesLabel.split(' ')[0].substring(0, 3),
+                              Cargos: m.cargosTotal,
+                              Cobrado: m.cobradoTotal,
+                              'Pendiente Acum.': null as number | null,
+                              tipo: 'historico',
+                            })),
+                            ...proyeccion.map(p => ({
+                              name: p.mesLabel.split(' ')[0].substring(0, 3),
+                              Cargos: p.cargosProyectados,
+                              Cobrado: p.cobrosProyectados,
+                              'Pendiente Acum.': p.pendienteAcumulado,
+                              tipo: 'proyeccion',
+                            })),
+                          ]}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                            <YAxis tick={{ fontSize: 12 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                            <Tooltip formatter={currencyFormatter} />
+                            <Legend />
+                            <Bar dataKey="Cargos" fill="#3b82f6" fillOpacity={0.8} radius={[4, 4, 0, 0]} />
+                            <Bar dataKey="Cobrado" fill="#22c55e" fillOpacity={0.8} radius={[4, 4, 0, 0]} />
+                            <Line type="monotone" dataKey="Pendiente Acum." stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" dot={{ fill: '#ef4444', r: 3 }} connectNulls={false} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+
+                        {/* Tabla de proyección */}
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Mes</TableHead>
+                                <TableHead className="text-right">Cargos Proyectados</TableHead>
+                                <TableHead className="text-right">Cobros Proyectados</TableHead>
+                                <TableHead className="text-right">Pendiente Acumulado</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {proyeccion.map((p) => (
+                                <TableRow key={`${p.mes}-${p.anio}`}>
+                                  <TableCell className="font-medium">{p.mesLabel}</TableCell>
+                                  <TableCell className="text-right">{formatCurrency(p.cargosProyectados)}</TableCell>
+                                  <TableCell className="text-right text-green-600">{formatCurrency(p.cobrosProyectados)}</TableCell>
+                                  <TableCell className={`text-right font-semibold ${p.pendienteAcumulado > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                    {formatCurrency(p.pendienteAcumulado)}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+
+                        <div className="bg-slate-50 rounded-lg p-4 text-sm text-slate-600">
+                          <p className="font-medium mb-1">Nota sobre la proyección</p>
+                          <p>Basada en el promedio mensual del período seleccionado: cargos promedio de {formatCurrency(reporteGastos.resumen.totalCargos / reporteGastos.meses.length)} y cobros promedio de {formatCurrency(reporteGastos.resumen.totalCobrado / reporteGastos.meses.length)} por mes.</p>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
+
+            {/* Estado inicial */}
+            {!reporteGastos && !loadingReporte && (
+              <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed py-12 text-slate-400">
+                <Receipt className="mb-3 h-10 w-10" />
+                <p className="font-medium">Selecciona un período</p>
+                <p className="text-sm">Haz clic en &quot;Generar Reporte&quot; para ver el análisis de gastos</p>
               </div>
             )}
           </TabsContent>

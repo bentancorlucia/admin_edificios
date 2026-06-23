@@ -236,5 +236,7 @@ export function generateServiciosPDF(servicios: Servicio[], tiposServicio?: Tipo
     doc.text(`Página ${i} de ${totalPages}`, pageWidth - margin, pageHeight - 6, { align: "right" })
   }
 
-  doc.save("directorio-servicios.pdf")
+  const fileName = "directorio-servicios.pdf"
+  const arrayBuffer = doc.output("arraybuffer")
+  return { arrayBuffer, fileName }
 }

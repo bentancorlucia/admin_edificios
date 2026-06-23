@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import { Building2, TrendingUp, TrendingDown, Wallet, User, UserCheck, CreditCard, Receipt, Calendar } from "lucide-react"
+import { Building2, TrendingUp, TrendingDown, Wallet, User, UserCheck, CreditCard, Receipt, Calendar, Landmark, HandCoins, ArrowRight, FileBarChart } from "lucide-react"
+import Link from "next/link"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { BuildingView } from "@/components/building-view"
@@ -89,7 +90,107 @@ export default function DashboardPage() {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Dashboard</h1>
+      <h1 className="text-2xl font-bold text-slate-900 mb-6">Principal</h1>
+
+      {/* Cuentas Bancarias (sólo activas, ya filtradas en getDashboardData) */}
+      {data.cuentasBancarias.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          {data.cuentasBancarias.map((cuenta) => (
+            <Card key={cuenta.id}>
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                    <Landmark className="h-5 w-5 text-blue-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-slate-900">{cuenta.banco}</p>
+                      {cuenta.porDefecto && (
+                        <span className="text-[10px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-medium">Por defecto</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-500">{cuenta.tipoCuenta} - {cuenta.numeroCuenta}</p>
+                    {cuenta.titular && <p className="text-xs text-slate-400">{cuenta.titular}</p>}
+                  </div>
+                  <p className={`text-lg font-bold shrink-0 ${cuenta.saldo >= 0 ? 'text-slate-900' : 'text-red-600'}`}>
+                    {formatCurrency(cuenta.saldo)}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {data.cuentasBancarias.length > 1 && (
+            <Card className="border-l-4 border-l-emerald-500">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                    <Wallet className="h-5 w-5 text-emerald-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="font-semibold text-emerald-700">Total Bancario</p>
+                  </div>
+                  <p className={`text-lg font-bold shrink-0 ${data.totalBancario >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {formatCurrency(data.totalBancario)}
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* Accesos Directos */}
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <Link href="/registro-pagos">
+          <Card className="group hover:border-green-300 hover:shadow-md transition-all cursor-pointer">
+            <CardContent className="p-3 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-green-50 flex items-center justify-center shrink-0 group-hover:bg-green-100 transition-colors">
+                <HandCoins className="h-4.5 w-4.5 text-green-600" />
+              </div>
+              <span className="font-medium text-sm text-slate-700 group-hover:text-green-700 transition-colors">Registro de Pagos</span>
+              <ArrowRight className="h-4 w-4 text-slate-300 ml-auto group-hover:text-green-500 transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/bancos">
+          <Card className="group hover:border-blue-300 hover:shadow-md transition-all cursor-pointer">
+            <CardContent className="p-3 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-blue-50 flex items-center justify-center shrink-0 group-hover:bg-blue-100 transition-colors">
+                <Landmark className="h-4.5 w-4.5 text-blue-600" />
+              </div>
+              <span className="font-medium text-sm text-slate-700 group-hover:text-blue-700 transition-colors">Bancos</span>
+              <ArrowRight className="h-4 w-4 text-slate-300 ml-auto group-hover:text-blue-500 transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/apartamentos">
+          <Card className="group hover:border-purple-300 hover:shadow-md transition-all cursor-pointer">
+            <CardContent className="p-3 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-purple-50 flex items-center justify-center shrink-0 group-hover:bg-purple-100 transition-colors">
+                <Building2 className="h-4.5 w-4.5 text-purple-600" />
+              </div>
+              <span className="font-medium text-sm text-slate-700 group-hover:text-purple-700 transition-colors">Apartamentos</span>
+              <ArrowRight className="h-4 w-4 text-slate-300 ml-auto group-hover:text-purple-500 transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/informes">
+          <Card className="group hover:border-orange-300 hover:shadow-md transition-all cursor-pointer">
+            <CardContent className="p-3 flex items-center gap-3">
+              <div className="h-9 w-9 rounded-lg bg-orange-50 flex items-center justify-center shrink-0 group-hover:bg-orange-100 transition-colors">
+                <FileBarChart className="h-4.5 w-4.5 text-orange-600" />
+              </div>
+              <span className="font-medium text-sm text-slate-700 group-hover:text-orange-700 transition-colors">Informes</span>
+              <ArrowRight className="h-4 w-4 text-slate-300 ml-auto group-hover:text-orange-500 transition-colors" />
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
+
+      {/* Building View - Detalle Apartamentos */}
+      <div className="mb-6">
+        <BuildingView apartamentos={data.apartamentos} saldos={data.saldos} />
+      </div>
 
       {/* Stats Cards - Fila 1: Unidades */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -276,11 +377,6 @@ export default function DashboardPage() {
           </div>
         </CardContent>
       </Card>
-
-      {/* Building View */}
-      <div className="mb-6">
-        <BuildingView apartamentos={data.apartamentos} saldos={data.saldos} />
-      </div>
 
       {/* Recent Transactions */}
       <Card>
