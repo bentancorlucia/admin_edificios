@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { ImportesGeneralesClient } from "./importes-generales-client"
-import { getApartamentosOrdenados, type Apartamento } from "@/lib/database"
+import { getApartamentosActivos, type Apartamento } from "@/lib/database"
 
 export default function ImportesGeneralesPage() {
   const [apartamentos, setApartamentos] = useState<Apartamento[]>([])
@@ -11,7 +11,7 @@ export default function ImportesGeneralesPage() {
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await getApartamentosOrdenados()
+        const data = await getApartamentosActivos()
         setApartamentos(data)
       } catch (error) {
         console.error("Error loading apartamentos:", error)

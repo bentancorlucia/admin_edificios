@@ -460,6 +460,60 @@ export async function initDatabase(): Promise<void> {
     console.error('Error en migración MovimientoBancario CHECK constraints:', e);
   }
 
+  // Migración: columnas "snapshot" en Transaccion para preservar el nombre/tipo/apto
+  // de la persona EN EL MOMENTO DEL PAGO. Así, si luego se renombra o se borra/archiva
+  // la ficha del apartamento, el histórico de pagos conserva los datos originales.
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(Transaccion)");
+    const tieneColumna = (n: string) => columns.some(c => c.name === n);
+
+    const nuevasColumnas: { nombre: string; ddl: string }[] = [
+      { nombre: 'contactoNombreSnapshot', ddl: 'ALTER TABLE Transaccion ADD COLUMN contactoNombreSnapshot TEXT' },
+      { nombre: 'contactoApellidoSnapshot', ddl: 'ALTER TABLE Transaccion ADD COLUMN contactoApellidoSnapshot TEXT' },
+      { nombre: 'tipoOcupacionSnapshot', ddl: 'ALTER TABLE Transaccion ADD COLUMN tipoOcupacionSnapshot TEXT' },
+      { nombre: 'apartamentoNumeroSnapshot', ddl: 'ALTER TABLE Transaccion ADD COLUMN apartamentoNumeroSnapshot TEXT' },
+    ];
+
+    let seAgregoAlguna = false;
+    for (const col of nuevasColumnas) {
+      if (!tieneColumna(col.nombre)) {
+        await database.execute(col.ddl);
+        seAgregoAlguna = true;
+      }
+    }
+
+    // Backfill (mejor esfuerzo): para los pagos existentes que aún no tienen snapshot,
+    // copiar el nombre/tipo/número actuales de la ficha del apartamento. Es lo único
+    // disponible históricamente; a partir de ahora cada pago guarda su propio snapshot.
+    if (seAgregoAlguna) {
+      await database.execute(`
+        UPDATE Transaccion
+        SET
+          contactoNombreSnapshot = COALESCE(contactoNombreSnapshot, (SELECT a.contactoNombre FROM Apartamento a WHERE a.id = Transaccion.apartamentoId)),
+          contactoApellidoSnapshot = COALESCE(contactoApellidoSnapshot, (SELECT a.contactoApellido FROM Apartamento a WHERE a.id = Transaccion.apartamentoId)),
+          tipoOcupacionSnapshot = COALESCE(tipoOcupacionSnapshot, (SELECT a.tipoOcupacion FROM Apartamento a WHERE a.id = Transaccion.apartamentoId)),
+          apartamentoNumeroSnapshot = COALESCE(apartamentoNumeroSnapshot, (SELECT a.numero FROM Apartamento a WHERE a.id = Transaccion.apartamentoId))
+        WHERE apartamentoId IS NOT NULL
+          AND (contactoNombreSnapshot IS NULL OR apartamentoNumeroSnapshot IS NULL OR tipoOcupacionSnapshot IS NULL)
+      `);
+    }
+  } catch (e) {
+    console.error('Error en migración snapshot Transaccion:', e);
+  }
+
+  // Migración: columna "activo" en Apartamento para archivar perfiles (soft-delete).
+  // Archivar un perfil (p. ej. el inquilino que se va) lo saca de las pantallas
+  // operativas SIN borrar la fila, preservando su histórico de pagos y saldos.
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(Apartamento)");
+    const hasActivo = columns.some(c => c.name === 'activo');
+    if (!hasActivo) {
+      await database.execute('ALTER TABLE Apartamento ADD COLUMN activo INTEGER DEFAULT 1');
+    }
+  } catch (e) {
+    console.error('Error en migración activo Apartamento:', e);
+  }
+
   // Crear índices (después de migraciones para que las columnas existan)
   for (const indexSql of INDEX_SQL) {
     await database.execute(indexSql);
@@ -552,27 +606,78 @@ export interface Apartamento {
   contactoCelular: string | null;
   contactoEmail: string | null;
   notas: string | null;
+  activo: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
+// Tipo interno para la respuesta de SQLite (activo como número)
+type ApartamentoDB = Omit<Apartamento, 'activo'> & { activo: number | null };
+
+// Normaliza la fila de SQLite: activo se expone como boolean.
+// Filas legacy sin la columna (null) se consideran activas.
+function mapApartamento(row: ApartamentoDB): Apartamento {
+  return { ...row, activo: row.activo === null ? true : Boolean(row.activo) };
+}
+
 export async function getApartamentos(): Promise<Apartamento[]> {
   const database = await getDatabase();
-  return database.select<Apartamento[]>('SELECT * FROM Apartamento ORDER BY numero');
+  const rows = await database.select<ApartamentoDB[]>('SELECT * FROM Apartamento ORDER BY numero');
+  return rows.map(mapApartamento);
 }
 
 export async function getApartamentosOrdenados(): Promise<Apartamento[]> {
   const database = await getDatabase();
-  return database.select<Apartamento[]>('SELECT * FROM Apartamento ORDER BY piso ASC, numero ASC');
+  const rows = await database.select<ApartamentoDB[]>('SELECT * FROM Apartamento ORDER BY piso ASC, numero ASC');
+  return rows.map(mapApartamento);
+}
+
+// Solo perfiles activos (no archivados). Para pantallas operativas:
+// registro de pagos, importes generales, destinatarios de mensajes.
+export async function getApartamentosActivos(): Promise<Apartamento[]> {
+  const database = await getDatabase();
+  const rows = await database.select<ApartamentoDB[]>(
+    "SELECT * FROM Apartamento WHERE activo = 1 OR activo IS NULL ORDER BY piso ASC, numero ASC"
+  );
+  return rows.map(mapApartamento);
 }
 
 export async function getApartamentoById(id: string): Promise<Apartamento | null> {
   const database = await getDatabase();
-  const result = await database.select<Apartamento[]>('SELECT * FROM Apartamento WHERE id = ?', [id]);
-  return result[0] || null;
+  const result = await database.select<ApartamentoDB[]>('SELECT * FROM Apartamento WHERE id = ?', [id]);
+  return result[0] ? mapApartamento(result[0]) : null;
 }
 
-export async function createApartamento(data: Omit<Apartamento, 'id' | 'createdAt' | 'updatedAt' | 'alicuota'>): Promise<Apartamento> {
+// Cantidad de movimientos (pagos/cargos) vinculados al perfil. Se usa antes de
+// borrar para advertir que el histórico quedaría sin asignar.
+export async function contarMovimientosApartamento(id: string): Promise<number> {
+  const database = await getDatabase();
+  const rows = await database.select<{ total: number }[]>(
+    'SELECT COUNT(*) as total FROM Transaccion WHERE apartamentoId = ?',
+    [id]
+  );
+  return rows[0]?.total ?? 0;
+}
+
+// Archivar (soft-delete): el perfil deja de aparecer en pantallas operativas
+// pero conserva su fila y todo su histórico de pagos/saldos.
+export async function archivarApartamento(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.execute(
+    'UPDATE Apartamento SET activo = 0, updatedAt = ? WHERE id = ?',
+    [getCurrentTimestamp(), id]
+  );
+}
+
+export async function restaurarApartamento(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.execute(
+    'UPDATE Apartamento SET activo = 1, updatedAt = ? WHERE id = ?',
+    [getCurrentTimestamp(), id]
+  );
+}
+
+export async function createApartamento(data: Omit<Apartamento, 'id' | 'createdAt' | 'updatedAt' | 'alicuota' | 'activo'>): Promise<Apartamento> {
   const database = await getDatabase();
   const id = generateId();
   const now = getCurrentTimestamp();
@@ -635,6 +740,12 @@ export interface Transaccion {
   montoGastoComun: number | null;
   montoFondoReserva: number | null;
   montoOtrosGastos: number | null;
+  // Snapshot del pagador en el momento del pago (para histórico inmutable).
+  // Null en transacciones que no son pagos o pagos previos a la migración sin ficha.
+  contactoNombreSnapshot: string | null;
+  contactoApellidoSnapshot: string | null;
+  tipoOcupacionSnapshot: string | null;
+  apartamentoNumeroSnapshot: string | null;
   createdAt: string;
   updatedAt: string;
   apartamentoId: string | null;
@@ -699,15 +810,19 @@ export async function getTransaccionById(id: string): Promise<Transaccion | null
   return result[0] || null;
 }
 
-export async function createTransaccion(data: Omit<Transaccion, 'id' | 'createdAt' | 'updatedAt'>): Promise<Transaccion> {
+type SnapshotFields = 'contactoNombreSnapshot' | 'contactoApellidoSnapshot' | 'tipoOcupacionSnapshot' | 'apartamentoNumeroSnapshot';
+
+export async function createTransaccion(
+  data: Omit<Transaccion, 'id' | 'createdAt' | 'updatedAt' | SnapshotFields> & Partial<Pick<Transaccion, SnapshotFields>>
+): Promise<Transaccion> {
   const database = await getDatabase();
   const id = generateId();
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO Transaccion (id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, montoOtrosGastos, apartamentoId, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.tipo, data.monto, data.fecha, data.categoria, data.descripcion, data.referencia, data.metodoPago, data.notas, data.estadoCredito, data.montoPagado, data.clasificacionPago, data.montoGastoComun, data.montoFondoReserva, data.montoOtrosGastos, data.apartamentoId, now, now]
+    `INSERT INTO Transaccion (id, tipo, monto, fecha, categoria, descripcion, referencia, metodoPago, notas, estadoCredito, montoPagado, clasificacionPago, montoGastoComun, montoFondoReserva, montoOtrosGastos, contactoNombreSnapshot, contactoApellidoSnapshot, tipoOcupacionSnapshot, apartamentoNumeroSnapshot, apartamentoId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.tipo, data.monto, data.fecha, data.categoria, data.descripcion, data.referencia, data.metodoPago, data.notas, data.estadoCredito, data.montoPagado, data.clasificacionPago, data.montoGastoComun, data.montoFondoReserva, data.montoOtrosGastos, data.contactoNombreSnapshot ?? null, data.contactoApellidoSnapshot ?? null, data.tipoOcupacionSnapshot ?? null, data.apartamentoNumeroSnapshot ?? null, data.apartamentoId, now, now]
   );
 
   return (await getTransaccionById(id))!;
@@ -2009,7 +2124,9 @@ export async function generarTransaccionesMensuales(opts?: { mes?: number; anio?
   const primerDiaMes = new Date(anioTarget, mesTarget - 1, 1).toISOString();
   const ultimoDiaMes = new Date(anioTarget, mesTarget, 0, 23, 59, 59).toISOString();
 
-  const apartamentos = await getApartamentos();
+  // Solo perfiles activos: un perfil archivado (p. ej. inquilino que se fue) no
+  // debe generar gastos comunes / fondo de reserva del mes.
+  const apartamentos = await getApartamentosActivos();
 
   if (apartamentos.length === 0) {
     throw new Error("No hay apartamentos registrados");
@@ -2094,7 +2211,8 @@ export async function generarOtrosGastosMensuales(opts?: { mes?: number; anio?: 
   const primerDiaMes = new Date(anioTarget, mesTarget - 1, 1).toISOString();
   const ultimoDiaMes = new Date(anioTarget, mesTarget, 0, 23, 59, 59).toISOString();
 
-  const apartamentos = await getApartamentos();
+  // Solo perfiles activos: un perfil archivado no debe generar Otros Gastos del mes.
+  const apartamentos = await getApartamentosActivos();
 
   if (apartamentos.length === 0) {
     throw new Error("No hay apartamentos registrados");
@@ -2494,6 +2612,11 @@ export async function createReciboPago(data: {
     categoria: null,
     estadoCredito: null,
     montoPagado: null,
+    // Snapshot inmutable del pagador (preserva el histórico ante renombres/archivado)
+    contactoNombreSnapshot: apartamento.contactoNombre,
+    contactoApellidoSnapshot: apartamento.contactoApellido,
+    tipoOcupacionSnapshot: apartamento.tipoOcupacion,
+    apartamentoNumeroSnapshot: apartamento.numero,
   });
 
   // Si se seleccionó una cuenta bancaria, crear el movimiento bancario
@@ -3553,7 +3676,15 @@ export async function getInformeCompleto(
     if (fechaPago < fechaInicioAnterior || fechaPago > fechaFinAnterior) continue;
 
     const apt = aptMap.get(t.apartamentoId || '');
-    if (!apt) continue;
+
+    // Datos del pagador: priorizar el snapshot guardado en el pago (inmutable).
+    // Fallback a la ficha actual para pagos previos a la migración. Si no hay ni
+    // snapshot ni ficha (perfil borrado sin snapshot), se omite el pago.
+    const tipoOcupacionPago = (t.tipoOcupacionSnapshot ?? apt?.tipoOcupacion) as 'PROPIETARIO' | 'INQUILINO' | undefined;
+    const apartamentoNumeroPago = t.apartamentoNumeroSnapshot ?? apt?.numero;
+    const contactoNombrePago = t.contactoNombreSnapshot ?? apt?.contactoNombre ?? null;
+    const contactoApellidoPago = t.contactoApellidoSnapshot ?? apt?.contactoApellido ?? null;
+    if (!apartamentoNumeroPago || !tipoOcupacionPago) continue;
 
     // Calcular montos por concepto
     let montoGC = 0;
@@ -3577,10 +3708,10 @@ export async function getInformeCompleto(
 
     pagosDelMesAnterior.push({
       fecha: t.fecha,
-      apartamentoNumero: apt.numero,
-      tipoOcupacion: apt.tipoOcupacion,
-      contactoNombre: apt.contactoNombre,
-      contactoApellido: apt.contactoApellido,
+      apartamentoNumero: apartamentoNumeroPago,
+      tipoOcupacion: tipoOcupacionPago,
+      contactoNombre: contactoNombrePago,
+      contactoApellido: contactoApellidoPago,
       monto: t.monto,
       montoGastoComun: montoGC,
       montoFondoReserva: montoFR,
@@ -5445,8 +5576,8 @@ export interface Destinatario {
 export async function getDestinatariosMensajes(): Promise<Destinatario[]> {
   const destinatarios: Destinatario[] = [];
 
-  // Apartamentos (propietarios e inquilinos)
-  const apartamentos = await getApartamentos();
+  // Apartamentos (propietarios e inquilinos) — solo perfiles activos
+  const apartamentos = await getApartamentosActivos();
   const saldos = await obtenerSaldosCuentaCorriente();
 
   for (const apt of apartamentos) {

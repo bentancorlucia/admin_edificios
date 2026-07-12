@@ -34,13 +34,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail, Calculator } from "lucide-react"
+import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail, Calculator, Archive, ArchiveRestore } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { formatCurrency, formatPhoneForWhatsApp } from "@/lib/utils"
 import {
   createApartamento,
   updateApartamento,
   deleteApartamento,
+  archivarApartamento,
+  restaurarApartamento,
+  contarMovimientosApartamento,
   generarTransaccionesMensuales,
   obtenerSaldosCuentaCorriente,
   getTransaccionesByApartamento,
@@ -69,6 +72,7 @@ type Apartamento = {
   contactoCelular: string | null
   contactoEmail: string | null
   notas: string | null
+  activo?: boolean
 }
 
 type ApartamentoAgrupado = {
@@ -137,6 +141,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   const [isSuccessDialogOpen, setIsSuccessDialogOpen] = useState(false)
   const [successData, setSuccessData] = useState<{ creadas: number; mes: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [mostrarArchivados, setMostrarArchivados] = useState(false)
+  // Cantidad de movimientos del perfil a borrar (para advertir en el diálogo)
+  const [movimientosCount, setMovimientosCount] = useState<number | null>(null)
 
   const [formData, setFormData] = useState({
     numero: "",
@@ -151,17 +158,32 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     notas: "",
   })
 
-  // Memoizar agrupación y filtrado para evitar re-cálculos innecesarios
+  const hayArchivados = useMemo(
+    () => apartamentos.some((a) => a.activo === false),
+    [apartamentos]
+  )
+
+  // Se agrupa SIEMPRE sobre todos los apartamentos (incluidos archivados) para que
+  // cada grupo conozca ambos perfiles y no se ofrezca "agregar" un tipo que en
+  // realidad existe archivado (colisionaría con el UNIQUE numero+tipoOcupacion).
+  // La ocultación de archivados se hace al renderizar cada sección.
   const apartamentosAgrupados = useMemo(
     () => agruparApartamentos(apartamentos),
     [apartamentos]
   )
 
   const filteredApartamentos = useMemo(
-    () => apartamentosAgrupados.filter((grupo) =>
-      grupo.numero.toLowerCase().includes(search.toLowerCase())
-    ),
-    [apartamentosAgrupados, search]
+    () => apartamentosAgrupados.filter((grupo) => {
+      if (!grupo.numero.toLowerCase().includes(search.toLowerCase())) return false
+      // Si no se muestran archivados, ocultar grupos sin ningún perfil activo
+      if (!mostrarArchivados) {
+        const propActivo = grupo.propietario && grupo.propietario.activo !== false
+        const inqActivo = grupo.inquilino && grupo.inquilino.activo !== false
+        if (!propActivo && !inqActivo) return false
+      }
+      return true
+    }),
+    [apartamentosAgrupados, search, mostrarArchivados]
   )
 
   const resetForm = () => {
@@ -204,9 +226,17 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     setIsDialogOpen(true)
   }
 
-  const openDeleteDialog = (apt: Apartamento) => {
+  const openDeleteDialog = async (apt: Apartamento) => {
     setSelectedApartamento(apt)
+    setMovimientosCount(null)
     setIsDeleteDialogOpen(true)
+    try {
+      const count = await contarMovimientosApartamento(apt.id)
+      setMovimientosCount(count)
+    } catch (error) {
+      console.error("Error contando movimientos:", error)
+      setMovimientosCount(0)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -258,11 +288,49 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       setApartamentos((prev) => prev.filter((apt) => apt.id !== selectedApartamento.id))
       setIsDeleteDialogOpen(false)
       setSelectedApartamento(null)
+      setMovimientosCount(null)
     } catch (error) {
       console.error("Error deleting apartamento:", error)
       alert("Error al eliminar el apartamento")
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  // Archivar (soft-delete): conserva el perfil y su histórico, lo saca de las
+  // pantallas operativas. Pensado para el inquilino que se va y la unidad queda
+  // solo a nombre del propietario.
+  const handleArchivar = async () => {
+    if (!selectedApartamento) return
+    setIsLoading(true)
+
+    try {
+      await archivarApartamento(selectedApartamento.id)
+      setApartamentos((prev) =>
+        prev.map((apt) => (apt.id === selectedApartamento.id ? { ...apt, activo: false } : apt))
+      )
+      setIsDeleteDialogOpen(false)
+      setSelectedApartamento(null)
+      setMovimientosCount(null)
+      toast({ title: "Perfil archivado", description: "Se conservó su histórico de pagos. Podés restaurarlo cuando quieras.", variant: "success" })
+    } catch (error) {
+      console.error("Error archivando apartamento:", error)
+      toast({ title: "Error", description: "No se pudo archivar el perfil", variant: "destructive" })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleRestaurar = async (apt: Apartamento) => {
+    try {
+      await restaurarApartamento(apt.id)
+      setApartamentos((prev) =>
+        prev.map((a) => (a.id === apt.id ? { ...a, activo: true } : a))
+      )
+      toast({ title: "Perfil restaurado", description: `Apto ${apt.numero} reactivado.`, variant: "success" })
+    } catch (error) {
+      console.error("Error restaurando apartamento:", error)
+      toast({ title: "Error", description: "No se pudo restaurar el perfil", variant: "destructive" })
     }
   }
 
@@ -484,6 +552,16 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
             className="pl-10"
           />
         </div>
+        {hayArchivados && (
+          <Button
+            variant={mostrarArchivados ? "secondary" : "outline"}
+            onClick={() => setMostrarArchivados((v) => !v)}
+            className="gap-2 whitespace-nowrap"
+          >
+            <Archive className="h-4 w-4" />
+            {mostrarArchivados ? "Ocultar archivados" : "Ver archivados"}
+          </Button>
+        )}
       </div>
 
       {/* Mensaje de error */}
@@ -521,40 +599,53 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                       </div>
                     </div>
                     <div className="flex gap-1">
-                      {grupo.propietario && (
+                      {grupo.propietario && (mostrarArchivados || grupo.propietario.activo !== false) && (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">P</span>
                       )}
-                      {grupo.inquilino && (
+                      {grupo.inquilino && (mostrarArchivados || grupo.inquilino.activo !== false) && (
                         <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-100 text-purple-700">I</span>
                       )}
                     </div>
                   </div>
 
                   {/* Sección Propietario */}
-                  {grupo.propietario && (
-                    <div className="mb-3 p-3 bg-blue-50/70 rounded-lg border border-blue-100">
+                  {grupo.propietario && (mostrarArchivados || grupo.propietario.activo !== false) && (
+                    <div className={`mb-3 p-3 rounded-lg border ${grupo.propietario.activo === false ? "bg-slate-100/70 border-slate-200 opacity-70" : "bg-blue-50/70 border-blue-100"}`}>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-blue-600 uppercase tracking-wide">Propietario</span>
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold text-blue-600 uppercase tracking-wide">
+                          Propietario
+                          {grupo.propietario.activo === false && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 normal-case tracking-normal">Archivado</span>
+                          )}
+                        </span>
                         <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-100" onClick={() => handleGeneratePropietarioPDF(grupo)} title="PDF">
-                            <FileText className="h-3.5 w-3.5" />
-                          </Button>
-                          {grupo.propietario?.contactoCelular && (
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')} title="WhatsApp">
-                              <Share2 className="h-3.5 w-3.5" />
+                          {grupo.propietario.activo === false ? (
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-emerald-600 hover:bg-emerald-100" onClick={() => handleRestaurar(grupo.propietario!)} title="Restaurar">
+                              <ArchiveRestore className="h-3.5 w-3.5 mr-1" /><span className="text-xs">Restaurar</span>
                             </Button>
+                          ) : (
+                            <>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-100" onClick={() => handleGeneratePropietarioPDF(grupo)} title="PDF">
+                                <FileText className="h-3.5 w-3.5" />
+                              </Button>
+                              {grupo.propietario?.contactoCelular && (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'propietario')} title="WhatsApp">
+                                  <Share2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {grupo.propietario?.contactoEmail && (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'propietario')} title="Gmail">
+                                  <Mail className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.propietario!)} title="Editar">
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.propietario!)} title="Eliminar">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </>
                           )}
-                          {grupo.propietario?.contactoEmail && (
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'propietario')} title="Gmail">
-                              <Mail className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.propietario!)} title="Editar">
-                            <Edit className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.propietario!)} title="Eliminar">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
                         </div>
                       </div>
                       <p className="font-medium text-slate-800 text-sm truncate">
@@ -586,30 +677,43 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                   )}
 
                   {/* Sección Inquilino */}
-                  {grupo.inquilino && (
-                    <div className="mb-3 p-3 bg-purple-50/70 rounded-lg border border-purple-100">
+                  {grupo.inquilino && (mostrarArchivados || grupo.inquilino.activo !== false) && (
+                    <div className={`mb-3 p-3 rounded-lg border ${grupo.inquilino.activo === false ? "bg-slate-100/70 border-slate-200 opacity-70" : "bg-purple-50/70 border-purple-100"}`}>
                       <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] font-bold text-purple-600 uppercase tracking-wide">Inquilino</span>
+                        <span className="flex items-center gap-1.5 text-[10px] font-bold text-purple-600 uppercase tracking-wide">
+                          Inquilino
+                          {grupo.inquilino.activo === false && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 normal-case tracking-normal">Archivado</span>
+                          )}
+                        </span>
                         <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-purple-600 hover:bg-purple-100" onClick={() => handleGenerateInquilinoPDF(grupo)} title="PDF">
-                            <FileText className="h-3.5 w-3.5" />
-                          </Button>
-                          {grupo.inquilino?.contactoCelular && (
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')} title="WhatsApp">
-                              <Share2 className="h-3.5 w-3.5" />
+                          {grupo.inquilino.activo === false ? (
+                            <Button variant="ghost" size="sm" className="h-6 px-2 text-emerald-600 hover:bg-emerald-100" onClick={() => handleRestaurar(grupo.inquilino!)} title="Restaurar">
+                              <ArchiveRestore className="h-3.5 w-3.5 mr-1" /><span className="text-xs">Restaurar</span>
                             </Button>
+                          ) : (
+                            <>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-purple-600 hover:bg-purple-100" onClick={() => handleGenerateInquilinoPDF(grupo)} title="PDF">
+                                <FileText className="h-3.5 w-3.5" />
+                              </Button>
+                              {grupo.inquilino?.contactoCelular && (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-green-600 hover:bg-green-100" onClick={() => handleShareWhatsAppGrupo(grupo, 'inquilino')} title="WhatsApp">
+                                  <Share2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              {grupo.inquilino?.contactoEmail && (
+                                <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'inquilino')} title="Gmail">
+                                  <Mail className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.inquilino!)} title="Editar">
+                                <Edit className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.inquilino!)} title="Eliminar">
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </>
                           )}
-                          {grupo.inquilino?.contactoEmail && (
-                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => handleSendGmailGrupo(grupo, 'inquilino')} title="Gmail">
-                              <Mail className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.inquilino!)} title="Editar">
-                            <Edit className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-red-500 hover:bg-red-100" onClick={() => openDeleteDialog(grupo.inquilino!)} title="Eliminar">
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
                         </div>
                       </div>
                       <p className="font-medium text-slate-800 text-sm truncate">
@@ -848,20 +952,59 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Eliminar apartamento?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminará permanentemente el
-              apartamento {selectedApartamento?.numero}.
+            <AlertDialogTitle>
+              {movimientosCount && movimientosCount > 0
+                ? `El Apto ${selectedApartamento?.numero} (${selectedApartamento ? tipoOcupacionLabels[selectedApartamento.tipoOcupacion] : ""}) tiene movimientos`
+                : "¿Eliminar perfil?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              {movimientosCount === null ? (
+                <span>Verificando movimientos asociados…</span>
+              ) : movimientosCount > 0 ? (
+                <span>
+                  Este perfil tiene <strong>{movimientosCount}</strong> movimiento{movimientosCount === 1 ? "" : "s"} registrado{movimientosCount === 1 ? "" : "s"} (pagos / cargos).
+                  <br /><br />
+                  <strong>Recomendado:</strong> <strong>Archivar</strong> el perfil. Se oculta de las pantallas operativas (registro de pagos, importes, mensajes) pero conserva intacto su histórico y saldos. Es ideal cuando, por ejemplo, el inquilino se va y la unidad queda solo a nombre del propietario.
+                  <br /><br />
+                  Si en cambio lo <strong>eliminás definitivamente</strong>, esos movimientos quedarán <strong>sin asignar</strong> a la unidad (saldrán de su cuenta corriente). El nombre se conserva en el detalle de cobranzas gracias al registro histórico de cada pago.
+                </span>
+              ) : (
+                <span>
+                  Esta acción no se puede deshacer. Se eliminará permanentemente el perfil
+                  del Apto {selectedApartamento?.numero}
+                  {selectedApartamento ? ` (${tipoOcupacionLabels[selectedApartamento.tipoOcupacion]})` : ""}.
+                </span>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              {isLoading ? "Eliminando..." : "Eliminar"}
-            </AlertDialogAction>
+            {movimientosCount !== null && movimientosCount > 0 ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={handleDelete}
+                  disabled={isLoading}
+                  className="border-red-300 text-red-600 hover:bg-red-50"
+                >
+                  {isLoading ? "Procesando..." : "Eliminar de todas formas"}
+                </Button>
+                <AlertDialogAction
+                  onClick={(e) => { e.preventDefault(); handleArchivar() }}
+                  disabled={isLoading}
+                >
+                  {isLoading ? "Archivando..." : "Archivar (recomendado)"}
+                </AlertDialogAction>
+              </>
+            ) : (
+              <AlertDialogAction
+                onClick={handleDelete}
+                disabled={isLoading || movimientosCount === null}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isLoading ? "Eliminando..." : "Eliminar"}
+              </AlertDialogAction>
+            )}
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { RegistroPagosClient } from "./registro-pagos-client"
 import {
-  getApartamentos,
+  getApartamentosActivos,
   getCuentasBancarias,
   obtenerSaldosCuentaCorriente,
   type Apartamento,
@@ -20,7 +20,7 @@ export default function RegistroPagosPage() {
     async function loadData() {
       try {
         const [apartamentosData, cuentasData, saldosData] = await Promise.all([
-          getApartamentos(),
+          getApartamentosActivos(),
           getCuentasBancarias(),
           obtenerSaldosCuentaCorriente(),
         ])
