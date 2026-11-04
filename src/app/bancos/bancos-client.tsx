@@ -66,6 +66,7 @@ import {
   getEstadoCuenta,
   type EstadoCuentaData,
   type InfoTransaccionVinculada,
+  mensajeDeError,
 } from "@/lib/database"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { exportToExcel } from "@/lib/excel-export"
@@ -441,8 +442,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
 
       setIsAccountDialogOpen(false)
       resetAccountForm()
-    } catch {
-      setError("Error inesperado. Por favor intenta de nuevo.")
+    } catch (error) {
+      setError(mensajeDeError(error, "Error inesperado. Por favor intenta de nuevo."))
     } finally {
       setIsLoading(false)
     }
@@ -457,8 +458,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
       setCuentas((prev) => prev.filter((c) => c.id !== selectedCuenta.id))
       setIsDeleteDialogOpen(false)
       setSelectedCuenta(null)
-    } catch {
-      alert("Error al eliminar la cuenta")
+    } catch (error) {
+      alert(mensajeDeError(error, "Error al eliminar la cuenta"))
     } finally {
       setIsLoading(false)
     }
@@ -651,8 +652,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
 
       setIsMovimientoDialogOpen(false)
       resetMovimientoForm()
-    } catch {
-      setError("Error inesperado. Por favor intenta de nuevo.")
+    } catch (error) {
+      setError(mensajeDeError(error, "Error inesperado. Por favor intenta de nuevo."))
     } finally {
       setIsLoading(false)
       setUploadingFile(false)
@@ -694,8 +695,8 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
       setIsDeleteMovDialogOpen(false)
       setSelectedMovimiento(null)
       setInfoTransaccionVinculada(null)
-    } catch {
-      alert("Error al eliminar el movimiento")
+    } catch (error) {
+      alert(mensajeDeError(error, "Error al eliminar el movimiento"))
     } finally {
       setIsLoading(false)
     }

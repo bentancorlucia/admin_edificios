@@ -4,6 +4,8 @@ import { invoke } from '@tauri-apps/api/core';
 let db: Database | null = null;
 let isInitialized = false;
 let dbName: string | null = null;
+// Último ejercicio cerrado (undefined = todavía no consultado)
+let ultimoAnioCerradoCache: number | null | undefined = undefined;
 
 // Obtiene el nombre del archivo de DB desde el backend (database_dev.db o database.db)
 async function getDbConnectionString(): Promise<string> {
@@ -37,6 +39,7 @@ export async function closeDatabase(): Promise<void> {
     db = null;
     isInitialized = false;
     dbName = null;
+    ultimoAnioCerradoCache = undefined;
   }
 }
 
@@ -57,7 +60,6 @@ CREATE TABLE IF NOT EXISTS Apartamento (
     alicuota REAL DEFAULT 0,
     gastosComunes REAL DEFAULT 0,
     fondoReserva REAL DEFAULT 0,
-    otrosGastos REAL DEFAULT 0,
     tipoOcupacion TEXT DEFAULT 'PROPIETARIO' CHECK (tipoOcupacion IN ('PROPIETARIO', 'INQUILINO')),
     contactoNombre TEXT,
     contactoApellido TEXT,
@@ -66,7 +68,8 @@ CREATE TABLE IF NOT EXISTS Apartamento (
     notas TEXT,
     createdAt TEXT DEFAULT (datetime('now')),
     updatedAt TEXT DEFAULT (datetime('now')),
-    UNIQUE(numero, tipoOcupacion)
+    otrosGastos REAL DEFAULT 0,
+    activo INTEGER DEFAULT 1
 );
 
 -- Tabla Inquilino
@@ -279,6 +282,30 @@ CREATE TABLE IF NOT EXISTS FlujoCajaOverride (
     updatedAt TEXT DEFAULT (datetime('now')),
     UNIQUE(mes, anio, concepto, clasificacion)
 );
+
+-- Tabla CierreEjercicio (un registro por ejercicio anual cerrado)
+CREATE TABLE IF NOT EXISTS CierreEjercicio (
+    id TEXT PRIMARY KEY,
+    anio INTEGER UNIQUE NOT NULL,
+    fechaCierre TEXT NOT NULL,
+    observaciones TEXT,
+    snapshot TEXT NOT NULL,
+    createdAt TEXT DEFAULT (datetime('now')),
+    updatedAt TEXT DEFAULT (datetime('now'))
+);
+
+-- Tabla EstadoCuentaBancoArchivo (PDF del estado de cuenta emitido por el banco)
+CREATE TABLE IF NOT EXISTS EstadoCuentaBancoArchivo (
+    id TEXT PRIMARY KEY,
+    anio INTEGER NOT NULL,
+    cuentaBancariaId TEXT,
+    nombreArchivo TEXT NOT NULL,
+    tamanio INTEGER DEFAULT 0,
+    paginas INTEGER DEFAULT 0,
+    contenidoBase64 TEXT NOT NULL,
+    createdAt TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (cuentaBancariaId) REFERENCES CuentaBancaria(id) ON DELETE SET NULL
+);
 `;
 
 // Índices SQL (separados para ejecutar uno por uno)
@@ -294,6 +321,10 @@ const INDEX_SQL = [
   'CREATE INDEX IF NOT EXISTS idx_historial_destinatario ON HistorialMensaje(destinatarioTipo)',
   'CREATE INDEX IF NOT EXISTS idx_contacto_libre_activo ON ContactoLibre(activo)',
   'CREATE INDEX IF NOT EXISTS idx_flujo_override_mes ON FlujoCajaOverride(mes, anio, clasificacion)',
+  // Un solo perfil ACTIVO por número y tipo. Los archivados no cuentan, así una
+  // unidad puede tener un inquilino nuevo aunque el anterior siga archivado.
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_apartamento_numero_tipo_activo ON Apartamento(numero, tipoOcupacion) WHERE activo IS NOT 0",
+  'CREATE INDEX IF NOT EXISTS idx_estado_cuenta_archivo_anio ON EstadoCuentaBancoArchivo(anio)',
 ];
 
 export async function initDatabase(): Promise<void> {
@@ -514,6 +545,52 @@ export async function initDatabase(): Promise<void> {
     console.error('Error en migración activo Apartamento:', e);
   }
 
+  // Migración: quitar UNIQUE(numero, tipoOcupacion) de Apartamento. Impedía dar de
+  // alta un inquilino nuevo si el anterior de la misma unidad estaba archivado.
+  // La unicidad pasa a un índice parcial sobre perfiles activos (ver INDEX_SQL).
+  // Todo va en un único execute para que corra en la MISMA conexión del pool:
+  // con foreign_keys activo, el DROP pondría en NULL el apartamentoId de todas
+  // las transacciones (ON DELETE SET NULL).
+  try {
+    const result = await database.select<{ sql: string }[]>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='Apartamento'"
+    );
+    const currentSql = result[0]?.sql || '';
+    if (/UNIQUE\s*\(\s*numero\s*,\s*tipoOcupacion\s*\)/.test(currentSql)) {
+      await database.execute(`
+        PRAGMA foreign_keys = OFF;
+        BEGIN;
+        CREATE TABLE Apartamento_new (
+          id TEXT PRIMARY KEY,
+          numero TEXT NOT NULL,
+          piso INTEGER,
+          alicuota REAL DEFAULT 0,
+          gastosComunes REAL DEFAULT 0,
+          fondoReserva REAL DEFAULT 0,
+          tipoOcupacion TEXT DEFAULT 'PROPIETARIO' CHECK (tipoOcupacion IN ('PROPIETARIO', 'INQUILINO')),
+          contactoNombre TEXT,
+          contactoApellido TEXT,
+          contactoCelular TEXT,
+          contactoEmail TEXT,
+          notas TEXT,
+          createdAt TEXT DEFAULT (datetime('now')),
+          updatedAt TEXT DEFAULT (datetime('now')),
+          otrosGastos REAL DEFAULT 0,
+          activo INTEGER DEFAULT 1
+        );
+        INSERT INTO Apartamento_new (id, numero, piso, alicuota, gastosComunes, fondoReserva, tipoOcupacion, contactoNombre, contactoApellido, contactoCelular, contactoEmail, notas, createdAt, updatedAt, otrosGastos, activo)
+          SELECT id, numero, piso, alicuota, gastosComunes, fondoReserva, tipoOcupacion, contactoNombre, contactoApellido, contactoCelular, contactoEmail, notas, createdAt, updatedAt, otrosGastos, activo FROM Apartamento;
+        DROP TABLE Apartamento;
+        ALTER TABLE Apartamento_new RENAME TO Apartamento;
+        COMMIT;
+        PRAGMA foreign_keys = ON;
+      `);
+    }
+  } catch (e) {
+    console.error('Error en migración UNIQUE Apartamento:', e);
+    try { await database.execute('ROLLBACK; PRAGMA foreign_keys = ON;'); } catch { /* sin transacción abierta */ }
+  }
+
   // Crear índices (después de migraciones para que las columnas existan)
   for (const indexSql of INDEX_SQL) {
     await database.execute(indexSql);
@@ -590,6 +667,59 @@ export function getCurrentTimestamp(): string {
   return new Date().toISOString();
 }
 
+// ============ BLOQUEO POR EJERCICIO CERRADO ============
+// Al cerrar el ejercicio N queda bloqueado todo movimiento con fecha hasta el
+// 31/12/N (incluidos los años anteriores, porque modificarlos cambiaría los
+// saldos iniciales de N). El año se toma en hora local, igual que los informes.
+
+export class EjercicioCerradoError extends Error {
+  constructor(public anio: number, mensaje?: string) {
+    super(
+      mensaje ??
+        `El ejercicio ${anio} está cerrado: no se pueden crear, modificar ni eliminar movimientos con fecha hasta el 31/12/${anio}. Si necesitás corregir algo, reabrí el ejercicio desde "Cierre de Ejercicio".`
+    );
+    this.name = 'EjercicioCerradoError';
+  }
+}
+
+// Devuelve el mensaje del bloqueo si el error es por ejercicio cerrado; si no, el texto genérico.
+export function mensajeDeError(error: unknown, fallback: string): string {
+  return error instanceof EjercicioCerradoError ? error.message : fallback;
+}
+
+export async function getUltimoAnioCerrado(): Promise<number | null> {
+  if (ultimoAnioCerradoCache === undefined) {
+    const database = await getDatabase();
+    const rows = await database.select<{ anio: number | null }[]>('SELECT MAX(anio) as anio FROM CierreEjercicio');
+    ultimoAnioCerradoCache = rows[0]?.anio ?? null;
+  }
+  return ultimoAnioCerradoCache;
+}
+
+function anioDeFecha(fecha: string | null | undefined): number | null {
+  if (!fecha) return null;
+  const d = new Date(fecha);
+  return isNaN(d.getTime()) ? null : d.getFullYear();
+}
+
+async function assertFechasEnEjercicioAbierto(...fechas: (string | null | undefined)[]): Promise<void> {
+  const ultimo = await getUltimoAnioCerrado();
+  if (ultimo === null) return;
+  for (const fecha of fechas) {
+    const anio = anioDeFecha(fecha);
+    if (anio !== null && anio <= ultimo) {
+      throw new EjercicioCerradoError(ultimo);
+    }
+  }
+}
+
+// Campos de Transaccion que son cache derivado de la imputación FIFO: se pueden
+// recalcular aunque el crédito pertenezca a un ejercicio cerrado (p. ej. cuando
+// en el año abierto se paga una deuda vieja).
+const CAMPOS_DERIVADOS_TRANSACCION = new Set(['montoPagado', 'estadoCredito']);
+// Campos de MovimientoBancario que no alteran importes ni imputaciones.
+const CAMPOS_LIBRES_MOVIMIENTO = new Set(['conciliado']);
+
 // ============ APARTAMENTOS ============
 
 export interface Apartamento {
@@ -612,12 +742,12 @@ export interface Apartamento {
 }
 
 // Tipo interno para la respuesta de SQLite (activo como número)
-type ApartamentoDB = Omit<Apartamento, 'activo'> & { activo: number | null };
+type ApartamentoDB = Omit<Apartamento, 'activo'> & { activo?: number | null };
 
 // Normaliza la fila de SQLite: activo se expone como boolean.
-// Filas legacy sin la columna (null) se consideran activas.
+// Filas legacy sin la columna (null/undefined) se consideran activas.
 function mapApartamento(row: ApartamentoDB): Apartamento {
-  return { ...row, activo: row.activo === null ? true : Boolean(row.activo) };
+  return { ...row, activo: row.activo == null ? true : Boolean(row.activo) };
 }
 
 export async function getApartamentos(): Promise<Apartamento[]> {
@@ -719,6 +849,21 @@ export async function updateApartamento(id: string, data: Partial<Omit<Apartamen
 
 export async function deleteApartamento(id: string): Promise<void> {
   const database = await getDatabase();
+  // Borrar el perfil deja su histórico sin asignar, lo que altera el estado de
+  // cuenta por unidad de los ejercicios ya cerrados.
+  const ultimoCerrado = await getUltimoAnioCerrado();
+  if (ultimoCerrado !== null) {
+    const fechas = await database.select<{ fecha: string }[]>(
+      'SELECT fecha FROM Transaccion WHERE apartamentoId = ?',
+      [id]
+    );
+    if (fechas.some(f => (anioDeFecha(f.fecha) ?? Infinity) <= ultimoCerrado)) {
+      throw new EjercicioCerradoError(
+        ultimoCerrado,
+        `Este perfil tiene movimientos en ejercicios cerrados (hasta ${ultimoCerrado}), por eso no se puede eliminar. Podés archivarlo.`
+      );
+    }
+  }
   await database.execute('DELETE FROM Apartamento WHERE id = ?', [id]);
 }
 
@@ -815,6 +960,7 @@ type SnapshotFields = 'contactoNombreSnapshot' | 'contactoApellidoSnapshot' | 't
 export async function createTransaccion(
   data: Omit<Transaccion, 'id' | 'createdAt' | 'updatedAt' | SnapshotFields> & Partial<Pick<Transaccion, SnapshotFields>>
 ): Promise<Transaccion> {
+  await assertFechasEnEjercicioAbierto(data.fecha);
   const database = await getDatabase();
   const id = generateId();
   const now = getCurrentTimestamp();
@@ -829,6 +975,13 @@ export async function createTransaccion(
 }
 
 export async function updateTransaccion(id: string, data: Partial<Omit<Transaccion, 'id' | 'createdAt' | 'updatedAt'>>): Promise<Transaccion> {
+  const tocaCamposContables = Object.entries(data).some(
+    ([key, value]) => value !== undefined && !CAMPOS_DERIVADOS_TRANSACCION.has(key)
+  );
+  if (tocaCamposContables) {
+    const actual = await getTransaccionById(id);
+    await assertFechasEnEjercicioAbierto(actual?.fecha, data.fecha);
+  }
   const database = await getDatabase();
   const now = getCurrentTimestamp();
 
@@ -861,6 +1014,12 @@ export async function deleteTransaccion(id: string): Promise<void> {
   const transaccion = await getTransaccionById(id);
   const apartamentoId = transaccion?.apartamentoId;
   const tipo = transaccion?.tipo;
+
+  const movimientosVinculados = await database.select<{ fecha: string }[]>(
+    'SELECT fecha FROM MovimientoBancario WHERE transaccionId = ?',
+    [id]
+  );
+  await assertFechasEnEjercicioAbierto(transaccion?.fecha, ...movimientosVinculados.map(m => m.fecha));
 
   try {
     // Eliminar movimientos bancarios relacionados (en lugar de solo desvincular)
@@ -1116,6 +1275,19 @@ export async function updateCuentaBancaria(id: string, data: Partial<Omit<Cuenta
   const database = await getDatabase();
   const now = getCurrentTimestamp();
 
+  // El saldo inicial es el punto de partida de todos los saldos: cambiarlo con
+  // un ejercicio cerrado alteraría los saldos ya cerrados.
+  if (data.saldoInicial !== undefined) {
+    const ultimoCerrado = await getUltimoAnioCerrado();
+    const actual = ultimoCerrado !== null ? await getCuentaBancariaById(id) : null;
+    if (ultimoCerrado !== null && actual && Math.abs(actual.saldoInicial - data.saldoInicial) > 0.004) {
+      throw new EjercicioCerradoError(
+        ultimoCerrado,
+        `No se puede cambiar el saldo inicial de la cuenta porque el ejercicio ${ultimoCerrado} está cerrado. Reabrí el ejercicio desde "Cierre de Ejercicio" si necesitás corregirlo.`
+      );
+    }
+  }
+
   // Regla: una cuenta inactiva no puede quedar como "por defecto"
   if (data.activa === false) {
     data = { ...data, porDefecto: false };
@@ -1154,6 +1326,12 @@ export async function updateCuentaBancaria(id: string, data: Partial<Omit<Cuenta
 
 export async function deleteCuentaBancaria(id: string): Promise<void> {
   const database = await getDatabase();
+  // Borrar la cuenta borra en cascada sus movimientos
+  const fechas = await database.select<{ fecha: string }[]>(
+    'SELECT fecha FROM MovimientoBancario WHERE cuentaBancariaId = ?',
+    [id]
+  );
+  await assertFechasEnEjercicioAbierto(...fechas.map(f => f.fecha));
   await database.execute('DELETE FROM CuentaBancaria WHERE id = ?', [id]);
 }
 
@@ -1306,6 +1484,7 @@ export async function getInfoBancoVinculadoTransaccion(transaccionId: string): P
 }
 
 export async function createMovimientoBancario(data: Omit<MovimientoBancario, 'id' | 'createdAt' | 'updatedAt'>): Promise<MovimientoBancario> {
+  await assertFechasEnEjercicioAbierto(data.fecha);
   const database = await getDatabase();
   const id = generateId();
   const now = getCurrentTimestamp();
@@ -1320,6 +1499,13 @@ export async function createMovimientoBancario(data: Omit<MovimientoBancario, 'i
 }
 
 export async function updateMovimientoBancario(id: string, data: Partial<Omit<MovimientoBancario, 'id' | 'createdAt' | 'updatedAt'>>): Promise<MovimientoBancario> {
+  const tocaCamposContables = Object.entries(data).some(
+    ([key, value]) => value !== undefined && !CAMPOS_LIBRES_MOVIMIENTO.has(key)
+  );
+  if (tocaCamposContables) {
+    const actual = await getMovimientoBancarioById(id);
+    await assertFechasEnEjercicioAbierto(actual?.fecha, data.fecha);
+  }
   const database = await getDatabase();
   const now = getCurrentTimestamp();
 
@@ -1350,6 +1536,8 @@ export async function updateMovimientoBancario(id: string, data: Partial<Omit<Mo
 }
 
 export async function deleteMovimientoBancario(id: string): Promise<void> {
+  const actual = await getMovimientoBancarioById(id);
+  await assertFechasEnEjercicioAbierto(actual?.fecha);
   const database = await getDatabase();
   await database.execute('DELETE FROM MovimientoBancario WHERE id = ?', [id]);
 }
@@ -1400,6 +1588,12 @@ export async function updateMovimientoBancarioConTransaccion(
   const movimiento = await getMovimientoBancarioById(id);
   if (!movimiento) {
     throw new Error("Movimiento bancario no encontrado");
+  }
+
+  // Validar movimiento y transacción vinculada antes de escribir cualquiera de los dos
+  if (Object.entries(data).some(([key, value]) => value !== undefined && !CAMPOS_LIBRES_MOVIMIENTO.has(key))) {
+    const vinculada = movimiento.transaccionId ? await getTransaccionById(movimiento.transaccionId) : null;
+    await assertFechasEnEjercicioAbierto(movimiento.fecha, data.fecha, vinculada?.fecha);
   }
 
   // Actualizar el movimiento bancario
@@ -1456,6 +1650,8 @@ export async function deleteMovimientoBancarioConTransaccion(id: string): Promis
   if (!movimiento) {
     throw new Error("Movimiento bancario no encontrado");
   }
+  const transaccionVinculada = movimiento.transaccionId ? await getTransaccionById(movimiento.transaccionId) : null;
+  await assertFechasEnEjercicioAbierto(movimiento.fecha, transaccionVinculada?.fecha);
 
   let transaccionEliminada = false;
   let apartamentoRecalculado: string | null = null;
@@ -2435,6 +2631,9 @@ export async function createReciboPago(data: {
   // el sobrante en una categoría queda como saldo a favor del apartamento.
   distribucionManual?: boolean;
 }): Promise<Transaccion> {
+  // Validar antes de imputar nada a los créditos
+  await assertFechasEnEjercicioAbierto(data.fecha);
+
   const apartamento = await getApartamentoById(data.apartamentoId);
   if (!apartamento) {
     throw new Error("Apartamento no encontrado");
@@ -2667,6 +2866,10 @@ export async function updateReciboPago(
   if (transaccion.tipo !== 'RECIBO_PAGO') {
     throw new Error("Esta función solo aplica para recibos de pago");
   }
+
+  // Validar antes de tocar el recibo o su movimiento bancario
+  const movimientoVinculado = await getMovimientoBancarioByTransaccionId(id);
+  await assertFechasEnEjercicioAbierto(transaccion.fecha, data.fecha, movimientoVinculado?.fecha);
 
   const labelClasificacion = (c: string | null | undefined): string =>
     c === 'GASTO_COMUN'
@@ -3158,6 +3361,12 @@ export async function getInformeData(mes: number, anio: number): Promise<Informe
 
     const saldoActual = saldoAnterior + gastosComunesMes + fondoReservaMes + otrosGastosMes - pagosMes;
 
+    // Perfil archivado sin movimientos ni saldo: no aporta nada al informe.
+    // Si todavía arrastra deuda o tuvo movimientos en el mes, se sigue mostrando.
+    const sinActividad = saldoAnterior === 0 && pagosMes === 0 && gastosComunesMes === 0 &&
+      fondoReservaMes === 0 && otrosGastosMes === 0 && saldoActual === 0;
+    if (!apt.activo && sinActividad) continue;
+
     informeApartamentos.push({
       apartamentoId: apt.id,
       numero: apt.numero,
@@ -3426,6 +3635,14 @@ export async function getInformeCombinado(
 
     // 6. Saldo actual = Saldo mes anterior + ventas mes corriente
     const saldoActual = saldoMesAnterior + gastosComunesMesCorriente + fondoReservaMesCorriente + otrosGastosMesCorriente;
+
+    // Perfil archivado sin movimientos ni saldo: no aporta nada al informe.
+    // Si todavía arrastra deuda o tuvo movimientos en el período, se sigue mostrando.
+    const sinActividad = saldoAntesDelMesAnterior === 0 && pagosMesAnterior === 0 &&
+      gcMesAnterior === 0 && frMesAnterior === 0 && ogMesAnterior === 0 &&
+      saldoMesAnterior === 0 && gastosComunesMesCorriente === 0 &&
+      fondoReservaMesCorriente === 0 && otrosGastosMesCorriente === 0 && saldoActual === 0;
+    if (!apt.activo && sinActividad) continue;
 
     apartamentosCombinados.push({
       apartamentoId: apt.id,
@@ -5626,4 +5843,529 @@ export async function getDestinatariosMensajes(): Promise<Destinatario[]> {
   }
 
   return destinatarios;
+}
+
+// ============ CIERRE DE EJERCICIO ============
+// El ejercicio es el año calendario (01/01 al 31/12, hora local).
+
+export interface CierreCuentaBancaria {
+  id: string;
+  banco: string;
+  tipoCuenta: string;
+  numeroCuenta: string;
+  titular: string | null;
+  activa: boolean;
+  saldoInicio: number;
+  ingresos: number;
+  egresos: number;
+  saldoCierre: number;
+  cantidadMovimientos: number;
+}
+
+export interface CierreFondo {
+  ingresos: number;
+  egresos: number;
+  resultado: number;
+}
+
+export interface CierreMes {
+  mes: number;
+  label: string;
+  ingresos: number;
+  egresos: number;
+  saldoBancarioFinMes: number;
+  cargosEmitidos: number;
+  cobranzas: number;
+}
+
+export interface CierreApartamento {
+  apartamentoId: string;
+  numero: string;
+  piso: number | null;
+  tipoOcupacion: 'PROPIETARIO' | 'INQUILINO';
+  contactoNombre: string | null;
+  contactoApellido: string | null;
+  activo: boolean;
+  saldoInicio: number;
+  cargosGastosComunes: number;
+  cargosFondoReserva: number;
+  cargosOtrosGastos: number;
+  pagos: number;
+  saldoCierre: number;
+}
+
+export interface CierreEgresoServicio {
+  servicio: string;
+  cantidad: number;
+  total: number;
+}
+
+export interface CierreTotales {
+  saldoBancarioInicio: number;
+  ingresosBanco: number;
+  egresosBanco: number;
+  saldoBancarioCierre: number;
+  cargosEmitidos: number;
+  cobranzas: number;
+  // Suma neta de saldos de las unidades (deuda menos saldos a favor)
+  deudaUnidadesInicio: number;
+  deudaUnidadesCierre: number;
+  unidadesConDeuda: number;
+}
+
+// Foto de los saldos guardada al cerrar, para poder verificar luego que no cambiaron
+export interface CierreEjercicioSnapshot extends CierreTotales {
+  cuentas: { id: string; banco: string; numeroCuenta: string; saldoCierre: number }[];
+  apartamentos: { apartamentoId: string; numero: string; tipoOcupacion: string; saldoCierre: number }[];
+}
+
+export interface CierreEjercicio {
+  id: string;
+  anio: number;
+  fechaCierre: string;
+  observaciones: string | null;
+  snapshot: CierreEjercicioSnapshot;
+}
+
+export interface EstadoCuentaBancoArchivo {
+  id: string;
+  anio: number;
+  cuentaBancariaId: string | null;
+  nombreArchivo: string;
+  tamanio: number;
+  paginas: number;
+  createdAt: string;
+}
+
+export interface CierreEjercicioData {
+  anio: number;
+  fechaInicio: string;
+  fechaFin: string;
+  cuentas: CierreCuentaBancaria[];
+  fondos: {
+    gastosComunes: CierreFondo;
+    fondoReserva: CierreFondo;
+    sinClasificar: CierreFondo;
+    total: CierreFondo;
+  };
+  meses: CierreMes[];
+  apartamentos: CierreApartamento[];
+  egresosPorServicio: CierreEgresoServicio[];
+  totales: CierreTotales;
+  cierre: CierreEjercicio | null;
+  ultimoAnioCerrado: number | null;
+  estadosCuenta: EstadoCuentaBancoArchivo[];
+}
+
+const redondear2 = (n: number) => Math.round(n * 100) / 100;
+
+// Reparte un cobro entre fondos con el mismo criterio que los informes:
+// los pagos de Otros Gastos se imputan contablemente a Fondo de Reserva.
+function repartirCobroPorFondo(recibo: Transaccion, monto: number): { gc: number; fr: number; resto: number } {
+  if (recibo.clasificacionPago === 'GASTO_COMUN') return { gc: monto, fr: 0, resto: 0 };
+  if (recibo.clasificacionPago === 'FONDO_RESERVA' || recibo.clasificacionPago === 'OTROS_GASTOS') {
+    return { gc: 0, fr: monto, resto: 0 };
+  }
+  const gc = recibo.montoGastoComun ?? 0;
+  const fr = (recibo.montoFondoReserva ?? 0) + (recibo.montoOtrosGastos ?? 0);
+  if (gc === 0 && fr === 0) return { gc: monto, fr: 0, resto: 0 };
+  return { gc, fr, resto: monto - gc - fr };
+}
+
+function fondoVacio(): CierreFondo {
+  return { ingresos: 0, egresos: 0, resultado: 0 };
+}
+
+function cerrarFondo(f: CierreFondo): CierreFondo {
+  return {
+    ingresos: redondear2(f.ingresos),
+    egresos: redondear2(f.egresos),
+    resultado: redondear2(f.ingresos - f.egresos),
+  };
+}
+
+export async function getCierreEjercicioData(anio: number): Promise<CierreEjercicioData> {
+  const fechaInicio = new Date(anio, 0, 1);
+  const fechaFin = new Date(anio, 11, 31, 23, 59, 59, 999);
+  const ini = fechaInicio.getTime();
+  const fin = fechaFin.getTime();
+  const ts = (fecha: string) => new Date(fecha).getTime();
+
+  const [apartamentos, transacciones, movimientos, cuentas, cierre, ultimoAnioCerrado, estadosCuenta] = await Promise.all([
+    getApartamentos(),
+    getTransacciones(),
+    getMovimientosBancariosCompletos(),
+    getCuentasBancarias(),
+    getCierreEjercicio(anio),
+    getUltimoAnioCerrado(),
+    getEstadosCuentaBanco(anio),
+  ]);
+
+  const transaccionesMap = new Map(transacciones.map(t => [t.id, t]));
+  const movimientosAnio = movimientos.filter(m => {
+    const t = ts(m.fecha);
+    return t >= ini && t <= fin;
+  });
+
+  // ── Cuentas bancarias ──
+  const cuentasCierre: CierreCuentaBancaria[] = [];
+  for (const cuenta of cuentas) {
+    let saldoInicio = cuenta.saldoInicial;
+    let ingresos = 0;
+    let egresos = 0;
+    let cantidadMovimientos = 0;
+    for (const m of movimientos) {
+      if (m.cuentaBancariaId !== cuenta.id) continue;
+      const t = ts(m.fecha);
+      if (t < ini) {
+        saldoInicio += m.tipo === 'INGRESO' ? m.monto : -m.monto;
+      } else if (t <= fin) {
+        cantidadMovimientos++;
+        if (m.tipo === 'INGRESO') ingresos += m.monto;
+        else egresos += m.monto;
+      }
+    }
+    // Cuenta inactiva sin saldo ni movimientos en el año: no aporta nada
+    if (!cuenta.activa && cantidadMovimientos === 0 && Math.abs(saldoInicio) < 0.005) continue;
+    cuentasCierre.push({
+      id: cuenta.id,
+      banco: cuenta.banco,
+      tipoCuenta: cuenta.tipoCuenta,
+      numeroCuenta: cuenta.numeroCuenta,
+      titular: cuenta.titular,
+      activa: cuenta.activa,
+      saldoInicio: redondear2(saldoInicio),
+      ingresos: redondear2(ingresos),
+      egresos: redondear2(egresos),
+      saldoCierre: redondear2(saldoInicio + ingresos - egresos),
+      cantidadMovimientos,
+    });
+  }
+
+  // ── Resultado por fondo (sobre los movimientos bancarios del año) ──
+  const gc = fondoVacio();
+  const fr = fondoVacio();
+  const sc = fondoVacio();
+  const fondoPorClasificacion = (clasificacion: string | null) =>
+    clasificacion === 'GASTO_COMUN' ? gc
+      : clasificacion === 'FONDO_RESERVA' || clasificacion === 'OTROS_GASTOS' ? fr
+      : sc;
+
+  for (const m of movimientosAnio) {
+    if (m.tipo === 'EGRESO') {
+      fondoPorClasificacion(m.clasificacion).egresos += m.monto;
+      continue;
+    }
+    const recibo = m.transaccionId ? transaccionesMap.get(m.transaccionId) : undefined;
+    if (recibo && recibo.tipo === 'RECIBO_PAGO') {
+      const reparto = repartirCobroPorFondo(recibo, m.monto);
+      gc.ingresos += reparto.gc;
+      fr.ingresos += reparto.fr;
+      sc.ingresos += reparto.resto;
+    } else {
+      fondoPorClasificacion(m.clasificacion).ingresos += m.monto;
+    }
+  }
+  const total: CierreFondo = {
+    ingresos: gc.ingresos + fr.ingresos + sc.ingresos,
+    egresos: gc.egresos + fr.egresos + sc.egresos,
+    resultado: 0,
+  };
+
+  // ── Evolución mensual ──
+  const saldoInicialCuentas = cuentas.reduce((s, c) => s + c.saldoInicial, 0);
+  const meses: CierreMes[] = [];
+  for (let i = 0; i < 12; i++) {
+    const inicioMes = new Date(anio, i, 1).getTime();
+    const finMes = new Date(anio, i + 1, 0, 23, 59, 59, 999).getTime();
+    let ingresos = 0;
+    let egresos = 0;
+    let saldoFinMes = saldoInicialCuentas;
+    for (const m of movimientos) {
+      const t = ts(m.fecha);
+      if (t <= finMes) saldoFinMes += m.tipo === 'INGRESO' ? m.monto : -m.monto;
+      if (t >= inicioMes && t <= finMes) {
+        if (m.tipo === 'INGRESO') ingresos += m.monto;
+        else egresos += m.monto;
+      }
+    }
+    let cargosEmitidos = 0;
+    let cobranzas = 0;
+    for (const t of transacciones) {
+      if (!t.apartamentoId) continue;
+      const tiempo = ts(t.fecha);
+      if (tiempo < inicioMes || tiempo > finMes) continue;
+      if (t.tipo === 'VENTA_CREDITO') cargosEmitidos += t.monto;
+      else if (t.tipo === 'RECIBO_PAGO') cobranzas += t.monto;
+    }
+    meses.push({
+      mes: i + 1,
+      label: MESES_LABELS[i],
+      ingresos: redondear2(ingresos),
+      egresos: redondear2(egresos),
+      saldoBancarioFinMes: redondear2(saldoFinMes),
+      cargosEmitidos: redondear2(cargosEmitidos),
+      cobranzas: redondear2(cobranzas),
+    });
+  }
+
+  // ── Estado de cuenta por unidad ──
+  const transaccionesPorApto = new Map<string, Transaccion[]>();
+  for (const t of transacciones) {
+    if (!t.apartamentoId) continue;
+    const lista = transaccionesPorApto.get(t.apartamentoId) ?? [];
+    lista.push(t);
+    transaccionesPorApto.set(t.apartamentoId, lista);
+  }
+
+  const apartamentosCierre: CierreApartamento[] = [];
+  for (const apt of apartamentos) {
+    let saldoInicio = 0;
+    let cargosGC = 0;
+    let cargosFR = 0;
+    let cargosOG = 0;
+    let pagos = 0;
+    for (const t of transaccionesPorApto.get(apt.id) ?? []) {
+      if (t.tipo !== 'VENTA_CREDITO' && t.tipo !== 'RECIBO_PAGO') continue;
+      const tiempo = ts(t.fecha);
+      if (tiempo < ini) {
+        saldoInicio += t.tipo === 'VENTA_CREDITO' ? t.monto : -t.monto;
+      } else if (tiempo <= fin) {
+        if (t.tipo === 'RECIBO_PAGO') pagos += t.monto;
+        else if (t.categoria === 'GASTOS_COMUNES') cargosGC += t.monto;
+        else if (t.categoria === 'FONDO_RESERVA') cargosFR += t.monto;
+        else cargosOG += t.monto;
+      }
+    }
+    const saldoCierre = saldoInicio + cargosGC + cargosFR + cargosOG - pagos;
+    const sinActividad = [saldoInicio, cargosGC, cargosFR, cargosOG, pagos, saldoCierre].every(v => Math.abs(v) < 0.005);
+    if (!apt.activo && sinActividad) continue;
+
+    apartamentosCierre.push({
+      apartamentoId: apt.id,
+      numero: apt.numero,
+      piso: apt.piso,
+      tipoOcupacion: apt.tipoOcupacion,
+      contactoNombre: apt.contactoNombre,
+      contactoApellido: apt.contactoApellido,
+      activo: Boolean(apt.activo),
+      saldoInicio: redondear2(saldoInicio),
+      cargosGastosComunes: redondear2(cargosGC),
+      cargosFondoReserva: redondear2(cargosFR),
+      cargosOtrosGastos: redondear2(cargosOG),
+      pagos: redondear2(pagos),
+      saldoCierre: redondear2(saldoCierre),
+    });
+  }
+  apartamentosCierre.sort((a, b) => {
+    const porNumero = a.numero.localeCompare(b.numero, undefined, { numeric: true });
+    return porNumero !== 0 ? porNumero : a.tipoOcupacion.localeCompare(b.tipoOcupacion);
+  });
+
+  // ── Egresos por servicio ──
+  const porServicio = new Map<string, CierreEgresoServicio>();
+  for (const m of movimientosAnio) {
+    if (m.tipo !== 'EGRESO') continue;
+    const nombre = m.servicio?.nombre || 'Sin servicio asignado';
+    const item = porServicio.get(nombre) ?? { servicio: nombre, cantidad: 0, total: 0 };
+    item.cantidad++;
+    item.total += m.monto;
+    porServicio.set(nombre, item);
+  }
+  const egresosPorServicio = Array.from(porServicio.values())
+    .map(e => ({ ...e, total: redondear2(e.total) }))
+    .sort((a, b) => b.total - a.total);
+
+  const suma = <T,>(lista: T[], f: (x: T) => number) => redondear2(lista.reduce((s, x) => s + f(x), 0));
+  const totales: CierreTotales = {
+    saldoBancarioInicio: suma(cuentasCierre, c => c.saldoInicio),
+    ingresosBanco: suma(cuentasCierre, c => c.ingresos),
+    egresosBanco: suma(cuentasCierre, c => c.egresos),
+    saldoBancarioCierre: suma(cuentasCierre, c => c.saldoCierre),
+    cargosEmitidos: suma(apartamentosCierre, a => a.cargosGastosComunes + a.cargosFondoReserva + a.cargosOtrosGastos),
+    cobranzas: suma(apartamentosCierre, a => a.pagos),
+    deudaUnidadesInicio: suma(apartamentosCierre, a => a.saldoInicio),
+    deudaUnidadesCierre: suma(apartamentosCierre, a => a.saldoCierre),
+    unidadesConDeuda: apartamentosCierre.filter(a => a.saldoCierre > 0.005).length,
+  };
+
+  return {
+    anio,
+    fechaInicio: fechaInicio.toISOString(),
+    fechaFin: fechaFin.toISOString(),
+    cuentas: cuentasCierre,
+    fondos: {
+      gastosComunes: cerrarFondo(gc),
+      fondoReserva: cerrarFondo(fr),
+      sinClasificar: cerrarFondo(sc),
+      total: cerrarFondo(total),
+    },
+    meses,
+    apartamentos: apartamentosCierre,
+    egresosPorServicio,
+    totales,
+    cierre,
+    ultimoAnioCerrado,
+    estadosCuenta,
+  };
+}
+
+interface CierreEjercicioDB {
+  id: string;
+  anio: number;
+  fechaCierre: string;
+  observaciones: string | null;
+  snapshot: string;
+}
+
+function parseCierre(row: CierreEjercicioDB): CierreEjercicio {
+  return {
+    id: row.id,
+    anio: row.anio,
+    fechaCierre: row.fechaCierre,
+    observaciones: row.observaciones,
+    snapshot: JSON.parse(row.snapshot) as CierreEjercicioSnapshot,
+  };
+}
+
+export async function getCierreEjercicio(anio: number): Promise<CierreEjercicio | null> {
+  const database = await getDatabase();
+  const rows = await database.select<CierreEjercicioDB[]>('SELECT * FROM CierreEjercicio WHERE anio = ?', [anio]);
+  return rows[0] ? parseCierre(rows[0]) : null;
+}
+
+export async function getCierresEjercicio(): Promise<CierreEjercicio[]> {
+  const database = await getDatabase();
+  const rows = await database.select<CierreEjercicioDB[]>('SELECT * FROM CierreEjercicio ORDER BY anio DESC');
+  return rows.map(parseCierre);
+}
+
+export async function cerrarEjercicio(anio: number, observaciones: string | null): Promise<CierreEjercicio> {
+  if (anio >= new Date().getFullYear()) {
+    throw new Error(`El ejercicio ${anio} todavía no terminó: se puede cerrar a partir del 01/01/${anio + 1}.`);
+  }
+  if (await getCierreEjercicio(anio)) {
+    throw new Error(`El ejercicio ${anio} ya está cerrado.`);
+  }
+
+  const data = await getCierreEjercicioData(anio);
+  const snapshot: CierreEjercicioSnapshot = {
+    ...data.totales,
+    cuentas: data.cuentas.map(c => ({ id: c.id, banco: c.banco, numeroCuenta: c.numeroCuenta, saldoCierre: c.saldoCierre })),
+    apartamentos: data.apartamentos.map(a => ({
+      apartamentoId: a.apartamentoId,
+      numero: a.numero,
+      tipoOcupacion: a.tipoOcupacion,
+      saldoCierre: a.saldoCierre,
+    })),
+  };
+
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+  await database.execute(
+    `INSERT INTO CierreEjercicio (id, anio, fechaCierre, observaciones, snapshot, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [id, anio, now, observaciones?.trim() || null, JSON.stringify(snapshot), now, now]
+  );
+  ultimoAnioCerradoCache = undefined;
+
+  // Dejar constancia en la bitácora (si falla, el cierre igual queda hecho)
+  try {
+    await createRegistro({
+      fecha: now,
+      tipo: 'NOVEDAD',
+      detalle: `Cierre del ejercicio ${anio}`,
+      observaciones: observaciones?.trim() || null,
+      situacion: 'REALIZADO',
+    });
+  } catch (e) {
+    console.error('No se pudo registrar el cierre en la bitácora:', e);
+  }
+
+  return (await getCierreEjercicio(anio))!;
+}
+
+export async function reabrirEjercicio(anio: number, motivo: string | null): Promise<void> {
+  const cierre = await getCierreEjercicio(anio);
+  if (!cierre) {
+    throw new Error(`El ejercicio ${anio} no está cerrado.`);
+  }
+  const ultimo = await getUltimoAnioCerrado();
+  if (ultimo !== null && ultimo !== anio) {
+    throw new Error(`Primero hay que reabrir el ejercicio ${ultimo}: solo se puede reabrir el último ejercicio cerrado.`);
+  }
+
+  const database = await getDatabase();
+  await database.execute('DELETE FROM CierreEjercicio WHERE anio = ?', [anio]);
+  ultimoAnioCerradoCache = undefined;
+
+  try {
+    await createRegistro({
+      fecha: getCurrentTimestamp(),
+      tipo: 'NOVEDAD',
+      detalle: `Reapertura del ejercicio ${anio}`,
+      observaciones: motivo?.trim() || null,
+      situacion: 'REALIZADO',
+    });
+  } catch (e) {
+    console.error('No se pudo registrar la reapertura en la bitácora:', e);
+  }
+}
+
+// ── Estados de cuenta emitidos por el banco (PDF), anexados al informe de cierre ──
+
+export async function getEstadosCuentaBanco(anio: number): Promise<EstadoCuentaBancoArchivo[]> {
+  const database = await getDatabase();
+  return database.select<EstadoCuentaBancoArchivo[]>(
+    `SELECT id, anio, cuentaBancariaId, nombreArchivo, tamanio, paginas, createdAt
+     FROM EstadoCuentaBancoArchivo WHERE anio = ? ORDER BY createdAt ASC`,
+    [anio]
+  );
+}
+
+export async function getContenidoEstadoCuentaBanco(id: string): Promise<string | null> {
+  const database = await getDatabase();
+  const rows = await database.select<{ contenidoBase64: string }[]>(
+    'SELECT contenidoBase64 FROM EstadoCuentaBancoArchivo WHERE id = ?',
+    [id]
+  );
+  return rows[0]?.contenidoBase64 ?? null;
+}
+
+export async function createEstadoCuentaBanco(data: {
+  anio: number;
+  cuentaBancariaId: string | null;
+  nombreArchivo: string;
+  tamanio: number;
+  paginas: number;
+  contenidoBase64: string;
+}): Promise<EstadoCuentaBancoArchivo> {
+  const database = await getDatabase();
+  const id = generateId();
+  const now = getCurrentTimestamp();
+  await database.execute(
+    `INSERT INTO EstadoCuentaBancoArchivo (id, anio, cuentaBancariaId, nombreArchivo, tamanio, paginas, contenidoBase64, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.anio, data.cuentaBancariaId, data.nombreArchivo, data.tamanio, data.paginas, data.contenidoBase64, now]
+  );
+  return {
+    id,
+    anio: data.anio,
+    cuentaBancariaId: data.cuentaBancariaId,
+    nombreArchivo: data.nombreArchivo,
+    tamanio: data.tamanio,
+    paginas: data.paginas,
+    createdAt: now,
+  };
+}
+
+export async function updateCuentaEstadoCuentaBanco(id: string, cuentaBancariaId: string | null): Promise<void> {
+  const database = await getDatabase();
+  await database.execute('UPDATE EstadoCuentaBancoArchivo SET cuentaBancariaId = ? WHERE id = ?', [cuentaBancariaId, id]);
+}
+
+export async function deleteEstadoCuentaBanco(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.execute('DELETE FROM EstadoCuentaBancoArchivo WHERE id = ?', [id]);
 }

@@ -21,6 +21,7 @@ import {
   HandCoins,
   LineChart,
   MessageSquare,
+  CalendarCheck,
 } from "lucide-react"
 import {
   Tooltip,
@@ -39,6 +40,7 @@ const navigation = [
   { name: "Proyectos", href: "/proyectos", icon: FolderKanban },
   { name: "Bitácora", href: "/bitacora", icon: ClipboardList },
   { name: "Informes", href: "/informes", icon: FileBarChart },
+  { name: "Cierre de Ejercicio", href: "/cierre-ejercicio", icon: CalendarCheck },
   { name: "Flujo de Caja", href: "/flujo-caja", icon: LineChart },
   { name: "Análisis", href: "/analisis", icon: PieChart },
   { name: "Mensajes", href: "/mensajes", icon: MessageSquare },

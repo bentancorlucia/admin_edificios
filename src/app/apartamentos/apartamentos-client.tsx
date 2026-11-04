@@ -48,6 +48,7 @@ import {
   obtenerSaldosCuentaCorriente,
   getTransaccionesByApartamento,
   type Transaccion,
+  mensajeDeError,
 } from "@/lib/database"
 import {
   generateApartamentoPDF,
@@ -80,7 +81,13 @@ type ApartamentoAgrupado = {
   piso: number | null
   propietario: Apartamento | null
   inquilino: Apartamento | null
+  // Perfiles archivados que quedaron desplazados por uno activo del mismo tipo
+  // (p. ej. el inquilino anterior cuando ya entró uno nuevo).
+  archivados: Apartamento[]
 }
+
+const esDuplicadoActivo = (error: unknown) =>
+  String(error instanceof Error ? error.message : error).includes("UNIQUE constraint failed")
 
 type Props = {
   initialApartamentos: Apartamento[]
@@ -102,25 +109,27 @@ const tipoOcupacionBadge = {
   INQUILINO: "I",
 }
 
-// Función para agrupar apartamentos por número
+// Función para agrupar apartamentos por número.
+// Por tipo puede haber un perfil activo y varios archivados: el activo ocupa el
+// lugar principal y los demás archivados van a "archivados".
 function agruparApartamentos(apartamentos: Apartamento[]): ApartamentoAgrupado[] {
   const grupos = new Map<string, ApartamentoAgrupado>()
 
   apartamentos.forEach((apt) => {
-    const existing = grupos.get(apt.numero)
-    if (existing) {
-      if (apt.tipoOcupacion === "PROPIETARIO") {
-        existing.propietario = apt
-      } else {
-        existing.inquilino = apt
-      }
+    let grupo = grupos.get(apt.numero)
+    if (!grupo) {
+      grupo = { numero: apt.numero, piso: apt.piso, propietario: null, inquilino: null, archivados: [] }
+      grupos.set(apt.numero, grupo)
+    }
+    const slot = apt.tipoOcupacion === "PROPIETARIO" ? "propietario" : "inquilino"
+    const actual = grupo[slot]
+    if (!actual) {
+      grupo[slot] = apt
+    } else if (actual.activo === false && apt.activo !== false) {
+      grupo.archivados.push(actual)
+      grupo[slot] = apt
     } else {
-      grupos.set(apt.numero, {
-        numero: apt.numero,
-        piso: apt.piso,
-        propietario: apt.tipoOcupacion === "PROPIETARIO" ? apt : null,
-        inquilino: apt.tipoOcupacion === "INQUILINO" ? apt : null,
-      })
+      grupo.archivados.push(apt)
     }
   })
 
@@ -164,9 +173,8 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   )
 
   // Se agrupa SIEMPRE sobre todos los apartamentos (incluidos archivados) para que
-  // cada grupo conozca ambos perfiles y no se ofrezca "agregar" un tipo que en
-  // realidad existe archivado (colisionaría con el UNIQUE numero+tipoOcupacion).
-  // La ocultación de archivados se hace al renderizar cada sección.
+  // cada grupo conozca su histórico de perfiles. La ocultación de archivados se
+  // hace al renderizar cada sección.
   const apartamentosAgrupados = useMemo(
     () => agruparApartamentos(apartamentos),
     [apartamentos]
@@ -273,7 +281,12 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       resetForm()
     } catch (error) {
       console.error("Error saving apartamento:", error)
-      setError("Error inesperado. Por favor intenta de nuevo.")
+      if (esDuplicadoActivo(error)) {
+        const tipo = formData.tipoOcupacion === "INQUILINO" ? "un inquilino" : "un propietario"
+        setError(`El apto ${formData.numero} ya tiene ${tipo} activo. Archivalo antes de registrar uno nuevo.`)
+      } else {
+        setError("Error inesperado. Por favor intenta de nuevo.")
+      }
     } finally {
       setIsLoading(false)
     }
@@ -291,7 +304,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       setMovimientosCount(null)
     } catch (error) {
       console.error("Error deleting apartamento:", error)
-      alert("Error al eliminar el apartamento")
+      alert(mensajeDeError(error, "Error al eliminar el apartamento"))
     } finally {
       setIsLoading(false)
     }
@@ -330,7 +343,10 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
       toast({ title: "Perfil restaurado", description: `Apto ${apt.numero} reactivado.`, variant: "success" })
     } catch (error) {
       console.error("Error restaurando apartamento:", error)
-      toast({ title: "Error", description: "No se pudo restaurar el perfil", variant: "destructive" })
+      const description = esDuplicadoActivo(error)
+        ? `El apto ${apt.numero} ya tiene un ${tipoOcupacionLabels[apt.tipoOcupacion].toLowerCase()} activo. Archivalo antes de restaurar este.`
+        : "No se pudo restaurar el perfil"
+      toast({ title: "Error", description, variant: "destructive" })
     }
   }
 
@@ -581,7 +597,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
           </div>
         ) : (
           filteredApartamentos.map((grupo) => {
-            const tieneAmbos = grupo.propietario && grupo.inquilino
+            const propActivo = !!grupo.propietario && grupo.propietario.activo !== false
+            const inqActivo = !!grupo.inquilino && grupo.inquilino.activo !== false
+            const archivadosVisibles = mostrarArchivados ? grupo.archivados : []
             const aptPrincipal = grupo.propietario || grupo.inquilino!
 
             return (
@@ -744,14 +762,38 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                     </div>
                   )}
 
-                  {/* Botón para agregar el tipo faltante */}
-                  {!tieneAmbos && (
+                  {/* Perfiles archivados anteriores (histórico) */}
+                  {archivadosVisibles.map((arch) => (
+                    <div key={arch.id} className="mb-3 p-2 rounded-lg border bg-slate-100/70 border-slate-200 opacity-70 flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                          {tipoOcupacionLabels[arch.tipoOcupacion]} anterior · Archivado
+                        </p>
+                        <p className="text-xs text-slate-700 truncate">
+                          {arch.contactoNombre
+                            ? `${arch.contactoNombre} ${arch.contactoApellido || ''}`.trim()
+                            : <span className="text-slate-400 italic">Sin contacto</span>}
+                          {(saldos[arch.id] || 0) !== 0 && (
+                            <span className={`ml-2 font-bold ${(saldos[arch.id] || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {(saldos[arch.id] || 0) > 0 ? '-' : '+'}{formatCurrency(Math.abs(saldos[arch.id] || 0))}
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-emerald-600 hover:bg-emerald-100 shrink-0" onClick={() => handleRestaurar(arch)} title="Restaurar">
+                        <ArchiveRestore className="h-3.5 w-3.5 mr-1" /><span className="text-xs">Restaurar</span>
+                      </Button>
+                    </div>
+                  ))}
+
+                  {/* Botón para agregar el tipo faltante (sin perfil activo) */}
+                  {(!propActivo || !inqActivo) && (
                     <Button
                       variant="outline"
                       size="sm"
                       className="w-full border-dashed text-xs h-8"
                       onClick={() => {
-                        const tipoFaltante = grupo.propietario ? "INQUILINO" : "PROPIETARIO"
+                        const tipoFaltante = propActivo ? "INQUILINO" : "PROPIETARIO"
                         setFormData({
                           numero: grupo.numero,
                           piso: grupo.piso?.toString() || "",
@@ -770,7 +812,7 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                       }}
                     >
                       <Plus className="h-3 w-3 mr-1" />
-                      Agregar {grupo.propietario ? "Inquilino" : "Propietario"}
+                      Agregar {propActivo ? "Inquilino" : "Propietario"}
                     </Button>
                   )}
                 </CardContent>

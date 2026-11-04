@@ -70,6 +70,7 @@ import {
   type DeudasPorConcepto,
   type DistribucionPago,
   type InfoBancoVinculado,
+  mensajeDeError,
 } from "@/lib/database"
 import { generateTransaccionesPDF, downloadReciboPagoPDF, type ReciboPagoData } from "@/lib/pdf"
 import { savePDFWithDialog } from "@/lib/save-pdf"
@@ -481,7 +482,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       resetTransaccionForm()
     } catch (error) {
       console.error("Error creating transaccion:", error)
-      alert("Error al registrar la transacción. Intente nuevamente.")
+      alert(mensajeDeError(error, "Error al registrar la transacción. Intente nuevamente."))
     } finally {
       setIsLoading(false)
     }
@@ -541,7 +542,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       })
     } catch (error) {
       console.error("Error creating venta credito:", error)
-      alert("Error al registrar la venta a crédito. Intente nuevamente.")
+      alert(mensajeDeError(error, "Error al registrar la venta a crédito. Intente nuevamente."))
     } finally {
       setIsLoading(false)
     }
@@ -628,7 +629,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       setDistribucionPago(null)
     } catch (error) {
       console.error("Error creating recibo pago:", error)
-      alert("Error al registrar el pago. Intente nuevamente.")
+      alert(mensajeDeError(error, "Error al registrar el pago. Intente nuevamente."))
     } finally {
       setIsLoading(false)
     }
@@ -778,6 +779,7 @@ export function TransaccionesClient({ initialTransacciones, apartamentos, cuenta
       setInfoBancoVinculadoEdit(null)
     } catch (error) {
       console.error("Error updating transaccion:", error)
+      alert(mensajeDeError(error, "Error al actualizar la transacción. Intente nuevamente."))
     } finally {
       setIsLoading(false)
     }
