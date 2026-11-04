@@ -52,6 +52,7 @@ import {
 } from "lucide-react"
 import {
   type CierreEjercicioData,
+  type CierreFondoEgreso,
   type CuentaBancaria,
   type EstadoCuentaBancoArchivo,
   cerrarEjercicio,
@@ -75,6 +76,12 @@ import { toast } from "@/hooks/use-toast"
 
 const SIN_CUENTA = "__sin_cuenta__"
 const TAMANIO_MAXIMO = 20 * 1024 * 1024
+
+const GRUPOS_FONDO_EGRESO: { fondo: CierreFondoEgreso; titulo: string }[] = [
+  { fondo: "GASTO_COMUN", titulo: "Gastos Comunes" },
+  { fondo: "FONDO_RESERVA", titulo: "Fondo de Reserva (incluye Otros Gastos)" },
+  { fondo: "SIN_CLASIFICAR", titulo: "Sin clasificar" },
+]
 
 const tipoOcupacionLabels: Record<string, string> = {
   PROPIETARIO: "Propietario",
@@ -290,6 +297,7 @@ export function CierreEjercicioClient() {
   }
 
   const t = data?.totales
+  const hayTransferencias = Boolean(data && data.cuentas.some(c => Math.abs(c.transferencias) > 0.005))
 
   return (
     <div className="space-y-6 p-4 sm:p-6">
@@ -533,13 +541,14 @@ export function CierreEjercicioClient() {
                         <TableHead className="text-right">Saldo al 01/01</TableHead>
                         <TableHead className="text-right">Ingresos</TableHead>
                         <TableHead className="text-right">Egresos</TableHead>
+                        {hayTransferencias && <TableHead className="text-right">Transferencias</TableHead>}
                         <TableHead className="text-right">Saldo al 31/12</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {data.cuentas.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={5} className="py-6 text-center text-slate-500">
+                          <TableCell colSpan={hayTransferencias ? 6 : 5} className="py-6 text-center text-slate-500">
                             No hay cuentas bancarias registradas.
                           </TableCell>
                         </TableRow>
@@ -562,6 +571,12 @@ export function CierreEjercicioClient() {
                           <TableCell className="text-right">{formatCurrency(c.saldoInicio)}</TableCell>
                           <TableCell className="text-right text-green-600">{formatCurrency(c.ingresos)}</TableCell>
                           <TableCell className="text-right text-red-600">{formatCurrency(c.egresos)}</TableCell>
+                          {hayTransferencias && (
+                            <TableCell className="text-right text-slate-600">
+                              {c.transferencias > 0 ? "+" : ""}
+                              {formatCurrency(c.transferencias)}
+                            </TableCell>
+                          )}
                           <TableCell className="text-right font-semibold">{formatCurrency(c.saldoCierre)}</TableCell>
                         </TableRow>
                       ))}
@@ -572,10 +587,21 @@ export function CierreEjercicioClient() {
                         <TableCell className="text-right">{formatCurrency(t.saldoBancarioInicio)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(t.ingresosBanco)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(t.egresosBanco)}</TableCell>
+                        {hayTransferencias && (
+                          <TableCell className="text-right">{formatCurrency(data.cuentas.reduce((s, c) => s + c.transferencias, 0))}</TableCell>
+                        )}
                         <TableCell className="text-right">{formatCurrency(t.saldoBancarioCierre)}</TableCell>
                       </TableRow>
                     </TableFooter>
                   </Table>
+                  {hayTransferencias && (
+                    <p className="mt-3 text-xs text-slate-500">
+                      {data.transferenciasEntreCuentas.cantidad === 1
+                        ? "Hubo 1 transferencia entre cuentas del edificio"
+                        : `Hubo ${data.transferenciasEntreCuentas.cantidad} transferencias entre cuentas del edificio`}{" "}
+                      por {formatCurrency(data.transferenciasEntreCuentas.monto)}. No se cuentan como ingresos ni egresos del ejercicio.
+                    </p>
+                  )}
                 </CardContent>
               </Card>
 
@@ -740,21 +766,45 @@ export function CierreEjercicioClient() {
                           <TableHead>Servicio / Proveedor</TableHead>
                           <TableHead className="text-right">Pagos</TableHead>
                           <TableHead className="text-right">Total</TableHead>
-                          <TableHead className="text-right">% del total</TableHead>
+                          <TableHead className="text-right">% del fondo</TableHead>
                         </TableRow>
                       </TableHeader>
-                      <TableBody>
-                        {data.egresosPorServicio.map(e => (
-                          <TableRow key={e.servicio}>
-                            <TableCell className="font-medium">{e.servicio}</TableCell>
-                            <TableCell className="text-right">{e.cantidad}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(e.total)}</TableCell>
-                            <TableCell className="text-right text-slate-500">
-                              {t.egresosBanco > 0 ? `${((e.total / t.egresosBanco) * 100).toFixed(1)} %` : "-"}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
+                      {GRUPOS_FONDO_EGRESO.map(grupo => {
+                        const items = data.egresosPorServicio.filter(e => e.fondo === grupo.fondo)
+                        if (items.length === 0) return null
+                        const totalFondo = items.reduce((s, e) => s + e.total, 0)
+                        return (
+                          <TableBody key={grupo.fondo}>
+                            <TableRow className="bg-blue-50 hover:bg-blue-50">
+                              <TableCell colSpan={4} className="font-semibold text-blue-700">{grupo.titulo}</TableCell>
+                            </TableRow>
+                            {items.map(e => (
+                              <TableRow key={`${e.fondo}-${e.servicio}`}>
+                                <TableCell className="pl-6 font-medium">{e.servicio}</TableCell>
+                                <TableCell className="text-right">{e.cantidad}</TableCell>
+                                <TableCell className="text-right">{formatCurrency(e.total)}</TableCell>
+                                <TableCell className="text-right text-slate-500">
+                                  {totalFondo > 0 ? `${((e.total / totalFondo) * 100).toFixed(1)} %` : "-"}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                            <TableRow className="bg-slate-50 font-semibold hover:bg-slate-50">
+                              <TableCell className="pl-6">Total {grupo.titulo}</TableCell>
+                              <TableCell className="text-right">{items.reduce((s, e) => s + e.cantidad, 0)}</TableCell>
+                              <TableCell className="text-right">{formatCurrency(totalFondo)}</TableCell>
+                              <TableCell className="text-right text-slate-500">100 %</TableCell>
+                            </TableRow>
+                          </TableBody>
+                        )
+                      })}
+                      <TableFooter>
+                        <TableRow>
+                          <TableCell>Total egresos</TableCell>
+                          <TableCell className="text-right">{data.egresosPorServicio.reduce((s, e) => s + e.cantidad, 0)}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(data.egresosPorServicio.reduce((s, e) => s + e.total, 0))}</TableCell>
+                          <TableCell />
+                        </TableRow>
+                      </TableFooter>
                     </Table>
                   )}
                 </CardContent>

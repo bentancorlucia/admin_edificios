@@ -52,6 +52,7 @@ import {
   X,
   MessageSquare,
   CheckCircle2,
+  ArrowLeftRight,
 } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
@@ -67,6 +68,10 @@ import {
   type EstadoCuentaData,
   type InfoTransaccionVinculada,
   mensajeDeError,
+  getCuentasBancariasConMovimientos,
+  crearTransferenciaEntreCuentas,
+  vincularTransferencia,
+  desvincularTransferencia,
 } from "@/lib/database"
 import { formatCurrency, formatDate } from "@/lib/utils"
 import { exportToExcel } from "@/lib/excel-export"
@@ -95,6 +100,7 @@ type Movimiento = {
   proyectoId: string | null
   conciliado: boolean
   transaccionId: string | null
+  transferenciaId?: string | null
   servicio?: {
     id: string
     nombre: string
@@ -210,6 +216,19 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
   const [historialPage, setHistorialPage] = useState(1)
   const historialPageSize = 10
 
+  // Transferencias entre cuentas del edificio
+  const [isTransferenciaDialogOpen, setIsTransferenciaDialogOpen] = useState(false)
+  const [transferenciaForm, setTransferenciaForm] = useState({
+    cuentaOrigenId: "",
+    cuentaDestinoId: "",
+    monto: 0,
+    fecha: new Date().toISOString().split("T")[0],
+    descripcion: "",
+    referencia: "",
+  })
+  const [transferenciaError, setTransferenciaError] = useState<string | null>(null)
+  const [marcarTransferencia, setMarcarTransferencia] = useState<{ cuenta: CuentaBancaria; mov: Movimiento } | null>(null)
+
   const filteredCuentas = cuentas
     .filter((cuenta) =>
       cuenta.banco.toLowerCase().includes(search.toLowerCase()) ||
@@ -221,6 +240,117 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
       if (a.activa !== b.activa) return a.activa ? -1 : 1
       return 0
     })
+
+  // Recarga todas las cuentas desde la base (las transferencias tocan dos cuentas a la vez)
+  const recargarCuentas = async () => {
+    const data = await getCuentasBancariasConMovimientos()
+    setCuentas(data as CuentaBancaria[])
+  }
+
+  // La otra pata de una transferencia
+  const getParejaTransferencia = (mov: Movimiento) => {
+    if (!mov.transferenciaId) return null
+    for (const c of cuentas) {
+      const m = c.movimientos.find((x) => x.transferenciaId === mov.transferenciaId && x.id !== mov.id)
+      if (m) return { cuenta: c, mov: m }
+    }
+    return null
+  }
+
+  // Movimientos de otras cuentas que pueden ser la contrapartida (tipo opuesto, mismo monto)
+  const getCandidatosTransferencia = (cuenta: CuentaBancaria, mov: Movimiento) => {
+    const fechaMov = new Date(mov.fecha).getTime()
+    return cuentas
+      .filter((c) => c.id !== cuenta.id)
+      .flatMap((c) =>
+        c.movimientos
+          .filter((m) => m.tipo !== mov.tipo && Math.abs(m.monto - mov.monto) < 0.005 && !m.transferenciaId && !m.transaccionId)
+          .map((m) => ({ cuenta: c, mov: m, distancia: Math.abs(new Date(m.fecha).getTime() - fechaMov) }))
+      )
+      .sort((a, b) => a.distancia - b.distancia)
+  }
+
+  const openTransferenciaDialog = () => {
+    const activas = cuentas.filter((c) => c.activa)
+    const origen = activas[0]?.id ?? ""
+    setTransferenciaForm({
+      cuentaOrigenId: origen,
+      cuentaDestinoId: activas.find((c) => c.id !== origen)?.id ?? "",
+      monto: 0,
+      fecha: new Date().toISOString().split("T")[0],
+      descripcion: "",
+      referencia: "",
+    })
+    setTransferenciaError(null)
+    setIsTransferenciaDialogOpen(true)
+  }
+
+  const handleCrearTransferencia = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setTransferenciaError(null)
+    const f = transferenciaForm
+    if (!f.cuentaOrigenId || !f.cuentaDestinoId) {
+      setTransferenciaError("Elegí la cuenta de origen y la de destino.")
+      return
+    }
+    if (f.cuentaOrigenId === f.cuentaDestinoId) {
+      setTransferenciaError("La cuenta de origen y la de destino deben ser distintas.")
+      return
+    }
+    if (!(f.monto > 0)) {
+      setTransferenciaError("Ingresá un monto mayor a cero.")
+      return
+    }
+    setIsLoading(true)
+    try {
+      const [anio, mes, dia] = f.fecha.split("-").map((n) => parseInt(n))
+      await crearTransferenciaEntreCuentas({
+        cuentaOrigenId: f.cuentaOrigenId,
+        cuentaDestinoId: f.cuentaDestinoId,
+        monto: f.monto,
+        fecha: new Date(Date.UTC(anio, mes - 1, dia, 12, 0, 0)).toISOString(),
+        descripcion: f.descripcion || null,
+        referencia: f.referencia || null,
+      })
+      await recargarCuentas()
+      setIsTransferenciaDialogOpen(false)
+      toast({ title: "Transferencia registrada", description: "Se registró el egreso en la cuenta de origen y el ingreso en la de destino.", variant: "success" })
+    } catch (error) {
+      setTransferenciaError(error instanceof Error ? error.message : "No se pudo registrar la transferencia.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleVincularTransferencia = async (contraparteId: string) => {
+    if (!marcarTransferencia) return
+    setIsLoading(true)
+    try {
+      await vincularTransferencia(marcarTransferencia.mov.id, contraparteId)
+      await recargarCuentas()
+      setMarcarTransferencia(null)
+      toast({ title: "Marcado como transferencia", description: "Los dos movimientos quedaron vinculados como transferencia entre cuentas.", variant: "success" })
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "No se pudo vincular la transferencia")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleDesvincularTransferencia = async () => {
+    if (!marcarTransferencia?.mov.transferenciaId) return
+    setIsLoading(true)
+    try {
+      await desvincularTransferencia(marcarTransferencia.mov.transferenciaId)
+      await recargarCuentas()
+      setMarcarTransferencia(null)
+      toast({ title: "Transferencia desvinculada", description: "Los movimientos volvieron a ser ingreso y egreso comunes." })
+    } catch (error) {
+      alert(mensajeDeError(error, "No se pudo desvincular la transferencia"))
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   // Calcular saldo actual de una cuenta
   const calcularSaldo = (cuenta: CuentaBancaria) => {
@@ -577,10 +707,25 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
 
       let result
       if (isEditMode && selectedMovimiento) {
+        // Al editar solo se envían los campos que muestra el formulario. No se tocan
+        // el vínculo con el recibo ni la conciliación, y en los ingresos tampoco la
+        // clasificación (el formulario no la muestra y se sincroniza al recibo).
+        const cambios = {
+          monto: movimientoData.monto,
+          fecha: movimientoData.fecha,
+          descripcion: movimientoData.descripcion,
+          referencia: movimientoData.referencia,
+          numeroDocumento: movimientoData.numeroDocumento,
+          archivoUrl: movimientoData.archivoUrl,
+          proyectoId: movimientoData.proyectoId,
+          ...(tipoMovimiento === "EGRESO"
+            ? { clasificacion: movimientoData.clasificacion, servicioId: movimientoData.servicioId }
+            : {}),
+        }
         // Usar la función que sincroniza con transacción vinculada
         const { movimiento, transaccionActualizada } = await updateMovimientoBancarioConTransaccion(
           selectedMovimiento.id,
-          movimientoData
+          cambios
         )
         result = movimiento
 
@@ -619,6 +764,7 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
                       proyectoId: result.proyectoId,
                       conciliado: result.conciliado,
                       transaccionId: result.transaccionId,
+                      transferenciaId: result.transferenciaId ?? null,
                     }
                   : m
               ),
@@ -649,6 +795,11 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
           }
         })
       )
+
+      // Si es una transferencia, la otra pata también cambió (monto/fecha)
+      if (isEditMode && selectedMovimiento?.transferenciaId) {
+        await recargarCuentas()
+      }
 
       setIsMovimientoDialogOpen(false)
       resetMovimientoForm()
@@ -681,6 +832,11 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
             : c
         )
       )
+
+      // Si era parte de una transferencia, la otra pata dejó de serlo
+      if (selectedMovimiento.transferenciaId) {
+        await recargarCuentas()
+      }
 
       // Mostrar toast con información de lo que se eliminó
       if (transaccionEliminada) {
@@ -904,6 +1060,15 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
             >
               <MessageSquare className="h-4 w-4 mr-2" />
               Notificar
+            </Button>
+            <Button
+              onClick={openTransferenciaDialog}
+              disabled={cuentas.length < 2}
+              className="bg-white/20 text-white border-0 hover:bg-white/30 backdrop-blur-sm"
+              title="Registrar una transferencia entre dos cuentas del edificio"
+            >
+              <ArrowLeftRight className="h-4 w-4 mr-2" />
+              Transferencia
             </Button>
             <Button
               onClick={openCreateAccountDialog}
@@ -1260,6 +1425,12 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
                                           Vinculado
                                         </Badge>
                                       )}
+                                      {mov.transferenciaId && (
+                                        <Badge variant="outline" className="text-xs bg-slate-50 text-slate-600 border-slate-300 py-0 h-5">
+                                          <ArrowLeftRight className="h-3 w-3 mr-1" />
+                                          Transferencia
+                                        </Badge>
+                                      )}
                                       {mov.servicio && (
                                         <Badge className="text-xs bg-purple-100 text-purple-700 border-0 py-0 h-5">
                                           {mov.servicio.nombre}
@@ -1292,6 +1463,17 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
                                     {formatCurrency(mov.monto)}
                                   </span>
                                   <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {!mov.transaccionId && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setMarcarTransferencia({ cuenta, mov })}
+                                        className="h-7 w-7 p-0 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"
+                                        title={mov.transferenciaId ? "Ver transferencia" : "Marcar como transferencia entre cuentas"}
+                                      >
+                                        <ArrowLeftRight className="h-3.5 w-3.5" />
+                                      </Button>
+                                    )}
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -2159,6 +2341,12 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
                                               {mov.clasificacion === "GASTO_COMUN" ? "Gasto Común" : "Fondo Reserva"}
                                             </Badge>
                                           )}
+                                          {movCompleto?.transferenciaId && (
+                                            <Badge variant="outline" className="text-xs py-0 h-5 bg-slate-50 text-slate-600 border-slate-300">
+                                              <ArrowLeftRight className="h-3 w-3 mr-1" />
+                                              Transferencia
+                                            </Badge>
+                                          )}
                                           {movCompleto?.transaccionId && (
                                             <Badge variant="outline" className="text-xs py-0 h-5 bg-blue-50 text-blue-600 border-blue-200">
                                               <Link2 className="h-3 w-3 mr-1" />
@@ -2207,6 +2395,20 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
                                   <td className="px-4 py-3 text-center">
                                     {movCompleto && (
                                       <div className="flex items-center justify-center gap-0.5">
+                                        {!movCompleto.transaccionId && (
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setIsEstadoCuentaDialogOpen(false)
+                                              setMarcarTransferencia({ cuenta: selectedCuenta, mov: movCompleto })
+                                            }}
+                                            className="h-7 w-7 p-0 text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+                                            title={movCompleto.transferenciaId ? "Ver transferencia" : "Marcar como transferencia entre cuentas"}
+                                          >
+                                            <ArrowLeftRight className="h-4 w-4" />
+                                          </Button>
+                                        )}
                                         <Button
                                           variant="ghost"
                                           size="sm"
@@ -2341,6 +2543,205 @@ export function BancosClient({ initialCuentas, recibosNoVinculados, servicios, p
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Nueva transferencia entre cuentas */}
+      <Dialog open={isTransferenciaDialogOpen} onOpenChange={(open) => !isLoading && setIsTransferenciaDialogOpen(open)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowLeftRight className="h-5 w-5" />
+              Transferencia entre cuentas
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCrearTransferencia} className="space-y-4">
+            <p className="text-sm text-slate-500">
+              Registra el egreso en la cuenta de origen y el ingreso en la de destino. No cuenta como gasto ni como cobro del edificio.
+            </p>
+            {transferenciaError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{transferenciaError}</AlertDescription>
+              </Alert>
+            )}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Desde (origen)</Label>
+                <Select
+                  value={transferenciaForm.cuentaOrigenId}
+                  onValueChange={(v) => setTransferenciaForm((f) => ({ ...f, cuentaOrigenId: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elegí una cuenta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cuentas.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.banco} · {c.numeroCuenta}
+                        {!c.activa ? " (inactiva)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Hacia (destino)</Label>
+                <Select
+                  value={transferenciaForm.cuentaDestinoId}
+                  onValueChange={(v) => setTransferenciaForm((f) => ({ ...f, cuentaDestinoId: v }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Elegí una cuenta" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {cuentas.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.banco} · {c.numeroCuenta}
+                        {!c.activa ? " (inactiva)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="transferencia-monto">Monto</Label>
+                <Input
+                  id="transferencia-monto"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={transferenciaForm.monto || ""}
+                  onChange={(e) => setTransferenciaForm((f) => ({ ...f, monto: parseFloat(e.target.value) || 0 }))}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="transferencia-fecha">Fecha</Label>
+                <Input
+                  id="transferencia-fecha"
+                  type="date"
+                  value={transferenciaForm.fecha}
+                  onChange={(e) => setTransferenciaForm((f) => ({ ...f, fecha: e.target.value }))}
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="transferencia-descripcion">Descripción (opcional)</Label>
+              <Input
+                id="transferencia-descripcion"
+                value={transferenciaForm.descripcion}
+                onChange={(e) => setTransferenciaForm((f) => ({ ...f, descripcion: e.target.value }))}
+                placeholder="Si la dejás vacía se arma con el nombre de las cuentas"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="transferencia-referencia">Referencia (opcional)</Label>
+              <Input
+                id="transferencia-referencia"
+                value={transferenciaForm.referencia}
+                onChange={(e) => setTransferenciaForm((f) => ({ ...f, referencia: e.target.value }))}
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsTransferenciaDialogOpen(false)} disabled={isLoading}>
+                Cancelar
+              </Button>
+              <Button type="submit" disabled={isLoading}>
+                Registrar transferencia
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Marcar / ver transferencia de un movimiento existente */}
+      <Dialog open={marcarTransferencia !== null} onOpenChange={(open) => !open && !isLoading && setMarcarTransferencia(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ArrowLeftRight className="h-5 w-5" />
+              {marcarTransferencia?.mov.transferenciaId ? "Transferencia entre cuentas" : "Marcar como transferencia entre cuentas"}
+            </DialogTitle>
+          </DialogHeader>
+          {marcarTransferencia && (() => {
+            const { cuenta, mov } = marcarTransferencia
+            const pareja = getParejaTransferencia(mov)
+            const resumenMov = (c: CuentaBancaria, m: Movimiento) => (
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-800 truncate">{m.descripcion}</p>
+                  <p className="text-xs text-slate-500">
+                    {c.banco} · {c.numeroCuenta} · {formatDate(new Date(m.fecha))}
+                  </p>
+                </div>
+                <span className={`shrink-0 font-semibold ${m.tipo === "INGRESO" ? "text-green-600" : "text-red-600"}`}>
+                  {m.tipo === "INGRESO" ? "+" : "-"}
+                  {formatCurrency(m.monto)}
+                </span>
+              </div>
+            )
+
+            if (mov.transferenciaId) {
+              return (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-500">
+                    Estos dos movimientos son una transferencia entre cuentas del edificio: no se cuentan como ingreso ni gasto en los fondos ni en el cierre del ejercicio.
+                  </p>
+                  <div className="space-y-3 rounded-lg border p-3">
+                    {resumenMov(cuenta, mov)}
+                    {pareja ? (
+                      resumenMov(pareja.cuenta, pareja.mov)
+                    ) : (
+                      <p className="text-sm text-amber-700">No se encontró la otra parte de la transferencia.</p>
+                    )}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button variant="outline" onClick={() => setMarcarTransferencia(null)} disabled={isLoading}>
+                      Cerrar
+                    </Button>
+                    <Button variant="destructive" onClick={handleDesvincularTransferencia} disabled={isLoading}>
+                      Desvincular transferencia
+                    </Button>
+                  </div>
+                </div>
+              )
+            }
+
+            const candidatos = getCandidatosTransferencia(cuenta, mov)
+            return (
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-slate-50 p-3">{resumenMov(cuenta, mov)}</div>
+                <p className="text-sm text-slate-500">
+                  Elegí la contrapartida en la otra cuenta: un {mov.tipo === "INGRESO" ? "egreso" : "ingreso"} por el mismo monto.
+                  Los dos quedan como transferencia y dejan de contar como ingreso o gasto en los fondos y en el cierre.
+                </p>
+                {candidatos.length === 0 ? (
+                  <div className="rounded-lg border border-dashed p-4 text-sm text-slate-500">
+                    No hay {mov.tipo === "INGRESO" ? "egresos" : "ingresos"} de {formatCurrency(mov.monto)} en otras cuentas.
+                    Si la otra parte no está registrada, cargala primero en la cuenta correspondiente.
+                  </div>
+                ) : (
+                  <div className="max-h-72 divide-y overflow-y-auto rounded-lg border">
+                    {candidatos.map(({ cuenta: c, mov: m }) => (
+                      <div key={m.id} className="flex items-center gap-3 p-3">
+                        <div className="min-w-0 flex-1">{resumenMov(c, m)}</div>
+                        <Button size="sm" onClick={() => handleVincularTransferencia(m.id)} disabled={isLoading}>
+                          Vincular
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex justify-end">
+                  <Button variant="outline" onClick={() => setMarcarTransferencia(null)} disabled={isLoading}>
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            )
+          })()}
         </DialogContent>
       </Dialog>
 

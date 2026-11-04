@@ -1,6 +1,6 @@
 import jsPDF from "jspdf"
 import { PDFDocument, StandardFonts, rgb, EncryptedPDFError } from "pdf-lib"
-import type { CierreEjercicioData } from "@/lib/database"
+import type { CierreEjercicioData, CierreFondoEgreso } from "@/lib/database"
 
 type RGB = [number, number, number]
 
@@ -259,6 +259,7 @@ export async function generateCierreEjercicioPDF(
   // CUENTAS BANCARIAS
   // =====================================================
   sectionTitle("Cuentas bancarias")
+  const hayTransferencias = data.cuentas.some(c => Math.abs(c.transferencias) > 0.005)
   drawTable(
     [
       { header: "Banco", peso: 1.4 },
@@ -267,6 +268,7 @@ export async function generateCierreEjercicioPDF(
       { header: "Saldo al 01/01", peso: 1.2, align: "right" },
       { header: "Ingresos", peso: 1.2, align: "right" },
       { header: "Egresos", peso: 1.2, align: "right" },
+      ...(hayTransferencias ? [{ header: "Transferencias", peso: 1.2, align: "right" as Align }] : []),
       { header: "Saldo al 31/12", peso: 1.2, align: "right" },
     ],
     data.cuentas.map(c => [
@@ -276,10 +278,32 @@ export async function generateCierreEjercicioPDF(
       montoColor(c.saldoInicio),
       { text: formatCurrency(c.ingresos), color: colors.positive },
       { text: formatCurrency(c.egresos), color: colors.negative },
+      ...(hayTransferencias ? [`${c.transferencias > 0 ? "+" : ""}${formatCurrency(c.transferencias)}`] : []),
       { ...montoColor(c.saldoCierre), bold: true },
     ]),
-    ["Total", "", "", formatCurrency(t.saldoBancarioInicio), formatCurrency(t.ingresosBanco), formatCurrency(t.egresosBanco), formatCurrency(t.saldoBancarioCierre)]
+    [
+      "Total",
+      "",
+      "",
+      formatCurrency(t.saldoBancarioInicio),
+      formatCurrency(t.ingresosBanco),
+      formatCurrency(t.egresosBanco),
+      ...(hayTransferencias ? [formatCurrency(data.cuentas.reduce((s, c) => s + c.transferencias, 0))] : []),
+      formatCurrency(t.saldoBancarioCierre),
+    ]
   )
+  if (hayTransferencias) {
+    const { cantidad, monto } = data.transferenciasEntreCuentas
+    doc.setFontSize(7)
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(...colors.secondary)
+    doc.text(
+      `${cantidad === 1 ? "1 transferencia" : `${cantidad} transferencias`} entre cuentas del edificio por ${formatCurrency(monto)}: no se cuentan como ingresos ni egresos del ejercicio.`,
+      margin,
+      y - 4
+    )
+    y += 2
+  }
 
   // =====================================================
   // RESULTADO POR FONDO
@@ -340,22 +364,37 @@ export async function generateCierreEjercicioPDF(
   // =====================================================
   if (data.egresosPorServicio.length > 0) {
     sectionTitle("Egresos por servicio")
-    const totalEgresos = data.egresosPorServicio.reduce((s, e) => s + e.total, 0)
-    drawTable(
-      [
-        { header: "Servicio / Proveedor", peso: 2.5 },
-        { header: "Pagos", peso: 0.6, align: "right" },
-        { header: "Total", peso: 1, align: "right" },
-        { header: "% del total", peso: 0.8, align: "right" },
-      ],
-      data.egresosPorServicio.map(e => [
-        { text: e.servicio, bold: true },
-        String(e.cantidad),
-        formatCurrency(e.total),
-        totalEgresos > 0 ? `${((e.total / totalEgresos) * 100).toFixed(1)} %` : "-",
-      ]),
-      ["Total", String(data.egresosPorServicio.reduce((s, e) => s + e.cantidad, 0)), formatCurrency(totalEgresos), "100 %"]
-    )
+    const gruposFondo: { fondo: CierreFondoEgreso; titulo: string }[] = [
+      { fondo: "GASTO_COMUN", titulo: "Gastos Comunes" },
+      { fondo: "FONDO_RESERVA", titulo: "Fondo de Reserva (incluye Otros Gastos)" },
+      { fondo: "SIN_CLASIFICAR", titulo: "Sin clasificar" },
+    ]
+    for (const grupo of gruposFondo) {
+      const items = data.egresosPorServicio.filter(e => e.fondo === grupo.fondo)
+      if (items.length === 0) continue
+      const totalFondo = items.reduce((s, e) => s + e.total, 0)
+      asegurarEspacio(30)
+      doc.setFontSize(8.5)
+      doc.setFont("helvetica", "bold")
+      doc.setTextColor(...colors.blue)
+      doc.text(grupo.titulo, margin, y)
+      y += 4
+      drawTable(
+        [
+          { header: "Servicio / Proveedor", peso: 2.5 },
+          { header: "Pagos", peso: 0.6, align: "right" },
+          { header: "Total", peso: 1, align: "right" },
+          { header: "% del fondo", peso: 0.8, align: "right" },
+        ],
+        items.map(e => [
+          { text: e.servicio, bold: true },
+          String(e.cantidad),
+          formatCurrency(e.total),
+          totalFondo > 0 ? `${((e.total / totalFondo) * 100).toFixed(1)} %` : "-",
+        ]),
+        [`Total ${grupo.titulo}`, String(items.reduce((s, e) => s + e.cantidad, 0)), formatCurrency(totalFondo), "100 %"]
+      )
+    }
   }
 
   // =====================================================

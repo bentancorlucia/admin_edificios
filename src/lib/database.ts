@@ -591,6 +591,17 @@ export async function initDatabase(): Promise<void> {
     try { await database.execute('ROLLBACK; PRAGMA foreign_keys = ON;'); } catch { /* sin transacción abierta */ }
   }
 
+  // Migración: transferencias entre cuentas (va después del rebuild de MovimientoBancario)
+  try {
+    const columns = await database.select<{ name: string }[]>("PRAGMA table_info(MovimientoBancario)");
+    if (!columns.some(c => c.name === 'transferenciaId')) {
+      await database.execute('ALTER TABLE MovimientoBancario ADD COLUMN transferenciaId TEXT');
+    }
+    await database.execute('CREATE INDEX IF NOT EXISTS idx_movimiento_transferencia ON MovimientoBancario(transferenciaId)');
+  } catch (e) {
+    console.error('Error en migración transferenciaId MovimientoBancario:', e);
+  }
+
   // Crear índices (después de migraciones para que las columnas existan)
   for (const indexSql of INDEX_SQL) {
     await database.execute(indexSql);
@@ -1354,6 +1365,9 @@ export interface MovimientoBancario {
   transaccionId: string | null;
   servicioId: string | null;
   proyectoId: string | null;
+  // Transferencia entre cuentas del edificio: las dos patas comparten este id.
+  // No es un gasto ni un cobro, así que los resúmenes por fondo lo excluyen.
+  transferenciaId?: string | null;
 }
 
 interface MovimientoBancarioDB {
@@ -1373,6 +1387,7 @@ interface MovimientoBancarioDB {
   transaccionId: string | null;
   servicioId: string | null;
   proyectoId: string | null;
+  transferenciaId: string | null;
 }
 
 export interface MovimientoBancarioCompleto extends MovimientoBancario {
@@ -1490,9 +1505,9 @@ export async function createMovimientoBancario(data: Omit<MovimientoBancario, 'i
   const now = getCurrentTimestamp();
 
   await database.execute(
-    `INSERT INTO MovimientoBancario (id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, cuentaBancariaId, transaccionId, servicioId, proyectoId, createdAt, updatedAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, data.tipo, data.monto, data.fecha, data.descripcion, data.referencia, data.numeroDocumento, data.archivoUrl, data.clasificacion, data.conciliado ? 1 : 0, data.cuentaBancariaId, data.transaccionId, data.servicioId, data.proyectoId, now, now]
+    `INSERT INTO MovimientoBancario (id, tipo, monto, fecha, descripcion, referencia, numeroDocumento, archivoUrl, clasificacion, conciliado, cuentaBancariaId, transaccionId, servicioId, proyectoId, transferenciaId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, data.tipo, data.monto, data.fecha, data.descripcion, data.referencia, data.numeroDocumento, data.archivoUrl, data.clasificacion, data.conciliado ? 1 : 0, data.cuentaBancariaId, data.transaccionId, data.servicioId, data.proyectoId, data.transferenciaId ?? null, now, now]
   );
 
   return (await getMovimientoBancarioById(id))!;
@@ -1535,9 +1550,32 @@ export async function updateMovimientoBancario(id: string, data: Partial<Omit<Mo
   return (await getMovimientoBancarioById(id))!;
 }
 
+// La otra pata de una transferencia entre cuentas (si existe)
+async function getParejaTransferencia(mov: MovimientoBancario | null): Promise<MovimientoBancario | null> {
+  if (!mov?.transferenciaId) return null;
+  const database = await getDatabase();
+  const rows = await database.select<MovimientoBancarioDB[]>(
+    'SELECT * FROM MovimientoBancario WHERE transferenciaId = ? AND id != ?',
+    [mov.transferenciaId, mov.id]
+  );
+  return rows[0] ? { ...rows[0], conciliado: Boolean(rows[0].conciliado) } : null;
+}
+
+// Al borrar una pata, la otra deja de ser transferencia (vuelve a ser un movimiento común)
+async function liberarParejaTransferencia(mov: MovimientoBancario | null): Promise<void> {
+  if (!mov?.transferenciaId) return;
+  const database = await getDatabase();
+  await database.execute(
+    'UPDATE MovimientoBancario SET transferenciaId = NULL, updatedAt = ? WHERE transferenciaId = ? AND id != ?',
+    [getCurrentTimestamp(), mov.transferenciaId, mov.id]
+  );
+}
+
 export async function deleteMovimientoBancario(id: string): Promise<void> {
   const actual = await getMovimientoBancarioById(id);
-  await assertFechasEnEjercicioAbierto(actual?.fecha);
+  const pareja = await getParejaTransferencia(actual);
+  await assertFechasEnEjercicioAbierto(actual?.fecha, pareja?.fecha);
+  await liberarParejaTransferencia(actual);
   const database = await getDatabase();
   await database.execute('DELETE FROM MovimientoBancario WHERE id = ?', [id]);
 }
@@ -1590,14 +1628,32 @@ export async function updateMovimientoBancarioConTransaccion(
     throw new Error("Movimiento bancario no encontrado");
   }
 
-  // Validar movimiento y transacción vinculada antes de escribir cualquiera de los dos
+  // Editar un movimiento nunca cambia su vínculo con el recibo ni la marca de transferencia:
+  // eso se hace con vincularReciboConIngreso / vincularTransferencia.
+  if ('transaccionId' in data || 'transferenciaId' in data) {
+    data = { ...data };
+    delete data.transaccionId;
+    delete data.transferenciaId;
+  }
+
+  // En una transferencia entre cuentas, monto y fecha se mantienen iguales en las dos patas
+  const pareja = await getParejaTransferencia(movimiento);
+  const sincronizarPareja =
+    pareja !== null &&
+    ((data.monto !== undefined && data.monto !== pareja.monto) || (data.fecha !== undefined && data.fecha !== pareja.fecha));
+
+  // Validar movimiento, transacción vinculada y pareja antes de escribir cualquiera de ellos
   if (Object.entries(data).some(([key, value]) => value !== undefined && !CAMPOS_LIBRES_MOVIMIENTO.has(key))) {
     const vinculada = movimiento.transaccionId ? await getTransaccionById(movimiento.transaccionId) : null;
-    await assertFechasEnEjercicioAbierto(movimiento.fecha, data.fecha, vinculada?.fecha);
+    await assertFechasEnEjercicioAbierto(movimiento.fecha, data.fecha, vinculada?.fecha, sincronizarPareja ? pareja?.fecha : null);
   }
 
   // Actualizar el movimiento bancario
   const movimientoActualizado = await updateMovimientoBancario(id, data);
+
+  if (sincronizarPareja && pareja) {
+    await updateMovimientoBancario(pareja.id, { monto: data.monto, fecha: data.fecha });
+  }
 
   let transaccionActualizada = false;
 
@@ -1651,7 +1707,9 @@ export async function deleteMovimientoBancarioConTransaccion(id: string): Promis
     throw new Error("Movimiento bancario no encontrado");
   }
   const transaccionVinculada = movimiento.transaccionId ? await getTransaccionById(movimiento.transaccionId) : null;
-  await assertFechasEnEjercicioAbierto(movimiento.fecha, transaccionVinculada?.fecha);
+  const parejaTransferencia = await getParejaTransferencia(movimiento);
+  await assertFechasEnEjercicioAbierto(movimiento.fecha, transaccionVinculada?.fecha, parejaTransferencia?.fecha);
+  await liberarParejaTransferencia(movimiento);
 
   let transaccionEliminada = false;
   let apartamentoRecalculado: string | null = null;
@@ -1691,6 +1749,108 @@ export async function deleteMovimientoBancarioConTransaccion(id: string): Promis
 
 export async function conciliarMovimiento(id: string, conciliado: boolean): Promise<MovimientoBancario> {
   return updateMovimientoBancario(id, { conciliado });
+}
+
+// ============ TRANSFERENCIAS ENTRE CUENTAS ============
+// Una transferencia entre cuentas del edificio son dos movimientos (egreso en la
+// cuenta origen, ingreso en la destino) que comparten transferenciaId.
+
+export async function crearTransferenciaEntreCuentas(data: {
+  cuentaOrigenId: string;
+  cuentaDestinoId: string;
+  monto: number;
+  fecha: string;
+  descripcion?: string | null;
+  referencia?: string | null;
+}): Promise<{ egreso: MovimientoBancario; ingreso: MovimientoBancario }> {
+  if (data.cuentaOrigenId === data.cuentaDestinoId) {
+    throw new Error('La cuenta de origen y la de destino deben ser distintas.');
+  }
+  if (!(data.monto > 0)) {
+    throw new Error('El monto de la transferencia debe ser mayor a cero.');
+  }
+  await assertFechasEnEjercicioAbierto(data.fecha);
+
+  const [origen, destino] = await Promise.all([
+    getCuentaBancariaById(data.cuentaOrigenId),
+    getCuentaBancariaById(data.cuentaDestinoId),
+  ]);
+  if (!origen || !destino) {
+    throw new Error('No se encontró alguna de las cuentas bancarias.');
+  }
+
+  const transferenciaId = generateId();
+  const descripcion = data.descripcion?.trim();
+  const base = {
+    monto: data.monto,
+    fecha: data.fecha,
+    referencia: data.referencia?.trim() || null,
+    numeroDocumento: null,
+    archivoUrl: null,
+    clasificacion: null,
+    conciliado: false,
+    transaccionId: null,
+    servicioId: null,
+    proyectoId: null,
+    transferenciaId,
+  };
+
+  const egreso = await createMovimientoBancario({
+    ...base,
+    tipo: 'EGRESO',
+    descripcion: descripcion || `Transferencia a ${destino.banco} ${destino.numeroCuenta}`,
+    cuentaBancariaId: origen.id,
+  });
+  try {
+    const ingreso = await createMovimientoBancario({
+      ...base,
+      tipo: 'INGRESO',
+      descripcion: descripcion || `Transferencia desde ${origen.banco} ${origen.numeroCuenta}`,
+      cuentaBancariaId: destino.id,
+    });
+    return { egreso, ingreso };
+  } catch (error) {
+    // No dejar una transferencia a medias
+    const database = await getDatabase();
+    await database.execute('DELETE FROM MovimientoBancario WHERE id = ?', [egreso.id]);
+    throw error;
+  }
+}
+
+// Marca como transferencia dos movimientos que ya estaban cargados por separado
+export async function vincularTransferencia(movimientoId: string, contraparteId: string): Promise<string> {
+  const [a, b] = await Promise.all([getMovimientoBancarioById(movimientoId), getMovimientoBancarioById(contraparteId)]);
+  if (!a || !b) throw new Error('No se encontró alguno de los movimientos.');
+  if (a.cuentaBancariaId === b.cuentaBancariaId) throw new Error('Los dos movimientos deben ser de cuentas distintas.');
+  if (a.tipo === b.tipo) throw new Error('Una transferencia necesita un egreso en una cuenta y un ingreso en la otra.');
+  if (Math.abs(a.monto - b.monto) > 0.005) throw new Error('Los dos movimientos deben tener el mismo monto.');
+  if (a.transaccionId || b.transaccionId) {
+    throw new Error('Un movimiento vinculado a un recibo de pago no puede marcarse como transferencia.');
+  }
+  if (a.transferenciaId || b.transferenciaId) throw new Error('Alguno de los movimientos ya es parte de una transferencia.');
+  await assertFechasEnEjercicioAbierto(a.fecha, b.fecha);
+
+  const transferenciaId = generateId();
+  const database = await getDatabase();
+  await database.execute(
+    'UPDATE MovimientoBancario SET transferenciaId = ?, updatedAt = ? WHERE id IN (?, ?)',
+    [transferenciaId, getCurrentTimestamp(), a.id, b.id]
+  );
+  return transferenciaId;
+}
+
+// Deshace la marca: los dos movimientos vuelven a ser ingreso/egreso comunes
+export async function desvincularTransferencia(transferenciaId: string): Promise<void> {
+  const database = await getDatabase();
+  const filas = await database.select<{ fecha: string }[]>(
+    'SELECT fecha FROM MovimientoBancario WHERE transferenciaId = ?',
+    [transferenciaId]
+  );
+  await assertFechasEnEjercicioAbierto(...filas.map(f => f.fecha));
+  await database.execute(
+    'UPDATE MovimientoBancario SET transferenciaId = NULL, updatedAt = ? WHERE transferenciaId = ?',
+    [getCurrentTimestamp(), transferenciaId]
+  );
 }
 
 // ============ TIPOS DE SERVICIO ============
@@ -5856,8 +6016,11 @@ export interface CierreCuentaBancaria {
   titular: string | null;
   activa: boolean;
   saldoInicio: number;
+  // Ingresos y egresos sin contar transferencias entre cuentas del edificio
   ingresos: number;
   egresos: number;
+  // Neto de transferencias entre cuentas (recibido - enviado)
+  transferencias: number;
   saldoCierre: number;
   cantidadMovimientos: number;
 }
@@ -5894,7 +6057,11 @@ export interface CierreApartamento {
   saldoCierre: number;
 }
 
+export type CierreFondoEgreso = 'GASTO_COMUN' | 'FONDO_RESERVA' | 'SIN_CLASIFICAR';
+
 export interface CierreEgresoServicio {
+  // Fondo al que se imputa el egreso (Otros Gastos se imputa a Fondo de Reserva)
+  fondo: CierreFondoEgreso;
   servicio: string;
   cantidad: number;
   total: number;
@@ -5951,6 +6118,8 @@ export interface CierreEjercicioData {
   meses: CierreMes[];
   apartamentos: CierreApartamento[];
   egresosPorServicio: CierreEgresoServicio[];
+  // Transferencias entre cuentas del año (excluidas de ingresos, egresos y fondos)
+  transferenciasEntreCuentas: { cantidad: number; monto: number };
   totales: CierreTotales;
   cierre: CierreEjercicio | null;
   ultimoAnioCerrado: number | null;
@@ -6013,6 +6182,7 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
     let saldoInicio = cuenta.saldoInicial;
     let ingresos = 0;
     let egresos = 0;
+    let transferencias = 0;
     let cantidadMovimientos = 0;
     for (const m of movimientos) {
       if (m.cuentaBancariaId !== cuenta.id) continue;
@@ -6021,7 +6191,8 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
         saldoInicio += m.tipo === 'INGRESO' ? m.monto : -m.monto;
       } else if (t <= fin) {
         cantidadMovimientos++;
-        if (m.tipo === 'INGRESO') ingresos += m.monto;
+        if (m.transferenciaId) transferencias += m.tipo === 'INGRESO' ? m.monto : -m.monto;
+        else if (m.tipo === 'INGRESO') ingresos += m.monto;
         else egresos += m.monto;
       }
     }
@@ -6037,7 +6208,8 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
       saldoInicio: redondear2(saldoInicio),
       ingresos: redondear2(ingresos),
       egresos: redondear2(egresos),
-      saldoCierre: redondear2(saldoInicio + ingresos - egresos),
+      transferencias: redondear2(transferencias),
+      saldoCierre: redondear2(saldoInicio + ingresos - egresos + transferencias),
       cantidadMovimientos,
     });
   }
@@ -6052,6 +6224,7 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
       : sc;
 
   for (const m of movimientosAnio) {
+    if (m.transferenciaId) continue; // mover plata entre cuentas propias no es ingreso ni gasto
     if (m.tipo === 'EGRESO') {
       fondoPorClasificacion(m.clasificacion).egresos += m.monto;
       continue;
@@ -6084,7 +6257,7 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
     for (const m of movimientos) {
       const t = ts(m.fecha);
       if (t <= finMes) saldoFinMes += m.tipo === 'INGRESO' ? m.monto : -m.monto;
-      if (t >= inicioMes && t <= finMes) {
+      if (t >= inicioMes && t <= finMes && !m.transferenciaId) {
         if (m.tipo === 'INGRESO') ingresos += m.monto;
         else egresos += m.monto;
       }
@@ -6162,19 +6335,25 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
     return porNumero !== 0 ? porNumero : a.tipoOcupacion.localeCompare(b.tipoOcupacion);
   });
 
-  // ── Egresos por servicio ──
+  // ── Egresos por servicio, agrupados por fondo ──
+  const ordenFondo: Record<CierreFondoEgreso, number> = { GASTO_COMUN: 0, FONDO_RESERVA: 1, SIN_CLASIFICAR: 2 };
   const porServicio = new Map<string, CierreEgresoServicio>();
   for (const m of movimientosAnio) {
-    if (m.tipo !== 'EGRESO') continue;
+    if (m.tipo !== 'EGRESO' || m.transferenciaId) continue;
+    const fondo: CierreFondoEgreso =
+      m.clasificacion === 'GASTO_COMUN' ? 'GASTO_COMUN'
+        : m.clasificacion === 'FONDO_RESERVA' || m.clasificacion === 'OTROS_GASTOS' ? 'FONDO_RESERVA'
+        : 'SIN_CLASIFICAR';
     const nombre = m.servicio?.nombre || 'Sin servicio asignado';
-    const item = porServicio.get(nombre) ?? { servicio: nombre, cantidad: 0, total: 0 };
+    const clave = `${fondo}|${nombre}`;
+    const item = porServicio.get(clave) ?? { fondo, servicio: nombre, cantidad: 0, total: 0 };
     item.cantidad++;
     item.total += m.monto;
-    porServicio.set(nombre, item);
+    porServicio.set(clave, item);
   }
   const egresosPorServicio = Array.from(porServicio.values())
     .map(e => ({ ...e, total: redondear2(e.total) }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => ordenFondo[a.fondo] - ordenFondo[b.fondo] || b.total - a.total);
 
   const suma = <T,>(lista: T[], f: (x: T) => number) => redondear2(lista.reduce((s, x) => s + f(x), 0));
   const totales: CierreTotales = {
@@ -6203,6 +6382,10 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
     meses,
     apartamentos: apartamentosCierre,
     egresosPorServicio,
+    transferenciasEntreCuentas: {
+      cantidad: movimientosAnio.filter(m => m.transferenciaId && m.tipo === 'EGRESO').length,
+      monto: redondear2(movimientosAnio.filter(m => m.transferenciaId && m.tipo === 'EGRESO').reduce((s, m) => s + m.monto, 0)),
+    },
     totales,
     cierre,
     ultimoAnioCerrado,
