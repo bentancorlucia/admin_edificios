@@ -363,16 +363,24 @@ export async function generateCierreEjercicioPDF(
   // EGRESOS POR SERVICIO
   // =====================================================
   if (data.egresosPorServicio.length > 0) {
+    // Cada fondo arranca en una página nueva, empezando por Gastos Comunes
+    if (y > 38) nuevaPagina()
     sectionTitle("Egresos por servicio")
     const gruposFondo: { fondo: CierreFondoEgreso; titulo: string }[] = [
       { fondo: "GASTO_COMUN", titulo: "Gastos Comunes" },
       { fondo: "FONDO_RESERVA", titulo: "Fondo de Reserva (incluye Otros Gastos)" },
       { fondo: "SIN_CLASIFICAR", titulo: "Sin clasificar" },
     ]
+    let primerGrupo = true
     for (const grupo of gruposFondo) {
       const items = data.egresosPorServicio.filter(e => e.fondo === grupo.fondo)
       if (items.length === 0) continue
       const totalFondo = items.reduce((s, e) => s + e.total, 0)
+      if (!primerGrupo) {
+        nuevaPagina()
+        sectionTitle("Egresos por servicio")
+      }
+      primerGrupo = false
       asegurarEspacio(30)
       doc.setFontSize(8.5)
       doc.setFont("helvetica", "bold")
@@ -400,6 +408,8 @@ export async function generateCierreEjercicioPDF(
   // =====================================================
   // ESTADO DE CUENTA POR UNIDAD
   // =====================================================
+  // Página propia, para no compartirla con los egresos por fondo
+  if (data.egresosPorServicio.length > 0 && y > 38) nuevaPagina()
   sectionTitle("Estado de cuenta por unidad")
   const hayOtros = data.apartamentos.some(a => Math.abs(a.cargosOtrosGastos) > 0.005)
   const columnasUnidad: Columna[] = [
