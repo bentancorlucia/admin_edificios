@@ -34,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail, Calculator, Archive, ArchiveRestore } from "lucide-react"
+import { Building2, Plus, Search, Download, FileText, Share2, Edit, Trash2, AlertCircle, Receipt, Wallet, CheckCircle2, Mail, Calculator, Archive, ArchiveRestore, Repeat } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { formatCurrency, formatPhoneForWhatsApp } from "@/lib/utils"
 import {
@@ -43,6 +43,7 @@ import {
   deleteApartamento,
   archivarApartamento,
   restaurarApartamento,
+  cambiarTitularApartamento,
   contarMovimientosApartamento,
   generarTransaccionesMensuales,
   obtenerSaldosCuentaCorriente,
@@ -85,6 +86,19 @@ type ApartamentoAgrupado = {
   // (p. ej. el inquilino anterior cuando ya entró uno nuevo).
   archivados: Apartamento[]
 }
+
+const cambioFormVacio = {
+  contactoNombre: "",
+  contactoApellido: "",
+  contactoCelular: "",
+  contactoEmail: "",
+  gastosComunes: "0",
+  fondoReserva: "0",
+  notas: "",
+}
+
+const nombreCompleto = (apt: { contactoNombre: string | null; contactoApellido: string | null }) =>
+  apt.contactoNombre ? `${apt.contactoNombre} ${apt.contactoApellido || ""}`.trim() : "Sin contacto"
 
 const esDuplicadoActivo = (error: unknown) =>
   String(error instanceof Error ? error.message : error).includes("UNIQUE constraint failed")
@@ -153,6 +167,12 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
   const [mostrarArchivados, setMostrarArchivados] = useState(false)
   // Cantidad de movimientos del perfil a borrar (para advertir en el diálogo)
   const [movimientosCount, setMovimientosCount] = useState<number | null>(null)
+  // Cambio de titular: archiva el perfil actual y crea uno nuevo
+  const [cambioActual, setCambioActual] = useState<Apartamento | null>(null)
+  const [cambioForm, setCambioForm] = useState(cambioFormVacio)
+  const [cambioError, setCambioError] = useState<string | null>(null)
+  // Aviso al editar el nombre de un perfil que ya tiene movimientos
+  const [avisoNombre, setAvisoNombre] = useState<{ movimientos: number } | null>(null)
 
   const [formData, setFormData] = useState({
     numero: "",
@@ -249,6 +269,36 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setError(null)
+
+    // Si se cambia el nombre de un perfil que ya tiene movimientos, preguntar
+    // si es otra persona: en ese caso corresponde archivar y crear uno nuevo,
+    // para no reescribir el histórico con el nombre nuevo.
+    if (selectedApartamento) {
+      const normalizar = (s: string | null) => (s || "").trim().toLowerCase()
+      const cambioNombre =
+        normalizar(formData.contactoNombre) !== normalizar(selectedApartamento.contactoNombre) ||
+        normalizar(formData.contactoApellido) !== normalizar(selectedApartamento.contactoApellido)
+      if (cambioNombre && selectedApartamento.contactoNombre) {
+        setIsLoading(true)
+        try {
+          const movimientos = await contarMovimientosApartamento(selectedApartamento.id)
+          if (movimientos > 0) {
+            setAvisoNombre({ movimientos })
+            return
+          }
+        } catch (error) {
+          console.error("Error contando movimientos:", error)
+        } finally {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    await guardarApartamento()
+  }
+
+  const guardarApartamento = async () => {
     setIsLoading(true)
     setError(null)
 
@@ -329,6 +379,75 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
     } catch (error) {
       console.error("Error archivando apartamento:", error)
       toast({ title: "Error", description: "No se pudo archivar el perfil", variant: "destructive" })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const openCambioDialog = (actual: Apartamento, datos?: Partial<typeof cambioFormVacio>) => {
+    setCambioActual(actual)
+    setCambioError(null)
+    setCambioForm({
+      ...cambioFormVacio,
+      gastosComunes: actual.gastosComunes.toString(),
+      fondoReserva: actual.fondoReserva.toString(),
+      ...datos,
+    })
+  }
+
+  // Desde el aviso de edición: el nombre nuevo es de otra persona
+  const pasarEdicionACambio = () => {
+    if (!selectedApartamento) return
+    const actual = selectedApartamento
+    setAvisoNombre(null)
+    setIsDialogOpen(false)
+    resetForm()
+    openCambioDialog(actual, {
+      contactoNombre: formData.contactoNombre,
+      contactoApellido: formData.contactoApellido,
+      contactoCelular: formData.contactoCelular === (actual.contactoCelular || "") ? "" : formData.contactoCelular,
+      contactoEmail: formData.contactoEmail === (actual.contactoEmail || "") ? "" : formData.contactoEmail,
+      gastosComunes: formData.gastosComunes,
+      fondoReserva: formData.fondoReserva,
+    })
+  }
+
+  const handleCambioTitular = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!cambioActual) return
+    if (!cambioForm.contactoNombre.trim()) {
+      setCambioError("Ingresá el nombre del nuevo titular.")
+      return
+    }
+    setIsLoading(true)
+    setCambioError(null)
+    try {
+      const { nuevo } = await cambiarTitularApartamento(cambioActual.id, {
+        gastosComunes: parseFloat(cambioForm.gastosComunes) || 0,
+        fondoReserva: parseFloat(cambioForm.fondoReserva) || 0,
+        contactoNombre: cambioForm.contactoNombre.trim() || null,
+        contactoApellido: cambioForm.contactoApellido.trim() || null,
+        contactoCelular: cambioForm.contactoCelular.trim() || null,
+        contactoEmail: cambioForm.contactoEmail.trim() || null,
+        notas: cambioForm.notas.trim() || null,
+      })
+      setApartamentos((prev) => [
+        ...prev.map((apt) => (apt.id === cambioActual.id ? { ...apt, activo: false } : apt)),
+        nuevo,
+      ])
+      toast({
+        title: `${tipoOcupacionLabels[cambioActual.tipoOcupacion]} cambiado`,
+        description: `${nombreCompleto(cambioActual)} quedó archivado con su histórico. Nuevo titular: ${nombreCompleto(nuevo)}.`,
+        variant: "success",
+      })
+      setCambioActual(null)
+    } catch (error) {
+      console.error("Error cambiando titular:", error)
+      setCambioError(
+        esDuplicadoActivo(error)
+          ? `El apto ${cambioActual.numero} ya tiene otro ${tipoOcupacionLabels[cambioActual.tipoOcupacion].toLowerCase()} activo.`
+          : "No se pudo realizar el cambio. No se modificó ningún perfil."
+      )
     } finally {
       setIsLoading(false)
     }
@@ -656,6 +775,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                                   <Mail className="h-3.5 w-3.5" />
                                 </Button>
                               )}
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-blue-600 hover:bg-blue-100" onClick={() => openCambioDialog(grupo.propietario!)} title="Cambiar propietario (archiva el actual)">
+                                <Repeat className="h-3.5 w-3.5" />
+                              </Button>
                               <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.propietario!)} title="Editar">
                                 <Edit className="h-3.5 w-3.5" />
                               </Button>
@@ -724,6 +846,9 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
                                   <Mail className="h-3.5 w-3.5" />
                                 </Button>
                               )}
+                              <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-purple-600 hover:bg-purple-100" onClick={() => openCambioDialog(grupo.inquilino!)} title="Cambiar inquilino (archiva el actual)">
+                                <Repeat className="h-3.5 w-3.5" />
+                              </Button>
                               <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-slate-600 hover:bg-slate-100" onClick={() => openEditDialog(grupo.inquilino!)} title="Editar">
                                 <Edit className="h-3.5 w-3.5" />
                               </Button>
@@ -987,6 +1112,120 @@ export function ApartamentosClient({ initialApartamentos, initialSaldos }: Props
               </Button>
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Aviso: se editó el nombre de un perfil con movimientos */}
+      <AlertDialog open={!!avisoNombre} onOpenChange={(open) => !open && setAvisoNombre(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Es otra persona?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <span>
+                Estás cambiando el nombre de <strong>{selectedApartamento ? nombreCompleto(selectedApartamento) : ""}</strong> a{" "}
+                <strong>{`${formData.contactoNombre} ${formData.contactoApellido}`.trim() || "(sin nombre)"}</strong>.
+                Este perfil tiene <strong>{avisoNombre?.movimientos}</strong> movimiento{avisoNombre?.movimientos === 1 ? "" : "s"}.
+                <br /><br />
+                Si es <strong>otra persona</strong> (por ejemplo, un inquilino nuevo), conviene usar <strong>Cambiar {selectedApartamento ? tipoOcupacionLabels[selectedApartamento.tipoOcupacion].toLowerCase() : ""}</strong>:
+                el perfil actual queda archivado con su nombre e histórico, y se crea uno nuevo.
+                <br /><br />
+                Si solo estás <strong>corrigiendo</strong> el nombre de la misma persona, guardá la corrección.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => { setAvisoNombre(null); guardarApartamento() }}
+              disabled={isLoading}
+            >
+              Es la misma persona, guardar
+            </Button>
+            <Button onClick={pasarEdicionACambio} disabled={isLoading}>
+              <Repeat className="h-4 w-4 mr-2" />
+              Es otra persona
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Cambio de titular: archiva el perfil actual y crea uno nuevo */}
+      <Dialog open={!!cambioActual} onOpenChange={(open) => !open && !isLoading && setCambioActual(null)}>
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Cambiar {cambioActual ? tipoOcupacionLabels[cambioActual.tipoOcupacion].toLowerCase() : ""} · Apto {cambioActual?.numero}
+            </DialogTitle>
+          </DialogHeader>
+          {cambioActual && (
+            <form onSubmit={handleCambioTitular} className="space-y-3">
+              {cambioError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{cambioError}</AlertDescription>
+                </Alert>
+              )}
+
+              <div className="rounded-lg border bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">{tipoOcupacionLabels[cambioActual.tipoOcupacion]} actual (quedará archivado)</p>
+                <p className="font-medium text-slate-800">{nombreCompleto(cambioActual)}</p>
+                <p className="text-xs text-slate-500 mt-1">
+                  Conserva todos sus movimientos y su saldo. Se puede ver con &quot;Ver archivados&quot;.
+                </p>
+                {Math.abs(saldos[cambioActual.id] || 0) > 0.005 && (
+                  <p className={`text-xs mt-2 font-medium ${(saldos[cambioActual.id] || 0) > 0 ? "text-red-600" : "text-green-600"}`}>
+                    Tiene saldo {(saldos[cambioActual.id] || 0) > 0 ? "deudor" : "a favor"} de {formatCurrency(Math.abs(saldos[cambioActual.id] || 0))}.
+                    Conviene saldarlo antes del cambio: queda en el perfil archivado.
+                  </p>
+                )}
+              </div>
+
+              <p className="text-sm font-medium text-slate-700">Nuevo {tipoOcupacionLabels[cambioActual.tipoOcupacion].toLowerCase()}</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label htmlFor="cambioNombre" className="text-xs">Nombre *</Label>
+                  <Input id="cambioNombre" value={cambioForm.contactoNombre} onChange={(e) => setCambioForm({ ...cambioForm, contactoNombre: e.target.value })} className="h-9" autoFocus />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cambioApellido" className="text-xs">Apellido</Label>
+                  <Input id="cambioApellido" value={cambioForm.contactoApellido} onChange={(e) => setCambioForm({ ...cambioForm, contactoApellido: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cambioCelular" className="text-xs">Celular</Label>
+                  <Input id="cambioCelular" placeholder="099 123 456" value={cambioForm.contactoCelular} onChange={(e) => setCambioForm({ ...cambioForm, contactoCelular: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cambioEmail" className="text-xs">Email</Label>
+                  <Input id="cambioEmail" type="email" placeholder="ejemplo@correo.com" value={cambioForm.contactoEmail} onChange={(e) => setCambioForm({ ...cambioForm, contactoEmail: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cambioGC" className="text-xs">Gastos Comunes</Label>
+                  <Input id="cambioGC" type="number" min="0" step="0.01" value={cambioForm.gastosComunes} onChange={(e) => setCambioForm({ ...cambioForm, gastosComunes: e.target.value })} className="h-9" />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="cambioFR" className="text-xs">Fondo de Reserva</Label>
+                  <Input id="cambioFR" type="number" min="0" step="0.01" value={cambioForm.fondoReserva} onChange={(e) => setCambioForm({ ...cambioForm, fondoReserva: e.target.value })} className="h-9" />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="cambioNotas" className="text-xs">Notas</Label>
+                <Textarea id="cambioNotas" placeholder={cambioActual.tipoOcupacion === "PROPIETARIO" ? "Ej.: propietario desde diciembre 2026 (compraventa)" : "Ej.: inquilino desde diciembre 2026"} value={cambioForm.notas} onChange={(e) => setCambioForm({ ...cambioForm, notas: e.target.value })} className="min-h-[60px] resize-none" />
+              </div>
+              <p className="text-xs text-slate-500">
+                Registrá el cambio <strong>antes de generar las transacciones del mes</strong>: los cargos se generan solo para los perfiles activos.
+              </p>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="outline" size="sm" onClick={() => setCambioActual(null)} disabled={isLoading}>
+                  Cancelar
+                </Button>
+                <Button type="submit" size="sm" disabled={isLoading}>
+                  {isLoading ? "Guardando..." : "Archivar y crear nuevo"}
+                </Button>
+              </div>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
 

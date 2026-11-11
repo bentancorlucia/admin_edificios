@@ -73,6 +73,7 @@ import {
 } from "@/lib/cierre-ejercicio-pdf"
 import { savePDFWithDialog } from "@/lib/save-pdf"
 import { toast } from "@/hooks/use-toast"
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
 
 const SIN_CUENTA = "__sin_cuenta__"
 const TAMANIO_MAXIMO = 20 * 1024 * 1024
@@ -653,6 +654,84 @@ export function CierreEjercicioClient() {
                   )}
                 </CardContent>
               </Card>
+
+              {(() => {
+                const gcGenerado = data.apartamentos.reduce((s, a) => s + a.cargosGastosComunes, 0)
+                const gcEgresos = data.fondos.gastosComunes.egresos
+                const gcResultado = gcGenerado - gcEgresos
+                return (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Cobertura de Gastos Comunes</CardTitle>
+                    </CardHeader>
+                    <CardContent className="overflow-x-auto">
+                      <Table>
+                        <TableBody>
+                          <TableRow>
+                            <TableCell className="font-medium">Gastos Comunes generados (facturado a las unidades)</TableCell>
+                            <TableCell className="text-right">{formatCurrency(gcGenerado)}</TableCell>
+                          </TableRow>
+                          <TableRow>
+                            <TableCell className="font-medium">Egresos reales de Gastos Comunes</TableCell>
+                            <TableCell className="text-right text-red-600">- {formatCurrency(gcEgresos)}</TableCell>
+                          </TableRow>
+                        </TableBody>
+                        <TableFooter>
+                          <TableRow>
+                            <TableCell>{gcResultado >= 0 ? "Resultado (superávit)" : "Resultado (déficit)"}</TableCell>
+                            <TableCell className={`text-right ${gcResultado < 0 ? "text-red-600" : "text-green-600"}`}>
+                              {formatCurrency(gcResultado)}
+                            </TableCell>
+                          </TableRow>
+                        </TableFooter>
+                      </Table>
+                      {gcEgresos > 0.005 && (
+                        <p className="mt-3 text-xs text-slate-500">
+                          Lo facturado por Gastos Comunes cubre el {((gcGenerado / gcEgresos) * 100).toFixed(1)} % de lo gastado por Gastos Comunes en el ejercicio.
+                        </p>
+                      )}
+
+                      <div className="mt-6">
+                        <p className="mb-2 text-sm font-medium text-slate-700">
+                          Evolución mensual: facturado vs. egresos reales
+                        </p>
+                        <div className="h-72 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={data.meses.map(m => ({
+                                mes: m.label.slice(0, 3),
+                                mesCompleto: m.label,
+                                Facturado: m.gcFacturado,
+                                "Egresos reales": m.gcEgresos,
+                              }))}
+                              margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
+                              barGap={2}
+                            >
+                              <CartesianGrid vertical={false} stroke="#e2e8f0" />
+                              <XAxis dataKey="mes" tickLine={false} axisLine={{ stroke: "#cbd5e1" }} tick={{ fill: "#64748b", fontSize: 12 }} />
+                              <YAxis
+                                tickLine={false}
+                                axisLine={false}
+                                width={80}
+                                tick={{ fill: "#94a3b8", fontSize: 11 }}
+                                tickFormatter={(v: number) => `$ ${v.toLocaleString("es-CO", { maximumFractionDigits: 0 })}`}
+                              />
+                              <Tooltip
+                                cursor={{ fill: "#f1f5f9" }}
+                                formatter={(value) => formatCurrency(Number(value))}
+                                labelFormatter={(_, payload) => payload?.[0]?.payload?.mesCompleto ?? ""}
+                              />
+                              <Legend iconType="square" wrapperStyle={{ fontSize: 12, color: "#475569" }} />
+                              <Bar dataKey="Facturado" fill="#2a78d6" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                              <Bar dataKey="Egresos reales" fill="#eb6834" radius={[4, 4, 0, 0]} maxBarSize={24} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })()}
             </TabsContent>
 
             <TabsContent value="mensual">

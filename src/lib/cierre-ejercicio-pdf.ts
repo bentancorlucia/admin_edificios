@@ -15,6 +15,9 @@ const colors = {
   negative: [220, 38, 38] as RGB,    // red-600
   blue: [37, 99, 235] as RGB,        // blue-600
   amber: [217, 119, 6] as RGB,       // amber-600
+  // Series de gráficas (paleta categórica validada: slot 1 azul, slot 2 naranja)
+  serieFacturado: [42, 120, 214] as RGB,  // #2a78d6
+  serieEgresos: [235, 104, 52] as RGB,    // #eb6834
 }
 
 const tipoOcupacionLabels: Record<string, string> = {
@@ -207,6 +210,83 @@ export async function generateCierreEjercicioPDF(
     y += 8
   }
 
+  // Barras agrupadas por mes: Gastos Comunes facturados vs. egresos reales (un solo eje en $)
+  const drawGraficaGastosComunes = () => {
+    const series: { label: string; color: RGB; valor: (m: CierreEjercicioData["meses"][number]) => number }[] = [
+      { label: "Facturado", color: colors.serieFacturado, valor: m => m.gcFacturado },
+      { label: "Egresos reales", color: colors.serieEgresos, valor: m => m.gcEgresos },
+    ]
+    const altoPlot = 56
+    asegurarEspacio(altoPlot + 26)
+
+    // Subtítulo y leyenda
+    doc.setFontSize(8.5)
+    doc.setFont("helvetica", "bold")
+    doc.setTextColor(...colors.primary)
+    doc.text("Evolución mensual: Gastos Comunes facturados vs. egresos reales", margin, y)
+    doc.setFontSize(7.5)
+    doc.setFont("helvetica", "normal")
+    let xLeyenda = pageWidth - margin
+    for (const s of [...series].reverse()) {
+      doc.setTextColor(...colors.secondary)
+      xLeyenda -= doc.getTextWidth(s.label)
+      doc.text(s.label, xLeyenda, y)
+      xLeyenda -= 4.5
+      doc.setFillColor(...s.color)
+      doc.roundedRect(xLeyenda, y - 2.6, 3, 3, 0.6, 0.6, "F")
+      xLeyenda -= 6
+    }
+    y += 7
+
+    // Escala con valores "redondos"
+    const maximo = Math.max(1, ...data.meses.flatMap(m => series.map(s => s.valor(m))))
+    const bruto = maximo / 4
+    const potencia = 10 ** Math.floor(Math.log10(bruto))
+    const factor = bruto / potencia
+    const paso = (factor <= 1 ? 1 : factor <= 2 ? 2 : factor <= 2.5 ? 2.5 : factor <= 5 ? 5 : 10) * potencia
+    const tope = Math.ceil(maximo / paso) * paso
+
+    const xEje = margin + 20
+    const anchoPlot = pageWidth - margin - xEje
+    const yBase = y + altoPlot
+    const escala = (v: number) => (v / tope) * altoPlot
+
+    // Grilla horizontal recesiva y etiquetas del eje
+    doc.setFontSize(6.5)
+    doc.setFont("helvetica", "normal")
+    for (let v = 0; v <= tope + 0.001; v += paso) {
+      const yy = yBase - escala(v)
+      doc.setDrawColor(...colors.light)
+      doc.setLineWidth(v === 0 ? 0.3 : 0.15)
+      doc.line(xEje, yy, pageWidth - margin, yy)
+      doc.setTextColor(...colors.muted)
+      doc.text(`$ ${v.toLocaleString("es-CO", { maximumFractionDigits: 0 })}`, xEje - 2, yy + 1, { align: "right" })
+    }
+    doc.setLineWidth(0.2)
+
+    // Barras: borde superior redondeado, base recta sobre la línea de base
+    const banda = anchoPlot / data.meses.length
+    const anchoBarra = Math.min(5, banda * 0.32)
+    const separacion = 0.6
+    data.meses.forEach((m, i) => {
+      const centro = xEje + banda * i + banda / 2
+      series.forEach((s, j) => {
+        const alto = escala(s.valor(m))
+        if (alto <= 0.05) return
+        const x = centro - anchoBarra - separacion / 2 + j * (anchoBarra + separacion)
+        const radio = Math.min(1, alto, anchoBarra / 2)
+        doc.setFillColor(...s.color)
+        doc.roundedRect(x, yBase - alto, anchoBarra, alto, radio, radio, "F")
+        if (alto > radio) doc.rect(x, yBase - alto + radio, anchoBarra, alto - radio, "F")
+      })
+      doc.setFontSize(7)
+      doc.setTextColor(...colors.secondary)
+      doc.text(m.label.slice(0, 3), centro, yBase + 4.5, { align: "center" })
+    })
+
+    y = yBase + 14
+  }
+
   const montoColor = (valor: number, invertir = false): Celda => {
     const negativo = invertir ? valor > 0.005 : valor < -0.005
     return { text: formatCurrency(valor), color: negativo ? colors.negative : colors.primary }
@@ -329,35 +409,39 @@ export async function generateCierreEjercicioPDF(
   )
 
   // =====================================================
-  // EVOLUCIÓN MENSUAL
+  // COBERTURA DE GASTOS COMUNES (facturado vs. gastado)
   // =====================================================
-  sectionTitle("Evolución mensual")
+  const gcGenerado = data.apartamentos.reduce((s, a) => s + a.cargosGastosComunes, 0)
+  const gcEgresos = f.gastosComunes.egresos
+  const gcResultado = gcGenerado - gcEgresos
+  asegurarEspacio(50) // título + tabla + nota: que no se corte entre páginas
+  sectionTitle("Cobertura de Gastos Comunes")
   drawTable(
     [
-      { header: "Mes", peso: 1.2 },
-      { header: "Cargos emitidos", peso: 1, align: "right" },
-      { header: "Cobranzas", peso: 1, align: "right" },
-      { header: "Ingresos banco", peso: 1, align: "right" },
-      { header: "Egresos banco", peso: 1, align: "right" },
-      { header: "Saldo bancario fin de mes", peso: 1.3, align: "right" },
+      { header: "Concepto", peso: 3 },
+      { header: "Importe", peso: 1, align: "right" },
     ],
-    data.meses.map(m => [
-      { text: m.label, bold: true },
-      formatCurrency(m.cargosEmitidos),
-      formatCurrency(m.cobranzas),
-      { text: formatCurrency(m.ingresos), color: colors.positive },
-      { text: formatCurrency(m.egresos), color: colors.negative },
-      montoColor(m.saldoBancarioFinMes),
-    ]),
     [
-      "Total",
-      formatCurrency(data.meses.reduce((s, m) => s + m.cargosEmitidos, 0)),
-      formatCurrency(data.meses.reduce((s, m) => s + m.cobranzas, 0)),
-      formatCurrency(data.meses.reduce((s, m) => s + m.ingresos, 0)),
-      formatCurrency(data.meses.reduce((s, m) => s + m.egresos, 0)),
-      formatCurrency(t.saldoBancarioCierre),
+      [{ text: "Gastos Comunes generados (facturado a las unidades)", bold: true }, formatCurrency(gcGenerado)],
+      [{ text: "Egresos reales de Gastos Comunes", bold: true }, { text: `- ${formatCurrency(gcEgresos)}`, color: colors.negative }],
+    ],
+    [
+      gcResultado >= 0 ? "Resultado (superávit)" : "Resultado (déficit)",
+      { text: formatCurrency(gcResultado), color: gcResultado < 0 ? colors.negative : colors.positive },
     ]
   )
+  if (gcEgresos > 0.005) {
+    doc.setFontSize(7)
+    doc.setFont("helvetica", "normal")
+    doc.setTextColor(...colors.secondary)
+    doc.text(
+      `Lo facturado por Gastos Comunes cubre el ${((gcGenerado / gcEgresos) * 100).toFixed(1)} % de lo gastado por Gastos Comunes en el ejercicio.`,
+      margin,
+      y - 4
+    )
+    y += 2
+  }
+  drawGraficaGastosComunes()
 
   // =====================================================
   // EGRESOS POR SERVICIO

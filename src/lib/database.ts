@@ -818,6 +818,35 @@ export async function restaurarApartamento(id: string): Promise<void> {
   );
 }
 
+// Cambio de titular (p. ej. se va un inquilino y entra otro): archiva el perfil
+// actual, que conserva sus movimientos y saldo, y crea uno nuevo para la misma
+// unidad y tipo. Así el nombre anterior queda en el histórico en lugar de
+// sobrescribirse al editar la ficha.
+export async function cambiarTitularApartamento(
+  actualId: string,
+  nuevo: Pick<Apartamento, 'gastosComunes' | 'fondoReserva' | 'contactoNombre' | 'contactoApellido' | 'contactoCelular' | 'contactoEmail' | 'notas'>
+): Promise<{ archivado: Apartamento; nuevo: Apartamento }> {
+  const actual = await getApartamentoById(actualId);
+  if (!actual) throw new Error('No se encontró el perfil actual');
+  if (!actual.activo) throw new Error('El perfil actual ya está archivado');
+
+  await archivarApartamento(actual.id);
+  try {
+    const creado = await createApartamento({
+      numero: actual.numero,
+      piso: actual.piso,
+      tipoOcupacion: actual.tipoOcupacion,
+      otrosGastos: actual.otrosGastos,
+      ...nuevo,
+    });
+    return { archivado: { ...actual, activo: false }, nuevo: creado };
+  } catch (error) {
+    // Si no se pudo crear el nuevo perfil, se deja el actual como estaba
+    await restaurarApartamento(actual.id);
+    throw error;
+  }
+}
+
 export async function createApartamento(data: Omit<Apartamento, 'id' | 'createdAt' | 'updatedAt' | 'alicuota' | 'activo'>): Promise<Apartamento> {
   const database = await getDatabase();
   const id = generateId();
@@ -6039,6 +6068,9 @@ export interface CierreMes {
   saldoBancarioFinMes: number;
   cargosEmitidos: number;
   cobranzas: number;
+  // Gastos Comunes: facturado a las unidades vs. egresos reales del mes
+  gcFacturado: number;
+  gcEgresos: number;
 }
 
 export interface CierreApartamento {
@@ -6253,23 +6285,30 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
     const finMes = new Date(anio, i + 1, 0, 23, 59, 59, 999).getTime();
     let ingresos = 0;
     let egresos = 0;
+    let gcEgresos = 0;
     let saldoFinMes = saldoInicialCuentas;
     for (const m of movimientos) {
       const t = ts(m.fecha);
       if (t <= finMes) saldoFinMes += m.tipo === 'INGRESO' ? m.monto : -m.monto;
       if (t >= inicioMes && t <= finMes && !m.transferenciaId) {
         if (m.tipo === 'INGRESO') ingresos += m.monto;
-        else egresos += m.monto;
+        else {
+          egresos += m.monto;
+          if (m.clasificacion === 'GASTO_COMUN') gcEgresos += m.monto;
+        }
       }
     }
     let cargosEmitidos = 0;
     let cobranzas = 0;
+    let gcFacturado = 0;
     for (const t of transacciones) {
       if (!t.apartamentoId) continue;
       const tiempo = ts(t.fecha);
       if (tiempo < inicioMes || tiempo > finMes) continue;
-      if (t.tipo === 'VENTA_CREDITO') cargosEmitidos += t.monto;
-      else if (t.tipo === 'RECIBO_PAGO') cobranzas += t.monto;
+      if (t.tipo === 'VENTA_CREDITO') {
+        cargosEmitidos += t.monto;
+        if (t.categoria === 'GASTOS_COMUNES') gcFacturado += t.monto;
+      } else if (t.tipo === 'RECIBO_PAGO') cobranzas += t.monto;
     }
     meses.push({
       mes: i + 1,
@@ -6279,6 +6318,8 @@ export async function getCierreEjercicioData(anio: number): Promise<CierreEjerci
       saldoBancarioFinMes: redondear2(saldoFinMes),
       cargosEmitidos: redondear2(cargosEmitidos),
       cobranzas: redondear2(cobranzas),
+      gcFacturado: redondear2(gcFacturado),
+      gcEgresos: redondear2(gcEgresos),
     });
   }
 
